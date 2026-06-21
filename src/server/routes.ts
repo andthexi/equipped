@@ -208,6 +208,23 @@ if (import.meta.vitest) {
 			}>()
 		})
 
+		test('custom status-code route contracts preserve literal status and content type defaults', () => {
+			const _api = new Router({ path: '/api' }).post('/created', {
+				schema: {
+					defaultStatusCode: 299,
+					defaultContentType: 'text/plain',
+					response: v.string(),
+				},
+			})((req) => req.res({ body: 'created' }))
+
+			type Contract = RouteContractOf<typeof _api>
+			type Output = RouteOutput<Contract, 'post', '/api/created'>
+
+			expectTypeOf<Output['body']>().toEqualTypeOf<string>()
+			expectTypeOf<Output['statusCode']>().toEqualTypeOf<299>()
+			expectTypeOf<Output['contentType']>().toEqualTypeOf<'text/plain'>()
+		})
+
 		test('204 no-content route contracts have an undefined output body', () => {
 			const _api = new Router({ path: '/api' }).delete('/users/:id', {
 				schema: {

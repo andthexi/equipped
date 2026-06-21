@@ -12,7 +12,6 @@ import {
 	type DefaultHeaders,
 	type IncomingFile,
 	type MethodsEnum,
-	type RouteDef,
 	type RouteReqRes,
 } from './types'
 
@@ -26,6 +25,7 @@ export class Request<Def extends RouteReqRes> {
 	readonly ip: string | undefined
 	readonly method: MethodsEnum
 	readonly path: string
+	#responseDefaults: { contentType?: Def['contentType']; status?: Def['statusCode'] } = {}
 	body: Def['body']
 	params: Def['params']
 	query: Def['query']
@@ -66,12 +66,27 @@ export class Request<Def extends RouteReqRes> {
 		this.body = <any>(hasFiles ? Object.assign({}, bodyFields, files) : body)
 	}
 
+	setResponseDefaults(defaults: { contentType: Def['contentType']; status: Def['statusCode'] }) {
+		this.#responseDefaults = defaults
+		return this
+	}
+
 	pipe(stream: Readable, opts: { headers?: Def['responseHeaders']; cookies?: Def['responseCookies']; status?: Def['statusCode'] } = {}) {
-		return new Response<Omit<Def, 'response'> & { response: Readable }>(<any>{ ...opts, piped: true, body: stream })
+		return new Response<Omit<Def, 'response'> & { response: Readable }>(<any>{
+			status: this.#responseDefaults.status,
+			...opts,
+			piped: true,
+			body: stream,
+		})
 	}
 
 	res(params: DistributiveOmit<RequestParams<Def>, 'piped'>) {
-		return new Response<Def>(<any>{ ...params, piped: false })
+		return new Response<Def>(<any>{
+			status: this.#responseDefaults.status,
+			contentType: this.#responseDefaults.contentType,
+			...params,
+			piped: false,
+		})
 	}
 
 	error<
@@ -90,12 +105,7 @@ export class Request<Def extends RouteReqRes> {
 type BodyParam<T> = [T] extends [undefined] ? { body?: T; piped?: boolean } : { body: T; piped?: boolean }
 
 type RequestParams<Def extends RouteReqRes, T = Def['response']> = BodyParam<T> &
-	(IsInTypeList<Def['statusCode'], [NonNullable<RouteDef['defaultStatusCode']>, 200]> extends true
-		? { status?: Def['statusCode'] }
-		: { status: Def['statusCode'] }) &
-	(IsInTypeList<Def['contentType'], [NonNullable<RouteDef['defaultContentType']>, 'application/json']> extends true
-		? { contentType?: Def['contentType'] }
-		: { contentType: Def['contentType'] }) &
+	{ contentType?: Def['contentType']; status?: Def['statusCode'] } &
 	(IsInTypeList<Def['responseHeaders'], [DefaultHeaders]> extends true
 		? { headers?: Def['responseHeaders'] }
 		: { headers: Def['responseHeaders'] }) &
@@ -172,6 +182,28 @@ if (import.meta.vitest) {
 
 			expect(response.status).toBe(StatusCodes.Ok)
 			expect(response.headers).toHaveProperty('Content-Type', 'application/json')
+		})
+
+		test('uses request response defaults for res and pipe when values are omitted', () => {
+			const request = new Request<any>({
+				ip: undefined,
+				body: {},
+				cookies: {},
+				params: {},
+				query: {},
+				method: 'post',
+				path: '/created',
+				headers: {},
+				files: {},
+			}).setResponseDefaults({ status: 299, contentType: 'text/plain' })
+
+			const response = request.res({ body: 'created', headers: {}, cookies: {} })
+			const piped = request.pipe({} as Readable)
+
+			expect(response.status).toBe(299)
+			expect(response.contentType).toBe('text/plain')
+			expect(piped.status).toBe(299)
+			expect(piped.contentType).toBe('application/json')
 		})
 	})
 

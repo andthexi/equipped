@@ -19,3 +19,7 @@ _Avoid_: Hidden route, internal route
 **Route Contract Entry**:
 The input/output type pair for one Route Identity inside a Route Contract.
 _Avoid_: Procedure definition, endpoint metadata
+
+**Status Code**:
+A numeric HTTP response code in the 100–599 range; Equipped exports named built-in constants but does not restrict applications to that built-in set.
+_Avoid_: StatusCodesEnum, custom statusCode

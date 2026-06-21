@@ -1,11 +1,10 @@
-import type { StatusCodesEnum } from '../server'
+import type { StatusCode } from '../server'
 import { EquippedError } from './equippedError'
 
 export abstract class RequestError extends EquippedError {
-	abstract readonly statusCode: StatusCodesEnum
-
 	protected constructor(
 		public readonly message: string,
+		public readonly statusCode: StatusCode,
 		public readonly serializedErrors: { message: string; field?: string }[],
 		cause?: unknown,
 	) {

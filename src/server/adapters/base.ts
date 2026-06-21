@@ -5,7 +5,7 @@ import { type CorsOptions } from 'cors'
 import { Server as SocketServer } from 'socket.io'
 import supertest from 'supertest'
 import type TestAgent from 'supertest/lib/agent'
-import { type Pipe, PipeError, v, type PipeOutput } from 'valleyed'
+import { PipeError, v, type Pipe, type PipeOutput } from 'valleyed'
 
 import { EquippedError, NotFoundError, RequestError } from '../../errors'
 import { EventBus } from '../../events'
@@ -19,18 +19,19 @@ import { BaseRequestAuthMethod } from '../requests-auth-methods'
 import { Router } from '../routes'
 import { SocketEmitter } from '../sockets'
 import {
+	makeErrorMiddleware,
 	Methods,
+	StatusCodes,
 	type MergeRouteContracts,
+	type MethodsEnum,
 	type RejectDuplicateRoutes,
 	type Route,
 	type RouteContractHost,
 	type RouteContractOf,
+	type routeContractSymbol,
 	type RouteDef,
 	type RouteOutput,
 	type RouteRegistryOf,
-	StatusCodes,
-	type MethodsEnum,
-	type routeContractSymbol,
 	type routeRegistrySymbol,
 } from '../types'
 
@@ -116,16 +117,7 @@ function writeRawHandlerError(response: ServerResponse, error: unknown) {
 	response.end(JSON.stringify([{ message }]))
 }
 
-const errorsSchemas = Object.entries(StatusCodes)
-	.filter(([, value]) => value > 399)
-	.map(([key, value]) => ({
-		status: value,
-		contentType: 'application/json',
-		pipe: v.meta(v.array(v.object({ message: v.string(), field: v.optional(v.string()) })), {
-			$refId: `Errors.${key}Response`,
-			description: `${key} Response`,
-		}) as Pipe<any, any>,
-	}))
+const errorResponsePipe = v.array(v.object({ message: v.string(), field: v.optional(v.string()) })) as Pipe<any, any>
 
 export abstract class Server<PublicContract = {}, Registry = PublicContract> implements RouteContractHost<PublicContract, Registry> {
 	declare readonly [routeContractSymbol]?: PublicContract
@@ -167,7 +159,10 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 		router: R & RejectDuplicateRoutes<Registry, RouteRegistryOf<R>>,
 	): Server<MergeRouteContracts<PublicContract, RouteContractOf<R>>, MergeRouteContracts<Registry, RouteRegistryOf<R>>> {
 		this.addRoute(...router.routes)
-		return this as unknown as Server<MergeRouteContracts<PublicContract, RouteContractOf<R>>, MergeRouteContracts<Registry, RouteRegistryOf<R>>>
+		return this as unknown as Server<
+			MergeRouteContracts<PublicContract, RouteContractOf<R>>,
+			MergeRouteContracts<Registry, RouteRegistryOf<R>>
+		>
 	}
 
 	/** @deprecated Prefer registering routes through a Router and adding it with addRouter() so Route Contracts stay tracked. */
@@ -184,19 +179,26 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 				onError?.onSetup?.(route as any)
 				responseMiddlewares.forEach((m) => m.onSetup?.(route as any))
 
-				const { validateRequest, validateResponse, jsonSchema } = this.#resolveSchema(method, schema)
+				const { validateRequest, validateResponse, jsonSchema, responseDefaults } = this.#resolveSchema(method, schema)
 
 				this.#routesByKey.add(key)
 				await this.#oai.register(route, jsonSchema)
 				this.registerRoute(method, this.#oai.cleanPath(path), async (req, res) => {
-					const request = await validateRequest(await this.parseRequest(req))
+					const request = await validateRequest((await this.parseRequest(req)).setResponseDefaults(responseDefaults))
 					try {
 						for (const middleware of middlewares) await middleware.cb(request)
 						const rawRes = await route.handler(request)
 						const response =
 							rawRes instanceof Response
 								? rawRes
-								: new Response<any>({ body: rawRes, status: StatusCodes.Ok, headers: {}, cookies: {}, contentType: 'application/json', piped: false })
+								: new Response<any>({
+										body: rawRes,
+										status: responseDefaults.status,
+										headers: {},
+										cookies: {},
+										contentType: responseDefaults.contentType,
+										piped: false,
+									})
 						for (const middleware of responseMiddlewares) await middleware.cb(request, response)
 						return await this.handleResponse(res, await validateResponse(response))
 					} catch (error) {
@@ -205,7 +207,13 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 							const response =
 								rawResponse instanceof Response
 									? rawResponse
-									: new Response<any>({ body: rawResponse, status: StatusCodes.BadRequest, headers: {}, cookies: {}, contentType: 'application/json' })
+									: new Response<any>({
+											body: rawResponse,
+											status: StatusCodes.BadRequest,
+											headers: {},
+											cookies: {},
+											contentType: 'application/json',
+										})
 							return await this.handleResponse(res, await validateResponse(response))
 						}
 						throw error
@@ -353,19 +361,30 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 				jsonSchema.request[def.key as keyof typeof jsonSchema.request] = v.schema(pipe)
 			}
 			if (def.type === 'response') {
-				const pipeRecords = errorsSchemas.concat({ status: defaultStatusCode, contentType, pipe })
+				const pipeRecords = [{ status: defaultStatusCode, contentType, pipe }]
 				responsePipeDefs[def.key] = v.any().pipe((input) => {
-					const p = pipeRecords.find((rec) => rec.status === status)?.pipe
+					const p =
+						status > 399
+							? def.key === 'response'
+								? errorResponsePipe
+								: v.any()
+							: pipeRecords.find((rec) => rec.status === status)?.pipe
 					if (!p) throw PipeError.root(`schema not defined for status code: ${status}`, input)
 					const r = v.validate(p, input)
 					if (!r.valid) throw r.error
 					return r.value
 				})
-				jsonSchema.response[def.key as keyof typeof jsonSchema.response] = pipeRecords.map((record) => ({
-					status: record.status,
-					contentType: record.contentType,
-					schema: v.schema(record.pipe),
-				}))
+				jsonSchema.response[def.key as keyof typeof jsonSchema.response] = pipeRecords
+					.concat({
+						status: StatusCodes.BadRequest,
+						contentType: 'application/json',
+						pipe: errorResponsePipe,
+					})
+					.map((record) => ({
+						status: record.status,
+						contentType: record.contentType,
+						schema: v.schema(record.pipe),
+					}))
 			}
 		})
 		const requestPipe = v.object(requestPipeDefs)
@@ -413,6 +432,7 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 		}
 		return {
 			jsonSchema,
+			responseDefaults: { status: defaultStatusCode, contentType: defaultContentType },
 			validateRequest,
 			validateResponse,
 		}
@@ -457,6 +477,7 @@ if (import.meta.vitest) {
 		handledResponse: Response<any> | null = null
 		startedPorts: number[] = []
 		private notFoundHandler: ((req: any, res: any) => Promise<void>) | null = null
+		private routeHandlers = new Map<string, (req: any, res: any) => Promise<void>>()
 
 		constructor() {
 			super()
@@ -498,7 +519,10 @@ if (import.meta.vitest) {
 			return this.createNodeRawResponder({ request: req.rawRequest, response: res.rawResponse })
 		}
 
-		protected registerRoute() {}
+		protected registerRoute(method: MethodsEnum, path: string, cb: (req: any, res: any) => Promise<void>) {
+			this.routeHandlers.set(`${method} ${path}`, cb)
+		}
+
 		protected registerErrorHandler() {}
 
 		protected registerNotFoundHandler(cb: (req: any, res: any) => Promise<void>) {
@@ -508,6 +532,14 @@ if (import.meta.vitest) {
 		protected async startServer(port: number) {
 			this.startedPorts.push(port)
 			return true
+		}
+
+		async dispatchRoute(path: string, method: MethodsEnum = Methods.get): Promise<Response<any> | null> {
+			const handler = this.routeHandlers.get(`${method} ${path}`)
+			if (!handler) throw new Error(`Route ${method} ${path} was not registered`)
+			this.handledResponse = null
+			await handler({ path, rawRequest: {} }, {})
+			return this.handledResponse
 		}
 
 		async dispatchNotFound(
@@ -545,6 +577,63 @@ if (import.meta.vitest) {
 			expectTypeOf<RouteContractOf<typeof server>>().toEqualTypeOf<{}>()
 			// @ts-expect-error duplicate route identity: get /internal
 			server.addRouter(visibleDuplicate)
+		})
+	})
+
+	describe('Server error response validation', () => {
+		test('accepts generic error bodies for custom error status codes', async () => {
+			ensureTestInstance()
+			const server = new TestServer()
+			const router = new Router().get('/custom-error', {
+				onError: makeErrorMiddleware((req) =>
+					req.error({
+						body: [{ message: 'custom error' }],
+						status: 499,
+						headers: {},
+						cookies: {},
+					}),
+				),
+				schema: {
+					response: v.object({ ok: v.boolean() }),
+				},
+			})(() => {
+				throw new Error('boom')
+			})
+
+			server.addRouter(router)
+			await server.start()
+
+			const response = await server.dispatchRoute('/custom-error')
+
+			expect(response?.status).toBe(499)
+			expect(response?.body).toEqual([{ message: 'custom error' }])
+		})
+
+		test('rejects invalid generic error bodies for custom error status codes', async () => {
+			ensureTestInstance()
+			const server = new TestServer()
+			const router = new Router().get('/bad-custom-error', {
+				onError: makeErrorMiddleware(
+					() =>
+						new Response<any>({
+							body: { message: 'not an error array' },
+							status: 499,
+							headers: {},
+							cookies: {},
+							contentType: 'application/json',
+						}),
+				),
+				schema: {
+					response: v.object({ ok: v.boolean() }),
+				},
+			})(() => {
+				throw new Error('boom')
+			})
+
+			server.addRouter(router)
+			await server.start()
+
+			await expect(server.dispatchRoute('/bad-custom-error')).rejects.toThrow('Unprocessable Entity')
 		})
 	})
 

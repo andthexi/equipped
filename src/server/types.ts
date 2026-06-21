@@ -26,10 +26,14 @@ export const StatusCodes = {
 	PreconditionRequired: 428,
 	TooManyRequests: 429,
 	TokenExpired: 461,
-} as const
+} satisfies Record<string, StatusCode>
 
 export type MethodsEnum = Enum<typeof Methods>
-export type StatusCodesEnum = Enum<typeof StatusCodes>
+
+type Enumerate<N extends number, Acc extends number[] = []> = Acc['length'] extends N ? Acc[number] : Enumerate<N, [...Acc, Acc['length']]>
+type IntRange<From extends number, To extends number> = Exclude<Enumerate<To>, Enumerate<From>>
+
+export type StatusCode = IntRange<100, 600>
 
 export type ArrayOrValue<T> = T | T[] | undefined
 export type DefaultBody = unknown
@@ -69,7 +73,7 @@ export type RouteDef = {
 	response?: Pipe<any, any>
 	responseHeaders?: Pipe<any, any>
 	responseCookies?: Pipe<any, any>
-	defaultStatusCode?: StatusCodesEnum
+	defaultStatusCode?: StatusCode
 	defaultContentType?: string
 }
 
@@ -254,7 +258,7 @@ export type AddRouteToPublicContract<C, M extends MethodsEnum, Path extends stri
 
 type Awaitable<T> = Promise<T> | T
 type Res<T extends RouteReqRes> = Awaitable<
-	IsInTypeList<T['statusCode'], [StatusCodesEnum, 200]> extends true
+	IsInTypeList<T['statusCode'], [StatusCode, 200]> extends true
 		? IsInTypeList<T['responseHeaders'], [DefaultHeaders]> extends true
 			? IsInTypeList<T['responseCookies'], [DefaultCookies]> extends true
 				? Response<T> | T['response']
@@ -292,3 +296,25 @@ export const makeResponseMiddleware = <Def extends RouteDef>(
 ) => makeMiddlewareHandler(...args)
 export const makeErrorMiddleware = <Def extends RouteDef>(...args: Parameters<typeof makeMiddlewareHandler<ErrorHandler<Def>, Def>>) =>
 	makeMiddlewareHandler(...args)
+
+if (import.meta.vitest) {
+	const { describe, expectTypeOf, test } = import.meta.vitest
+
+	describe('StatusCode', () => {
+		test('accepts integer HTTP status-code literals in the 100-599 range', () => {
+			expectTypeOf<100>().toExtend<StatusCode>()
+			expectTypeOf<200>().toExtend<StatusCode>()
+			expectTypeOf<599>().toExtend<StatusCode>()
+		})
+
+		test('rejects literals outside the HTTP status-code range', () => {
+			// @ts-expect-error 99 is below the HTTP status-code range
+			const below: StatusCode = 99
+			// @ts-expect-error 600 is above the HTTP status-code range
+			const above: StatusCode = 600
+			// @ts-expect-error fractional numbers are not HTTP status-code integers
+			const decimal: StatusCode = 200.5
+			void [below, above, decimal]
+		})
+	})
+}

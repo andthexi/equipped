@@ -7,11 +7,10 @@ type ValidError = {
 }
 
 export class ValidationError extends RequestError {
-	statusCode = StatusCodes.ValidationError
-
 	constructor(errors: ValidError[], cause?: unknown) {
 		super(
 			'Unprocessable Entity',
+			StatusCodes.ValidationError,
 			errors.flatMap(({ field, messages }) => messages.map((message) => ({ message, field }))),
 			cause,
 		)

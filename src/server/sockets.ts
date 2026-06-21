@@ -6,7 +6,7 @@ import { Instance } from '../instance'
 import type { AuthUser } from '../types'
 import type { ServerConfig } from './adapters/base'
 import { BaseRequestAuthMethod } from './requests-auth-methods'
-import { StatusCodes, type StatusCodesEnum } from './types'
+import { StatusCodes, type StatusCode } from './types'
 
 enum EmitTypes {
 	created = 'created',
@@ -18,7 +18,7 @@ const EmitterEvent = '__listener_emitter'
 type EmitData = { channel: string; type: EmitTypes; after: any; before: any }
 type LeaveRoomParams = { channel: string }
 type JoinRoomParams = { channel: string; token?: string; query: Record<string, any> }
-type Callback = (params: { code: StatusCodesEnum; message: string; channel: string }) => void
+type Callback = (params: { code: StatusCode; message: string; channel: string }) => void
 export type OnJoinFn = (
 	data: { channel: string; user: AuthUser | null },
 	params: Record<string, any>,
