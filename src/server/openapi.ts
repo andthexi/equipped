@@ -5,7 +5,7 @@ import { capitalize, type JsonSchema } from 'valleyed'
 import { Instance } from '../instance'
 import type { ServerConfig } from './adapters/base'
 import { Router } from './routes'
-import type { Route } from './types'
+import { StatusCodes, type Route } from './types'
 
 declare module 'openapi-types' {
 	namespace OpenAPIV3 {
@@ -114,6 +114,10 @@ export const openapi = (config: ServerConfig) => {
 			methodObj.responses ??= {}
 			for (const resp of def.response.response) {
 				methodObj.responses[resp.status] ??= { description: '', content: {} }
+				if (resp.status === StatusCodes.NoContent) {
+					delete (methodObj.responses[resp.status] as OpenAPIV3_1.ResponseObject).content
+					continue
+				}
 				const res = methodObj.responses[resp.status] as OpenAPIV3_1.ResponseObject
 				res.content![resp.contentType] = { schema: await convert(visit(resp.schema)) }
 			}
@@ -218,8 +222,10 @@ export const openapi = (config: ServerConfig) => {
 
 	const jsonPath = '/openapi.json'
 	const router = new Router({ path: config.openapi.docsPath ?? '/', hide: true })
-	router.get('/index.html')((req) => req.res({ body: html(`.${jsonPath}`), contentType: 'text/html' }))
-	router.get(jsonPath)((req) => req.res({ body: baseOpenapiDoc }))
+	router.get('/index.html', { schema: { defaultContentType: 'text/html' } })((req) =>
+		req.res({ body: html(`.${jsonPath}`), contentType: 'text/html', headers: {}, cookies: {} }),
+	)
+	router.get(jsonPath)((req) => req.res({ body: baseOpenapiDoc, headers: {}, cookies: {} }))
 
 	return {
 		router,

@@ -11,6 +11,7 @@ canonical location).
 | ----------- | --------------------------- |
 | `orm`       | `docs/orm/CONTEXT.md`       |
 | `instance`  | `docs/instance/CONTEXT.md`  |
+| `server`    | `docs/server/CONTEXT.md`    |
 | `utilities` | `docs/utilities/CONTEXT.md` |
 
 Add a new row when a subsystem's vocabulary stabilises enough to deserve its own

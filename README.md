@@ -52,15 +52,14 @@ const instance = Instance.create(envsPipe, (envs) => ({
 }));
 
 // 3. Define a Router
-const router = new Router();
-
-router.get('/')({
-    // Define schema for validation and OpenAPI docs
-    schema: {
-        response: v.string(),
-    },
-    // The handler is fully type-safe
-    handler: async (req) => {
+const router = new Router()
+    .get('/', {
+        // Define schema for validation and OpenAPI docs
+        schema: {
+            response: v.string(),
+        },
+    })(async (req) => {
+        // The handler is fully type-safe
         // Use the cache
         const cached = await instance.cache.get('my-key');
         if (cached) return `From cache: ${cached}`;
@@ -68,11 +67,10 @@ router.get('/')({
         const message = 'Hello, Equipped!';
         await instance.cache.set('my-key', message, 60);
         return message;
-    },
-});
+    });
 
 // 4. Add the router to the server and start
-instance.server?.addRouter(router);
+const server = instance.server?.addRouter(router);
 instance.start();
 ```
 
@@ -125,30 +123,46 @@ Equipped provides a robust server layer with support for both **Fastify** (recom
 Routes are defined using the `Router` class. You can nest routers to create modular and organized API endpoints.
 
 ```typescript
-const users = new Router({ path: '/users' });
-const posts = new Router({ path: '/posts' });
-
-// GET /users/:id
-users.get('/:id')({
-    schema: {
-        params: v.object({ id: v.string() }),
-        response: v.object({ id: v.string(), name: v.string() }),
-    },
-    handler: async (req) => {
+const users = new Router({ path: '/users' })
+    // GET /users/:id
+    .get('/:id', {
+        schema: {
+            params: v.object({ id: v.string() }),
+            response: v.object({ id: v.string(), name: v.string() }),
+        },
+    })(async (req) => {
         const { id } = req.params;
         // const user = await db.users.findById(id);
         // if (!user) throw new NotFoundError();
         return { id, name: 'John Doe' };
-    },
-});
+    });
+const posts = new Router({ path: '/posts' });
 
-// Nest the users router under a main router
-const mainRouter = new Router({ path: '/api/v1' });
-mainRouter.nest(users, posts);
+// Nest routers under a main router, one child at a time
+const mainRouter = new Router({ path: '/api/v1' })
+    .nest(users)
+    .nest(posts);
 
-// Add the router to the server
-instance.server.addRouter(mainRouter);
+// Add the router to the server. The returned server carries the Route Contract.
+const server = instance.server.addRouter(mainRouter);
 ```
+
+### Route Contracts
+
+Chained router/server registration accumulates a type-only Route Contract for full-stack applications. Export the server type and use helper types to derive client-side inputs and outputs without duplicating schemas.
+
+```typescript
+import type { RouteContractOf, RouteInput, RouteOutput } from 'equipped/server';
+
+const apiRouter = new Router({ path: '/api/v1' }).nest(users);
+const server = FastifyServer.create(config).addRouter(apiRouter);
+
+export type AppRoutes = RouteContractOf<typeof server>;
+export type GetUserInput = RouteInput<AppRoutes, 'get', '/api/v1/users/:id'>;
+export type GetUserOutput = RouteOutput<AppRoutes, 'get', '/api/v1/users/:id'>;
+```
+
+Literal paths get precise Route Contract entries and duplicate-route checks. Dynamic `string` paths still register at runtime, but they are not precisely contract-tracked.
 
 ### Middleware
 
@@ -164,14 +178,11 @@ const logRequestMiddleware = makeMiddleware(async (req) => {
 
 const router = new Router({
     middlewares: [logRequestMiddleware], // Applied to all routes in this router
-});
-
-router.get('/protected')({
+}).get('/protected', {
     middlewares: [requireAuthUser], // Applied only to this route
-    handler: async (req) => {
-        // req.authUser is now guaranteed to be defined
-        return `Hello, ${req.authUser.id}`;
-    },
+})(async (req) => {
+    // req.authUser is now guaranteed to be defined
+    return `Hello, ${req.authUser.id}`;
 });
 ```
 
@@ -180,21 +191,18 @@ router.get('/protected')({
 File uploads are handled seamlessly and validated using `valleyed`.
 
 ```typescript
-const router = new Router();
-
-router.post('/upload')({
+const router = new Router().post('/upload', {
     schema: {
         body: v.object({
             avatar: v.incomingFile(), // For a single file
             gallery: v.incomingFiles().pipe(v.max(5)), // For multiple files
         }),
     },
-    handler: async (req) => {
-        const { avatar, gallery } = req.body;
-        // avatar.name, avatar.type, avatar.size, avatar.data (Buffer)
-        // gallery is an array of files
-        return 'File uploaded successfully';
-    },
+})(async (req) => {
+    const { avatar, gallery } = req.body;
+    // avatar.name, avatar.type, avatar.size, avatar.data (Buffer)
+    // gallery is an array of files
+    return 'File uploaded successfully';
 });
 ```
 
@@ -687,9 +695,8 @@ const refreshToken = await tokens.createRefreshToken({ id: 'user-123' });
 import { requireAuthUser } from 'equipped';
 router.get('/profile', {
     middlewares: [requireAuthUser],
-    handler: async (req) => {
-        return { user: req.authUser };
-    }
+})(async (req) => {
+    return { user: req.authUser };
 });
 ```
 
@@ -698,7 +705,7 @@ router.get('/profile', {
 Validation is a first-class citizen, powered by `valleyed`. Schemas are defined for route `params`, `query`, `headers`, and `body`.
 
 ```typescript
-router.post('/register')({
+router.post('/register', {
     schema: {
         body: v.object({
             name: v.string().pipe(v.min(2)),
@@ -710,12 +717,11 @@ router.post('/register')({
             name: v.string(),
         }),
     },
-    handler: async (req) => {
-        // req.body is fully typed and validated
-        const { name, email, password } = req.body;
-        // ... create user logic
-        return { id: 'new-user-id', name };
-    },
+})(async (req) => {
+    // req.body is fully typed and validated
+    const { name, email, password } = req.body;
+    // ... create user logic
+    return { id: 'new-user-id', name };
 });
 ```
 
@@ -726,15 +732,13 @@ Equipped has a set of predefined `RequestError` classes that map to HTTP status 
 ```typescript
 import { NotFoundError } from 'equipped';
 
-router.get('/items/:id')({
-    handler: async (req) => {
-        const item = await findItem(req.params.id);
-        if (!item) {
-            // This will be caught and sent as a 404 response
-            throw new NotFoundError('Item not found');
-        }
-        return item;
+router.get('/items/:id')(async (req) => {
+    const item = await findItem(req.params.id);
+    if (!item) {
+        // This will be caught and sent as a 404 response
+        throw new NotFoundError('Item not found');
     }
+    return item;
 });
 ```
 

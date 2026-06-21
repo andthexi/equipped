@@ -31,10 +31,12 @@ export const StatusCodes = {
 export type MethodsEnum = Enum<typeof Methods>
 export type StatusCodesEnum = Enum<typeof StatusCodes>
 
+export type ArrayOrValue<T> = T | T[] | undefined
+export type DefaultBody = unknown
+export type DefaultParams = Record<string, ArrayOrValue<string>>
+export type DefaultQuery = Record<string, ArrayOrValue<unknown>>
 export type DefaultHeaders = Record<string, ArrayOrValue<string>>
 export type DefaultCookies = Record<string, string | undefined>
-
-type ArrayOrValue<T> = T | T[] | undefined
 
 export type IncomingFile = {
 	name: string
@@ -45,15 +47,28 @@ export type IncomingFile = {
 	duration: number
 }
 
+type DefaultRouteDef = {
+	params: Pipe<DefaultParams, DefaultParams>
+	query: Pipe<DefaultQuery, DefaultQuery>
+	headers: Pipe<DefaultHeaders, DefaultHeaders>
+	cookies: Pipe<DefaultCookies, DefaultCookies>
+	body: Pipe<DefaultBody, DefaultBody>
+	response: Pipe<unknown, unknown>
+	responseHeaders: Pipe<DefaultHeaders, DefaultHeaders>
+	responseCookies: Pipe<DefaultCookies, DefaultCookies>
+	defaultStatusCode: typeof StatusCodes.Ok
+	defaultContentType: 'application/json'
+}
+
 export type RouteDef = {
-	params?: Pipe<Record<string, ArrayOrValue<string>>, Record<string, ArrayOrValue<string>>>
-	query?: Pipe<Record<string, ArrayOrValue<unknown>>, Record<string, ArrayOrValue<unknown>>>
-	headers?: Pipe<DefaultHeaders, DefaultHeaders>
-	cookies?: Pipe<DefaultCookies, DefaultCookies>
-	body?: Pipe<Record<string, unknown>, Record<string, unknown>>
-	response?: Pipe<unknown, unknown>
-	responseHeaders?: Pipe<DefaultHeaders, DefaultHeaders>
-	responseCookies?: Pipe<DefaultCookies, DefaultCookies>
+	params?: Pipe<any, any>
+	query?: Pipe<any, any>
+	headers?: Pipe<any, any>
+	cookies?: Pipe<any, any>
+	body?: Pipe<any, any>
+	response?: Pipe<any, any>
+	responseHeaders?: Pipe<any, any>
+	responseCookies?: Pipe<any, any>
 	defaultStatusCode?: StatusCodesEnum
 	defaultContentType?: string
 }
@@ -61,7 +76,7 @@ export type RouteDef = {
 type RouteGroup = { name: string; description?: string }
 type HandlerSetup<T extends RouteDef> = (route: Route<T>) => void
 
-export type RouteConfig<T extends RouteDef> = {
+export type RouteConfig<T extends RouteDef = {}> = {
 	middlewares?: ReturnType<typeof makeMiddleware<RouteDef>>[]
 	responseMiddlewares?: ReturnType<typeof makeResponseMiddleware<RouteDef>>[]
 	onError?: ReturnType<typeof makeErrorMiddleware<RouteDef>>
@@ -73,46 +88,172 @@ export type RouteConfig<T extends RouteDef> = {
 	hide?: boolean
 }
 
-export type RouterConfig<T extends RouteDef> = RouteConfig<T> & { path: string }
+export type RouterConfig<T extends RouteDef = {}, Path extends string = string> = RouteConfig<T> & { path: Path }
 export type Route<T extends RouteDef> = RouteConfig<T> & {
 	path: string
 	method: MethodsEnum
 	handler: RouteDefHandler<T>
 }
 
-type GetApiPart<T extends RouteDef, K extends keyof RouteDef> = NonNullable<IsInTypeList<T[K], [unknown]> extends true ? RouteDef[K] : T[K]>
+type RouteDefValue<T, K extends keyof RouteDef> = T extends RouteDef ? T[K] : K extends keyof T ? T[K] : unknown
+type GetApiPart<T, K extends keyof RouteDef> = NonNullable<
+	[RouteDefValue<T, K>] extends [undefined]
+		? DefaultRouteDef[K]
+		: IsInTypeList<RouteDefValue<T, K>, [unknown]> extends true
+			? DefaultRouteDef[K]
+			: RouteDefValue<T, K>
+>
 
-type ArePipes<A, B> = A extends Pipe<any, any> ? (B extends Pipe<any, any> ? true : false) : false
-type Compare<K extends keyof RouteDef, A, B> =
-	IsInTypeList<B, [unknown]> extends true
-		? A
-		: IsInTypeList<A, [unknown]> extends true
+type Defined<T> = Exclude<T, undefined>
+type ArePipes<A, B> = Defined<A> extends Pipe<any, any> ? (Defined<B> extends Pipe<any, any> ? true : false) : false
+type Compare<K extends keyof RouteDef, A, B> = [Defined<B>] extends [never]
+	? A
+	: [Defined<A>] extends [never]
+		? B
+		: K extends `default${string}` | 'context'
 			? B
-			: K extends `default${string}` | 'context'
-				? B
-				: ArePipes<A, B> extends true
-					? Pipe<PipeInput<A> & PipeInput<B>, PipeOutput<A> & PipeOutput<B>>
-					: B
+			: ArePipes<A, B> extends true
+				? Pipe<PipeInput<Defined<A>> & PipeInput<Defined<B>>, PipeOutput<Defined<A>> & PipeOutput<Defined<B>>>
+				: B
 
 export type MergeRouteDefs<A extends RouteDef, B extends RouteDef> = {
 	[K in keyof RouteDef]: Compare<K, A[K], B[K]>
 }
 
-export type RouteDefToReqRes<T extends RouteDef> = Prettify<{
+export type RouteReqRes = {
+	body: unknown
+	params: unknown
+	requestHeaders: unknown
+	requestCookies: unknown
+	query: unknown
+	response: unknown
+	responseHeaders: unknown
+	responseCookies: unknown
+	statusCode: unknown
+	contentType: unknown
+}
+
+type DefaultIfUnknown<T, Default> = unknown extends T ? Default : T
+
+type PipeInputOrDefault<T, K extends keyof RouteDef, Default> = DefaultIfUnknown<PipeInput<GetApiPart<T, K>>, Default>
+type PipeOutputOrDefault<T, K extends keyof RouteDef, Default> = DefaultIfUnknown<PipeOutput<GetApiPart<T, K>>, Default>
+type StatusCodeOf<T> = DefaultIfUnknown<GetApiPart<T, 'defaultStatusCode'>, typeof StatusCodes.Ok>
+type ContentTypeOf<T> = DefaultIfUnknown<GetApiPart<T, 'defaultContentType'>, 'application/json'>
+type ResponseBodyOf<T> = StatusCodeOf<T> extends typeof StatusCodes.NoContent ? undefined : PipeOutput<GetApiPart<T, 'response'>>
+
+export type RouteDefToReqRes<T> = Prettify<{
 	body: PipeOutput<GetApiPart<T, 'body'>>
-	params: PipeOutput<GetApiPart<T, 'params'>>
-	requestHeaders: PipeOutput<GetApiPart<T, 'headers'>>
-	requestCookies: PipeOutput<GetApiPart<T, 'cookies'>>
-	query: PipeOutput<GetApiPart<T, 'query'>>
-	response: PipeOutput<GetApiPart<T, 'response'>>
-	responseHeaders: PipeOutput<GetApiPart<T, 'responseHeaders'>>
-	responseCookies: PipeOutput<GetApiPart<T, 'responseCookies'>>
-	statusCode: GetApiPart<T, 'defaultStatusCode'>
-	contentType: GetApiPart<T, 'defaultContentType'>
+	params: PipeOutputOrDefault<T, 'params', DefaultParams>
+	requestHeaders: PipeOutputOrDefault<T, 'headers', DefaultHeaders>
+	requestCookies: PipeOutputOrDefault<T, 'cookies', DefaultCookies>
+	query: PipeOutputOrDefault<T, 'query', DefaultQuery>
+	response: ResponseBodyOf<T>
+	responseHeaders: PipeOutputOrDefault<T, 'responseHeaders', DefaultHeaders>
+	responseCookies: PipeOutputOrDefault<T, 'responseCookies', DefaultCookies>
+	statusCode: StatusCodeOf<T>
+	contentType: ContentTypeOf<T>
 }>
 
+type BodyMethods = typeof Methods.post | typeof Methods.put | typeof Methods.patch
+export type RouteContractEntry<Input, Output> = { input: Input; output: Output }
+export type RouteContract = Partial<Record<MethodsEnum, Record<string, RouteContractEntry<any, any>>>>
+export declare const routeContractSymbol: unique symbol
+export declare const routeRegistrySymbol: unique symbol
+
+export type RouteContractHost<Public, Registry = Public> = {
+	readonly [routeContractSymbol]?: Public
+	readonly [routeRegistrySymbol]?: Registry
+}
+
+export type RouteContractOf<T> = T extends RouteContractHost<infer Public, any> ? Public : {}
+export type RouteRegistryOf<T> = T extends RouteContractHost<any, infer Registry> ? Registry : {}
+export type RouteInput<C, M extends keyof C, P extends keyof C[M]> = C[M][P] extends { input: infer I } ? I : never
+export type RouteOutput<C, M extends keyof C, P extends keyof C[M]> = C[M][P] extends { output: infer O } ? O : never
+
+export type RouteDefToContractEntry<M extends MethodsEnum, T> = RouteContractEntry<
+	Prettify<
+		{
+			params: PipeInputOrDefault<T, 'params', DefaultParams>
+			query: PipeInputOrDefault<T, 'query', DefaultQuery>
+			headers: PipeInputOrDefault<T, 'headers', DefaultHeaders>
+			cookies: PipeInputOrDefault<T, 'cookies', DefaultCookies>
+		} & (M extends BodyMethods ? { body: PipeInput<GetApiPart<T, 'body'>> } : {})
+	>,
+	Prettify<{
+		body: ResponseBodyOf<T>
+		headers: PipeOutputOrDefault<T, 'responseHeaders', DefaultHeaders>
+		cookies: PipeOutputOrDefault<T, 'responseCookies', DefaultCookies>
+		statusCode: StatusCodeOf<T>
+		contentType: ContentTypeOf<T>
+	}>
+>
+
+type CollapseSlashes<S extends string> = S extends `${infer Head}//${infer Tail}` ? CollapseSlashes<`${Head}/${Tail}`> : S
+type EnsureLeadingSlash<S extends string> = S extends `/${string}` ? S : `/${S}`
+type RemoveTrailingSlash<S extends string> = S extends '/' ? S : S extends `${infer Rest}/` ? RemoveTrailingSlash<Rest> : S
+export type CleanPath<S extends string> = string extends S ? string : RemoveTrailingSlash<CollapseSlashes<EnsureLeadingSlash<S>>>
+export type JoinPath<A extends string, B extends string> = CleanPath<`${A}/${B}`>
+
+type MethodRecord<C, M extends MethodsEnum> = M extends keyof C ? (C[M] extends Record<string, any> ? C[M] : {}) : {}
+type SetMethodRecord<C, M extends MethodsEnum, R> = Prettify<Omit<C, M> & { [K in M]: R }>
+export type AddRouteToContract<C, M extends MethodsEnum, Path extends string, Entry> = string extends Path
+	? C
+	: SetMethodRecord<C, M, Prettify<MethodRecord<C, M> & { [P in Path]: Entry }>>
+
+export type MergeRouteContracts<A, B> = Prettify<{
+	[M in keyof A | keyof B]: M extends keyof A
+		? M extends keyof B
+			? Prettify<A[M] & B[M]>
+			: A[M]
+		: M extends keyof B
+			? B[M]
+			: never
+}>
+
+export type PrefixRouteContract<C, Prefix extends string> = string extends Prefix
+	? {}
+	: Prettify<{
+			[M in keyof C]: C[M] extends Record<string, any>
+				? { [P in keyof C[M] & string as JoinPath<Prefix, P>]: C[M][P] }
+				: C[M]
+		}>
+
+type DuplicateInMethod<A, B, M extends keyof A & keyof B> = A[M] extends Record<string, any>
+	? B[M] extends Record<string, any>
+		? Extract<keyof A[M], keyof B[M]> extends infer Path
+			? Path extends string
+				? DuplicateRouteIdentity<Extract<M, string>, Path>
+				: never
+			: never
+		: never
+	: never
+export type DuplicateRouteIdentity<Method extends string, Path extends string> = {
+	readonly __duplicateRouteIdentity__: `${Method} ${Path}`
+}
+export type DuplicateRouteIdentities<A, B> = {
+	[M in keyof A & keyof B]: DuplicateInMethod<A, B, M>
+}[keyof A & keyof B]
+export type RejectDuplicateRoutes<A, B> = [DuplicateRouteIdentities<A, B>] extends [never] ? unknown : DuplicateRouteIdentities<A, B>
+export type RejectDuplicateRoute<C, M extends MethodsEnum, Path extends string> = string extends Path
+	? unknown
+	: M extends keyof C
+		? Path extends keyof MethodRecord<C, M>
+			? DuplicateRouteIdentity<M, Path>
+			: unknown
+		: unknown
+
+export type RouteDefOfConfig<Cfg> = 'schema' extends keyof Cfg
+	? Cfg extends { schema?: infer S }
+		? Extract<NonNullable<S>, RouteDef>
+		: {}
+	: {}
+export type EffectiveHide<ParentHide, Cfg> = 'hide' extends keyof Cfg ? (Cfg extends { hide?: infer Hide } ? Hide : ParentHide) : ParentHide
+export type AddRouteToPublicContract<C, M extends MethodsEnum, Path extends string, Entry, Hide> = Hide extends true
+	? C
+	: AddRouteToContract<C, M, Path, Entry>
+
 type Awaitable<T> = Promise<T> | T
-type Res<T extends RouteDefToReqRes<any>> = Awaitable<
+type Res<T extends RouteReqRes> = Awaitable<
 	IsInTypeList<T['statusCode'], [StatusCodesEnum, 200]> extends true
 		? IsInTypeList<T['responseHeaders'], [DefaultHeaders]> extends true
 			? IsInTypeList<T['responseCookies'], [DefaultCookies]> extends true
@@ -121,7 +262,7 @@ type Res<T extends RouteDefToReqRes<any>> = Awaitable<
 			: Response<T>
 		: Response<T>
 >
-export type RouteDefHandler<Def extends RouteDef> = (req: Request<RouteDefToReqRes<Def>>) => Res<RouteDefToReqRes<Def>>
+export type RouteDefHandler<Def> = (req: Request<RouteDefToReqRes<Def>>) => Res<RouteDefToReqRes<Def>>
 type RouteMiddlewareHandler<_Def extends RouteDef> = (req: Request<RouteDefToReqRes<RouteDef>>) => Awaitable<void>
 type RouteResponseMiddlewareHandler<_Def extends RouteDef> = (
 	req: Request<RouteDefToReqRes<RouteDef>>,
@@ -131,11 +272,12 @@ type ErrorHandler<Def extends RouteDef> = (
 	req: Request<RouteDefToReqRes<Def>>,
 	err: Error,
 ) => Res<
-	Omit<RouteDefToReqRes<Def>, 'response' | 'statusCode' | 'responseHeaders' | 'responseCookies'> & {
+	Omit<RouteDefToReqRes<Def>, 'response' | 'statusCode' | 'responseHeaders' | 'responseCookies' | 'contentType'> & {
 		response: RequestError['serializedErrors']
 		statusCode: RequestError['statusCode']
 		responseHeaders: DefaultHeaders
 		responseCookies: DefaultCookies
+		contentType: 'application/json'
 	}
 >
 

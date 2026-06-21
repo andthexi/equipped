@@ -6,13 +6,23 @@ import type { DistributiveOmit, IsInTypeList } from 'valleyed'
 
 import type { RequestError } from '../errors'
 import type { AuthUser } from '../types'
-import { StatusCodes, type DefaultCookies, type DefaultHeaders, type IncomingFile, type MethodsEnum, type RouteDef, type RouteDefToReqRes } from './types'
+import {
+	StatusCodes,
+	type DefaultCookies,
+	type DefaultHeaders,
+	type IncomingFile,
+	type MethodsEnum,
+	type RouteDef,
+	type RouteReqRes,
+} from './types'
 
-export type CookieVal<C extends DefaultCookies> = {
-	[K in keyof C]: SerializeOptions & { value: C[K] }
+type ResponseCookies<C> = C extends DefaultCookies ? C : DefaultCookies
+
+export type CookieVal<C> = {
+	[K in keyof ResponseCookies<C>]: SerializeOptions & { value: ResponseCookies<C>[K] }
 }
 
-export class Request<Def extends RouteDefToReqRes<any>> {
+export class Request<Def extends RouteReqRes> {
 	readonly ip: string | undefined
 	readonly method: MethodsEnum
 	readonly path: string
@@ -43,7 +53,7 @@ export class Request<Def extends RouteDefToReqRes<any>> {
 		files: Record<string, IncomingFile[]>
 		method: MethodsEnum
 		path: string
-		}) {
+	}) {
 		this.ip = ip
 		this.method = method
 		this.path = path
@@ -77,12 +87,12 @@ export class Request<Def extends RouteDefToReqRes<any>> {
 	}
 }
 
-type RequestParams<Def extends RouteDefToReqRes<any>, T = Def['response']> = { body: T; piped?: boolean } & (IsInTypeList<
-	Def['statusCode'],
-	[NonNullable<RouteDef['defaultStatusCode']>, 200]
-> extends true
-	? { status?: Def['statusCode'] }
-	: { status: Def['statusCode'] }) &
+type BodyParam<T> = [T] extends [undefined] ? { body?: T; piped?: boolean } : { body: T; piped?: boolean }
+
+type RequestParams<Def extends RouteReqRes, T = Def['response']> = BodyParam<T> &
+	(IsInTypeList<Def['statusCode'], [NonNullable<RouteDef['defaultStatusCode']>, 200]> extends true
+		? { status?: Def['statusCode'] }
+		: { status: Def['statusCode'] }) &
 	(IsInTypeList<Def['contentType'], [NonNullable<RouteDef['defaultContentType']>, 'application/json']> extends true
 		? { contentType?: Def['contentType'] }
 		: { contentType: Def['contentType'] }) &
@@ -93,7 +103,7 @@ type RequestParams<Def extends RouteDefToReqRes<any>, T = Def['response']> = { b
 		? { cookies?: CookieVal<Def['responseCookies']> }
 		: { cookies: CookieVal<Def['responseCookies']> })
 
-export class Response<Def extends RouteDefToReqRes<any>> {
+export class Response<Def extends RouteReqRes> {
 	body: Def['response'] | undefined
 	headers: Def['responseHeaders']
 	cookies: CookieVal<Def['responseCookies']>
@@ -117,8 +127,7 @@ export class Response<Def extends RouteDefToReqRes<any>> {
 		this.piped = piped
 
 		if (!this.piped && this.status !== StatusCodes.NoContent) {
-			// @ts-expect-error indexing on generic
-			this.headers['Content-Type'] = contentType
+			;(this.headers as DefaultHeaders)['Content-Type'] = contentType as string
 		}
 	}
 

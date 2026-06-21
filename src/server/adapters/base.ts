@@ -18,7 +18,21 @@ import { Request, Response } from '../requests'
 import { BaseRequestAuthMethod } from '../requests-auth-methods'
 import { Router } from '../routes'
 import { SocketEmitter } from '../sockets'
-import { Methods, type MethodsEnum, type Route, type RouteDef, StatusCodes } from '../types'
+import {
+	Methods,
+	type MergeRouteContracts,
+	type RejectDuplicateRoutes,
+	type Route,
+	type RouteContractHost,
+	type RouteContractOf,
+	type RouteDef,
+	type RouteOutput,
+	type RouteRegistryOf,
+	StatusCodes,
+	type MethodsEnum,
+	type routeContractSymbol,
+	type routeRegistrySymbol,
+} from '../types'
 
 export const serverConfigPipe = () =>
 	v.object({
@@ -113,7 +127,9 @@ const errorsSchemas = Object.entries(StatusCodes)
 		}) as Pipe<any, any>,
 	}))
 
-export abstract class Server {
+export abstract class Server<PublicContract = {}, Registry = PublicContract> implements RouteContractHost<PublicContract, Registry> {
+	declare readonly [routeContractSymbol]?: PublicContract
+	declare readonly [routeRegistrySymbol]?: Registry
 	socket!: SocketEmitter
 	cors!: CorsOptions & FastifyCorsOptions
 	#httpServer!: http.Server
@@ -147,10 +163,14 @@ export abstract class Server {
 		this.addRouter(this.#oai.router)
 	}
 
-	addRouter(...routers: Router<any>[]) {
-		routers.map((router) => router.routes).forEach((routes) => this.addRoute(...routes))
+	addRouter<R extends Router<any, any, any, any, any>>(
+		router: R & RejectDuplicateRoutes<Registry, RouteRegistryOf<R>>,
+	): Server<MergeRouteContracts<PublicContract, RouteContractOf<R>>, MergeRouteContracts<Registry, RouteRegistryOf<R>>> {
+		this.addRoute(...router.routes)
+		return this as unknown as Server<MergeRouteContracts<PublicContract, RouteContractOf<R>>, MergeRouteContracts<Registry, RouteRegistryOf<R>>>
 	}
 
+	/** @deprecated Prefer registering routes through a Router and adding it with addRouter() so Route Contracts stay tracked. */
 	addRoute<T extends RouteDef>(...routes: Route<T>[]) {
 		routes.forEach((route) => {
 			this.#queue.push(async () => {
@@ -176,7 +196,7 @@ export abstract class Server {
 						const response =
 							rawRes instanceof Response
 								? rawRes
-								: new Response({ body: rawRes, status: StatusCodes.Ok, headers: {}, piped: false })
+								: new Response<any>({ body: rawRes, status: StatusCodes.Ok, headers: {}, cookies: {}, contentType: 'application/json', piped: false })
 						for (const middleware of responseMiddlewares) await middleware.cb(request, response)
 						return await this.handleResponse(res, await validateResponse(response))
 					} catch (error) {
@@ -185,7 +205,7 @@ export abstract class Server {
 							const response =
 								rawResponse instanceof Response
 									? rawResponse
-									: new Response({ body: rawResponse, status: StatusCodes.BadRequest, headers: {} })
+									: new Response<any>({ body: rawResponse, status: StatusCodes.BadRequest, headers: {}, cookies: {}, contentType: 'application/json' })
 							return await this.handleResponse(res, await validateResponse(response))
 						}
 						throw error
@@ -193,6 +213,7 @@ export abstract class Server {
 				})
 			})
 		})
+		return this
 	}
 
 	setNotFoundHandler(handler: ServerNotFoundHandler): this {
@@ -220,10 +241,13 @@ export abstract class Server {
 			this.addRoute({
 				method: Methods.get,
 				path: config.healthPath,
+				schema: { defaultContentType: 'text/plain' },
 				handler: async (req) =>
 					req.res({
 						body: `${instance.id}(${app.name}) service running`,
 						contentType: 'text/plain',
+						headers: {},
+						cookies: {},
 					}),
 			})
 
@@ -234,18 +258,27 @@ export abstract class Server {
 			if (!(error instanceof EquippedError)) Instance.get().log.error({ error }, 'Uncaught error in route handler')
 			const response =
 				error instanceof RequestError
-					? new Response({
+					? new Response<any>({
 							body: error.serializedErrors,
 							status: error.statusCode,
+							headers: {},
+							cookies: {},
+							contentType: 'application/json',
 						})
 					: error instanceof EquippedError
-						? new Response({
+						? new Response<any>({
 								body: [{ message: error.message }],
 								status: StatusCodes.BadRequest,
+								headers: {},
+								cookies: {},
+								contentType: 'application/json',
 							})
-						: new Response({
+						: new Response<any>({
 								body: [{ message: 'Something went wrong', data: error.message }],
 								status: StatusCodes.BadRequest,
+								headers: {},
+								cookies: {},
+								contentType: 'application/json',
 							})
 			return await this.handleResponse(res, response)
 		})
@@ -387,7 +420,7 @@ export abstract class Server {
 }
 
 if (import.meta.vitest) {
-	const { describe, expect, test } = import.meta.vitest
+	const { describe, expect, expectTypeOf, test } = import.meta.vitest
 
 	const testInstanceState = globalThis as typeof globalThis & { __equippedTestInstanceAliased?: boolean }
 
@@ -487,6 +520,33 @@ if (import.meta.vitest) {
 			return { handledResponse: this.handledResponse, rawResponse }
 		}
 	}
+
+	describe('Server Route Contracts', () => {
+		test('addRouter returns a server widened with public router routes', () => {
+			ensureTestInstance()
+			const router = new Router({ path: '/api' }).get('/ping', {
+				schema: {
+					response: v.object({ ok: v.boolean() }),
+				},
+			})(() => ({ ok: true }))
+
+			const _server = new TestServer().addRouter(router)
+			type Contract = RouteContractOf<typeof _server>
+
+			expectTypeOf<RouteOutput<Contract, 'get', '/api/ping'>['body']>().toEqualTypeOf<{ ok: boolean }>()
+		})
+
+		test('addRouter excludes hidden routes from the public route contract but keeps them in duplicate checks', () => {
+			ensureTestInstance()
+			const hidden = new Router().get('/internal', { hide: true })(() => null)
+			const visibleDuplicate = new Router().get('/internal')(() => null)
+			const server = new TestServer().addRouter(hidden)
+
+			expectTypeOf<RouteContractOf<typeof server>>().toEqualTypeOf<{}>()
+			// @ts-expect-error duplicate route identity: get /internal
+			server.addRouter(visibleDuplicate)
+		})
+	})
 
 	describe('Server before-listen handlers', () => {
 		test('runs before-listen handlers before adapter listen in registration order', async () => {
