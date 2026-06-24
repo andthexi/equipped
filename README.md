@@ -574,9 +574,9 @@ const artifact = X.from(args)
 
 This pattern applies only to **definitions** (static artifact construction). **Operations** (Repo method calls, `repo.session()`, op helpers like `set()`) use direct function calls.
 
-## Caching (Redis)
+## Caching
 
-A simple and effective caching layer backed by Redis is available on the instance.
+A simple and effective caching layer is available for string values.
 
 ```typescript
 // Set a value with a TTL of 60 seconds
@@ -591,6 +591,19 @@ const data = await instance.cache.getOrSet('expensive-data', async () => {
     // some expensive operation
     return { result: 42 };
 }, 3600); // Cache for 1 hour
+```
+
+For local file-backed cache persistence, use the JSON Cache adapter. It loads
+from disk during `Instance.start()`, then eagerly persists cache mutations back
+to the configured file.
+
+```typescript
+import { JsonCache } from 'equipped/cache/adapters/json';
+
+const cache = JsonCache.create({ filePath: './.cache/equipped-cache.json' });
+await instance.start();
+
+await cache.set('my-key', 'value', 60);
 ```
 
 ## Job Queue (Redis)

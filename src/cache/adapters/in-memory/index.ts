@@ -1,43 +1,32 @@
 import { v } from 'valleyed'
 
+import { InMemoryCacheStore } from './store'
 import { Instance } from '../../../instance'
 import { configurable } from '../../../utilities'
 import { Cache } from '../base'
 
-type CacheEntry = {
-	data: string
-	expiredAt?: number
-}
-
 export const inMemoryCacheConfigPipe = () => v.object({})
 
 export class InMemoryCache extends configurable(inMemoryCacheConfigPipe, Cache) {
-	#caches = new Map<string, CacheEntry>()
+	readonly #store = new InMemoryCacheStore()
 	#interval?: ReturnType<typeof setInterval>
 
 	protected constructor(config: typeof InMemoryCache.Config) {
 		super(config)
 		Instance.on('start', async () => {
-			this.#interval = setInterval(() => {
-				const now = Date.now()
-				for (const [key, record] of this.#caches.entries()) {
-					if (record.expiredAt && record.expiredAt <= now) this.#caches.delete(key)
-				}
-			}, 5000)
+			this.#interval = setInterval(() => this.#store.sweepExpired(), 5000)
 		}, { class: InMemoryCache })
 		Instance.on('close', async () => clearInterval(this.#interval), { class: InMemoryCache })
 	}
 
 	async delete(key: string) {
-		this.#caches.delete(this.getScopedKey(key))
+		this.#store.delete(this.getScopedKey(key))
 	}
 	async get(key: string) {
-		const record = this.#caches.get(this.getScopedKey(key))
-		if (record && (record.expiredAt === undefined || record.expiredAt > Date.now())) return record.data
-		return null
+		return this.#store.get(this.getScopedKey(key)).data
 	}
 	async set(key: string, data: string, ttlInSecs?: number) {
-		this.#caches.set(this.getScopedKey(key), { data, expiredAt: ttlInSecs ? Date.now() + ttlInSecs * 1000 : undefined })
+		this.#store.set(this.getScopedKey(key), data, ttlInSecs)
 	}
 }
 

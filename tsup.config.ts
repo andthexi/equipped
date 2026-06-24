@@ -5,6 +5,7 @@ const entry = [
 	'src/index.ts',
 	'src/cache/index.ts',
 	'src/cache/adapters/in-memory/index.ts',
+	'src/cache/adapters/json/index.ts',
 	'src/cache/adapters/redis/index.ts',
 	'src/dbs/index.ts',
 	'src/dbs/adapters/mongodb/index.ts',

@@ -9,6 +9,7 @@ canonical location).
 
 | Context     | Domain doc                  |
 | ----------- | --------------------------- |
+| `cache`     | `docs/cache/CONTEXT.md`     |
 | `orm`       | `docs/orm/CONTEXT.md`       |
 | `instance`  | `docs/instance/CONTEXT.md`  |
 | `server`    | `docs/server/CONTEXT.md`    |

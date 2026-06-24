@@ -52,6 +52,17 @@
 				"default": "./dist/esm/cache/adapters/in-memory/index.mjs"
 			}
 		},
+		"./cache/adapters/json": {
+			"types": "./dist/types/cache/adapters/json/index.d.ts",
+			"require": {
+				"min": "./dist/cjs/cache/adapters/json/index.min.cjs",
+				"default": "./dist/cjs/cache/adapters/json/index.cjs"
+			},
+			"import": {
+				"min": "./dist/esm/cache/adapters/json/index.min.mjs",
+				"default": "./dist/esm/cache/adapters/json/index.mjs"
+			}
+		},
 		"./cache/adapters/redis": {
 			"types": "./dist/types/cache/adapters/redis/index.d.ts",
 			"require": {
