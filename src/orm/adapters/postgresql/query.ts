@@ -10,6 +10,10 @@ function mapField(field: string, primaryKey: string): string {
 	return field
 }
 
+function likeLiteral(value: unknown): string {
+	return `%${String(value).replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`
+}
+
 function compileOps(f: Filter, field: string, nextParam: (v: unknown) => string): string {
 	switch (f.op) {
 		case 'eq':
@@ -29,7 +33,7 @@ function compileOps(f: Filter, field: string, nextParam: (v: unknown) => string)
 		case 'notIn':
 			return `NOT (${field} = ANY(${nextParam(f.value)}))`
 		case 'like':
-			return `${field} ILIKE ${nextParam(`%${f.value}%`)}`
+			return `${field} ILIKE ${nextParam(likeLiteral(f.value))} ESCAPE '\\'`
 		case 'exists':
 			return `${field} IS NOT NULL`
 		case 'notExists':
@@ -412,6 +416,14 @@ if (import.meta.vitest) {
 			const { sql, params } = buildSelectQuery(group, undefined, 'users', 'id')
 			expect(sql).toContain('"name" ILIKE $1')
 			expect(params).toEqual(['%ali%'])
+		})
+
+		test('like escapes sql wildcard characters for literal substring matching', () => {
+			const group = FilterGroup.create().like('name', String.raw`a%b_c\d`)
+			const { sql, params } = buildSelectQuery(group, undefined, 'users', 'id')
+
+			expect(sql).toContain('"name" ILIKE $1 ESCAPE')
+			expect(params).toEqual([String.raw`%a\%b\_c\\d%`])
 		})
 
 		test('exists compiles to IS NOT NULL (own op, not boolean form)', () => {

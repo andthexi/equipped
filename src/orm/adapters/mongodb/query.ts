@@ -53,6 +53,10 @@ function mapField(field: string, primaryKey: string): string {
 	return field
 }
 
+function regexLiteral(value: unknown): RegExp {
+	return new RegExp(String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+}
+
 function compileFilter(f: Filter, primaryKey: string): MongoFilter {
 	const field = mapField(f.field, primaryKey)
 
@@ -74,7 +78,7 @@ function compileFilter(f: Filter, primaryKey: string): MongoFilter {
 		case 'notIn':
 			return { [field]: { $nin: f.value } }
 		case 'like':
-			return { [field]: { $regex: new RegExp(String(f.value), 'i') } }
+			return { [field]: { $regex: regexLiteral(f.value) } }
 		case 'exists':
 			return { [field]: { $exists: true, $ne: null } }
 		case 'notExists':
@@ -240,6 +244,15 @@ if (import.meta.vitest) {
 			const regex = (result.name as any).$regex as RegExp
 			expect(regex.flags).toBe('i')
 			expect(regex.test('Alice')).toBe(true)
+		})
+
+		test('like treats regex metacharacters as literal text', () => {
+			const group = FilterGroup.create().like('name', 'a.b')
+			const result = compileMongoFilter(group, 'id')
+			const regex = (result.name as any).$regex as RegExp
+
+			expect(regex.test('A.B')).toBe(true)
+			expect(regex.test('acb')).toBe(false)
 		})
 
 		test('exists compiles to $exists: true, $ne: null', () => {

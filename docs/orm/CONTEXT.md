@@ -511,7 +511,9 @@ form is self-describing.
 
 `notExists` is its own enum value, **not** a boolean form of `'exists'`. Each
 op has at most one `value` payload; no op overloads its `value` field as a
-flag.
+flag. The `like` op means case-insensitive literal substring matching;
+adapters must not expose SQL wildcard or regular-expression semantics through
+`like` values.
 
 ### 4.2 Canonical update-op set
 

@@ -1631,6 +1631,20 @@ if (import.meta.vitest) {
 			expect(results[0].name).toBe('Alice')
 		})
 
+		test('like filter op treats pattern characters as literal text', async () => {
+			const { repo } = makeE2eRepo()
+			await repo.on(TestSchema).one().create({ name: 'A.B', age: 10, active: true, tags: [] })
+			await repo.on(TestSchema).one().create({ name: 'ACB', age: 10, active: true, tags: [] })
+
+			const results = await repo
+				.on(TestSchema)
+				.all()
+				.where((q) => q.like(TestSchema.fields.name, 'a.b'))
+				.find()
+
+			expect(results.map((result) => result.name)).toEqual(['A.B'])
+		})
+
 		test('exists filter op matches non-null values', async () => {
 			const { repo } = makeE2eRepo()
 			await seedData(repo)
