@@ -1,4 +1,5 @@
-import { readFile, rename, writeFile } from 'node:fs/promises'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 
 import { v } from 'valleyed'
 
@@ -25,21 +26,31 @@ const jsonCacheFilePipe = v.fromJson(
 )
 v.compile(jsonCacheFilePipe, { allErrors: true })
 
+const fileLockStore = new AsyncLocalStorage<Set<string>>()
+
 export class JsonCache extends configurable(jsonCacheConfigPipe, Cache) {
 	readonly #store = new InMemoryCacheStore()
 	#interval?: ReturnType<typeof setInterval>
 	#started = false
-	#writeQueue: Promise<void> = Promise.resolve()
+	#operationQueue: Promise<unknown> = Promise.resolve()
 
 	protected constructor(config: typeof JsonCache.Config) {
 		super(config)
-		Instance.on('start', async () => {
-			await this.#start()
-		}, { class: JsonCache })
-		Instance.on('close', async () => {
-			clearInterval(this.#interval)
-			await this.#writeQueue
-		}, { class: JsonCache })
+		Instance.on(
+			'start',
+			async () => {
+				await this.#start()
+			},
+			{ class: JsonCache },
+		)
+		Instance.on(
+			'close',
+			async () => {
+				clearInterval(this.#interval)
+				await this.#operationQueue
+			},
+			{ class: JsonCache },
+		)
 	}
 
 	#operationError(message: string, operation: string, cause?: unknown) {
@@ -60,35 +71,98 @@ export class JsonCache extends configurable(jsonCacheConfigPipe, Cache) {
 		await rename(tmpPath, this.config.filePath)
 	}
 
-	#persistToDisk(operation: string): Promise<void> {
-		const next = this.#writeQueue.then(() => this.#atomicWrite())
-		this.#writeQueue = next.catch(() => {})
-		return next.catch((error) => {
-			throw this.#operationError('JsonCache failed to persist cache file', operation, error)
+	#enqueue<T>(run: () => Promise<T>): Promise<T> {
+		const next = this.#operationQueue.then(run, run)
+		this.#operationQueue = next.then(
+			() => undefined,
+			() => undefined,
+		)
+		return next
+	}
+
+	async #withFileLock<T>(operation: string, run: () => Promise<T>): Promise<T> {
+		const lockPath = this.#lockPath()
+		const activeLocks = fileLockStore.getStore()
+		if (activeLocks?.has(lockPath)) return run()
+		return this.#enqueue(async () => {
+			const locked = await this.#acquireLockFile(operation)
+			try {
+				return await fileLockStore.run(new Set([...(activeLocks ?? []), lockPath]), run)
+			} finally {
+				if (locked) await this.#releaseLockFile()
+			}
 		})
 	}
 
-	async #loadFromDisk(): Promise<boolean> {
+	async #acquireLockFile(operation: string): Promise<boolean> {
+		const lockPath = this.#lockPath()
+		const deadline = Date.now() + 30_000
+		while (true) {
+			try {
+				const handle = await open(lockPath, 'wx')
+				await handle.close()
+				return true
+			} catch (error: any) {
+				if (error?.code === 'ENOENT' && operation === 'start') return false
+				if (error?.code !== 'EEXIST') throw this.#operationError('JsonCache failed to acquire cache file lock', operation, error)
+				if (Date.now() > deadline) throw this.#operationError('JsonCache timed out waiting for cache file lock', operation, error)
+				await new Promise((resolve) => setTimeout(resolve, 50))
+			}
+		}
+	}
+
+	async #releaseLockFile(): Promise<void> {
+		await unlink(this.#lockPath()).catch(() => {})
+	}
+
+	#lockPath(): string {
+		return this.config.filePath + '.lock'
+	}
+
+	async #loadFromDisk(operation: string): Promise<boolean> {
 		let raw: string
 		try {
 			raw = await readFile(this.config.filePath, 'utf-8')
 		} catch (error: any) {
-			if (error?.code === 'ENOENT') return false
-			throw this.#operationError('JsonCache failed to read persisted cache file', 'start', error)
+			if (error?.code === 'ENOENT') {
+				this.#store.restore({})
+				return false
+			}
+			throw this.#operationError('JsonCache failed to read persisted cache file', operation, error)
 		}
 
 		const validity = v.validate(jsonCacheFilePipe, raw)
-		if (!validity.valid) throw this.#operationError('JsonCache persisted cache file is invalid', 'start', validity.error)
+		if (!validity.valid) throw this.#operationError('JsonCache persisted cache file is invalid', operation, validity.error)
 		this.#store.restore(validity.value.entries)
 		return true
 	}
 
+	async #persistToDisk(operation: string): Promise<void> {
+		try {
+			await this.#atomicWrite()
+		} catch (error) {
+			throw this.#operationError('JsonCache failed to persist cache file', operation, error)
+		}
+	}
+
+	async #withCurrentFile<T>(operation: string, persist: boolean, run: () => T | Promise<T>): Promise<T> {
+		this.#assertStarted(operation)
+		return this.#withFileLock(operation, async () => {
+			await this.#loadFromDisk(operation)
+			const result = await run()
+			if (persist) await this.#persistToDisk(operation)
+			return result
+		})
+	}
+
 	async #start() {
 		if (this.#started) return
-		const loadedFromDisk = await this.#loadFromDisk()
-		const removedExpired = this.#store.sweepExpired()
-		if (loadedFromDisk && removedExpired) await this.#persistToDisk('start')
-		this.#started = true
+		await this.#withFileLock('start', async () => {
+			const loadedFromDisk = await this.#loadFromDisk('start')
+			const removedExpired = this.#store.sweepExpired()
+			if (loadedFromDisk && removedExpired) await this.#persistToDisk('start')
+			this.#started = true
+		})
 		this.#interval = setInterval(() => {
 			void this.#persistExpiredSweep().catch((error) => {
 				Instance.crash(this.#operationError('JsonCache expiry sweep failed', 'sweep', error))
@@ -98,26 +172,31 @@ export class JsonCache extends configurable(jsonCacheConfigPipe, Cache) {
 
 	async #persistExpiredSweep() {
 		if (!this.#started) return
-		if (this.#store.sweepExpired()) await this.#persistToDisk('sweep')
+		await this.#withFileLock('sweep', async () => {
+			await this.#loadFromDisk('sweep')
+			if (this.#store.sweepExpired()) await this.#persistToDisk('sweep')
+		})
 	}
 
 	async delete(key: string) {
-		this.#assertStarted('delete')
-		const changed = this.#store.delete(this.getScopedKey(key))
-		if (changed) await this.#persistToDisk('delete')
+		return this.#withCurrentFile('delete', false, async () => {
+			const changed = this.#store.delete(this.getScopedKey(key))
+			if (changed) await this.#persistToDisk('delete')
+		})
 	}
 
 	async get(key: string) {
-		this.#assertStarted('get')
-		const result = this.#store.get(this.getScopedKey(key))
-		if (result.deletedExpired) await this.#persistToDisk('get')
-		return result.data
+		return this.#withCurrentFile('get', false, async () => {
+			const result = this.#store.get(this.getScopedKey(key))
+			if (result.deletedExpired) await this.#persistToDisk('get')
+			return result.data
+		})
 	}
 
 	async set(key: string, data: string, ttlInSecs?: number) {
-		this.#assertStarted('set')
-		this.#store.set(this.getScopedKey(key), data, ttlInSecs)
-		await this.#persistToDisk('set')
+		return this.#withCurrentFile('set', true, () => {
+			this.#store.set(this.getScopedKey(key), data, ttlInSecs)
+		})
 	}
 }
 
@@ -221,7 +300,7 @@ if (import.meta.vitest) {
 			expect(await readPersistedEntries()).toEqual({ entries: { [instance.getScopedName('key', ':')]: { data: 'value' } } })
 		})
 
-		test('start loading is idempotent for an adapter instance', async () => {
+		test('operations reload latest persisted data after start', async () => {
 			const instance = ensureInstance()
 			const scopedKey = instance.getScopedName('key', ':')
 			await writeFileForTest(filePath, JSON.stringify({ entries: { [scopedKey]: { data: 'first' } } }), 'utf-8')
@@ -232,7 +311,7 @@ if (import.meta.vitest) {
 			await writeFileForTest(filePath, JSON.stringify({ entries: { [scopedKey]: { data: 'second' } } }), 'utf-8')
 			await instance.start()
 
-			expect(await cache.get('key')).toBe('first')
+			expect(await cache.get('key')).toBe('second')
 		})
 
 		test('persists absolute expiry timestamps and deletes expired entries discovered by get', async () => {
@@ -307,6 +386,20 @@ if (import.meta.vitest) {
 			await cache.set('key', 'value')
 			await cache.delete('key')
 			expect(await readPersistedEntries()).toEqual({ entries: {} })
+		})
+
+		test('writes from separate stale cache instances merge against the latest file', async () => {
+			const instance = ensureInstance()
+			const first = JsonCache.create({ filePath })
+			const second = JsonCache.create({ filePath })
+			await instance.start()
+
+			await first.set('first', 'one')
+			await second.set('second', 'two')
+
+			const persisted = await readPersistedEntries()
+			expect(persisted.entries[instance.getScopedName('first', ':')]).toEqual({ data: 'one' })
+			expect(persisted.entries[instance.getScopedName('second', ':')]).toEqual({ data: 'two' })
 		})
 
 		test('rejects foreground mutations when the file cannot be written', async () => {

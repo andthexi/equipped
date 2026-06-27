@@ -92,7 +92,11 @@ An **Adapter** is a class — a subclass of the abstract `OrmAdapter` base —
 that the framework instantiates and calls to talk to a specific database.
 Adapters are typically bound to a specific database driver/SDK. The package
 ships a small set of in-tree reference adapters (in-memory, json, postgresql,
-mongodb); production targets the package doesn't cover are user-supplied.
+mongodb); production targets the package doesn't cover are user-supplied. The
+JSON reference adapter is local-file persistence: every adapter operation
+acquires the file lock, reloads the latest JSON snapshot, applies its read or
+write, and persists only write operations. `disconnect()` waits for pending work
+but does not write a stale in-memory snapshot.
 
 An Adapter is **not** a builder (Schema, Relations, and Repo are; Adapter is
 not — see §2.2 for the carve-out). It is **not** a connection (the connection

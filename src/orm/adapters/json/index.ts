@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 
 import { v } from 'valleyed'
@@ -5,7 +6,20 @@ import { v } from 'valleyed'
 import { configurable } from '../../../utilities/configurable'
 import type { FilterGroup } from '../../filter'
 import type { DiscoveredSchema } from '../../migrations/introspection-types'
-import type { AddFieldChange, AddForeignKeyChange, AddIndexChange, AnyFieldSpec, CreateTableChange, DropFieldChange, DropForeignKeyChange, DropIndexChange, DropTableChange, ModifyFieldChange, RenameFieldChange, RenameTableChange } from '../../migrations/types'
+import type {
+	AddFieldChange,
+	AddForeignKeyChange,
+	AddIndexChange,
+	AnyFieldSpec,
+	CreateTableChange,
+	DropFieldChange,
+	DropForeignKeyChange,
+	DropIndexChange,
+	DropTableChange,
+	ModifyFieldChange,
+	RenameFieldChange,
+	RenameTableChange,
+} from '../../migrations/types'
 import { OrmAdapter, type AggregateSpec } from '../../orm-adapter'
 import type { IterationQueryOptions, QueryOptions } from '../../query-options'
 import type { AnySchema } from '../../schema'
@@ -19,6 +33,9 @@ const jsonConnectionPipe = () =>
 		filePath: v.string(),
 	})
 
+const fileLockStore = new AsyncLocalStorage<Set<string>>()
+const fileSessionStore = new AsyncLocalStorage<Set<string>>()
+
 export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 	readonly schemaConfigPipe = v.object({ table: v.string() })
 
@@ -29,7 +46,7 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 	readonly updateOps = this.#inMemory.updateOps
 	readonly aggregateOps = this.#inMemory.aggregateOps
 
-	#writeQueue: Promise<void> = Promise.resolve()
+	#operationQueue: Promise<unknown> = Promise.resolve()
 
 	protected constructor(config: typeof JsonAdapter.Config) {
 		super(config)
@@ -87,29 +104,96 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 		await rename(tmpPath, this.config.filePath)
 	}
 
-	#persistToDisk(): Promise<void> {
-		const next = this.#writeQueue.then(() => this.#atomicWrite())
-		this.#writeQueue = next.catch(() => {})
+	#enqueue<T>(run: () => Promise<T>): Promise<T> {
+		const next = this.#operationQueue.then(run, run)
+		this.#operationQueue = next.then(
+			() => undefined,
+			() => undefined,
+		)
 		return next
 	}
 
-	async connect(): Promise<void> {
+	async #withFileLock<T>(run: () => Promise<T>): Promise<T> {
+		const lockPath = this.#lockPath()
+		const activeLocks = fileLockStore.getStore()
+		if (activeLocks?.has(lockPath)) return run()
+		return this.#enqueue(async () => {
+			await this.#acquireLockFile()
+			try {
+				return await fileLockStore.run(new Set([...(activeLocks ?? []), lockPath]), run)
+			} finally {
+				await this.#releaseLockFile()
+			}
+		})
+	}
+
+	async #acquireLockFile(): Promise<void> {
+		const lockPath = this.#lockPath()
+		const deadline = Date.now() + 30_000
+		while (true) {
+			try {
+				const handle = await open(lockPath, 'wx')
+				await handle.close()
+				return
+			} catch (err: any) {
+				if (err.code !== 'EEXIST') throw err
+				if (Date.now() > deadline) throw new Error('Timed out waiting for json adapter file lock')
+				await new Promise((resolve) => setTimeout(resolve, 50))
+			}
+		}
+	}
+
+	async #releaseLockFile(): Promise<void> {
+		await unlink(this.#lockPath()).catch(() => {})
+	}
+
+	#lockPath(): string {
+		return this.config.filePath + '.lock'
+	}
+
+	async #withCurrentFile<T>(persist: boolean, run: () => Promise<T>): Promise<T> {
+		if (fileSessionStore.getStore()?.has(this.#lockPath())) return run()
+		return this.#withFileLock(async () => {
+			await this.#loadFromDisk()
+			const result = await run()
+			if (persist) await this.#atomicWrite()
+			return result
+		})
+	}
+
+	async #persistCurrentFileIfNeeded(shouldPersist: boolean): Promise<void> {
+		if (shouldPersist && !fileSessionStore.getStore()?.has(this.#lockPath())) await this.#atomicWrite()
+	}
+
+	async #loadFromDisk(): Promise<void> {
 		let raw: string
 		try {
 			raw = await readFile(this.config.filePath, 'utf-8')
-		} catch {
+		} catch (error: any) {
+			if (error?.code !== 'ENOENT') throw error
+			this.#clearInMemory()
 			return
 		}
-		const data = JSON.parse(raw) as Record<string, unknown>
+		this.#restoreFromDisk(JSON.parse(raw) as Record<string, unknown>)
+	}
 
+	#clearInMemory(): void {
 		this.#inMemory.migrations.clear()
+		this.#inMemory.tables.clear()
+		this.#inMemory.indexes.clear()
+		this.#inMemory.foreignKeys.clear()
+		this.stores.clear()
+	}
+
+	#restoreFromDisk(data: Record<string, unknown>): void {
+		this.#clearInMemory()
+
 		if (Array.isArray(data['__migrations'])) {
 			for (const m of data['__migrations'] as Array<{ id: string; appliedAt: number }>) {
 				this.#inMemory.migrations.set(m.id, { id: m.id, appliedAt: m.appliedAt })
 			}
 		}
 
-		this.#inMemory.tables.clear()
 		if (data['__tables'] && typeof data['__tables'] === 'object') {
 			for (const [name, meta] of Object.entries(data['__tables'] as Record<string, any>)) {
 				const fields = new Map<string, AnyFieldSpec>()
@@ -122,21 +206,18 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 			}
 		}
 
-		this.#inMemory.indexes.clear()
 		if (data['__indexes'] && typeof data['__indexes'] === 'object') {
 			for (const [name, meta] of Object.entries(data['__indexes'] as Record<string, any>)) {
 				this.#inMemory.indexes.set(name, { table: meta.table, on: meta.on, unique: meta.unique })
 			}
 		}
 
-		this.#inMemory.foreignKeys.clear()
 		if (data['__foreignKeys'] && typeof data['__foreignKeys'] === 'object') {
 			for (const [name, meta] of Object.entries(data['__foreignKeys'] as Record<string, any>)) {
 				this.#inMemory.foreignKeys.set(name, meta)
 			}
 		}
 
-		this.stores.clear()
 		for (const [name, records] of Object.entries(data)) {
 			if (name.startsWith('__')) continue
 			const store = new Map<string, Record<string, unknown>>()
@@ -147,162 +228,151 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 		}
 	}
 
+	async connect(): Promise<void> {
+		await this.#withFileLock(async () => await this.#loadFromDisk())
+	}
+
 	async disconnect(): Promise<void> {
-		await this.#persistToDisk()
+		await this.#operationQueue
 	}
 
 	async findByPk(schema: AnySchema, config: unknown, pk: unknown) {
-		return this.#inMemory.findByPk(schema, config, pk)
+		return this.#withCurrentFile(false, async () => await this.#inMemory.findByPk(schema, config, pk))
 	}
 
 	async createMany(schema: AnySchema, config: unknown, data: Record<string, unknown>[]) {
-		const result = await this.#inMemory.createMany(schema, config, data)
-		await this.#persistToDisk()
-		return result
+		return this.#withCurrentFile(true, async () => await this.#inMemory.createMany(schema, config, data))
 	}
 
 	async updateByPk(schema: AnySchema, config: unknown, pk: unknown, ops: AnyUpdateOp[]) {
-		const result = await this.#inMemory.updateByPk(schema, config, pk, ops)
-		if (result) await this.#persistToDisk()
-		return result
+		return this.#withCurrentFile(false, async () => {
+			const result = await this.#inMemory.updateByPk(schema, config, pk, ops)
+			await this.#persistCurrentFileIfNeeded(result !== null)
+			return result
+		})
 	}
 
 	async deleteByPk(schema: AnySchema, config: unknown, pk: unknown) {
-		const result = await this.#inMemory.deleteByPk(schema, config, pk)
-		if (result) await this.#persistToDisk()
-		return result
+		return this.#withCurrentFile(false, async () => {
+			const result = await this.#inMemory.deleteByPk(schema, config, pk)
+			await this.#persistCurrentFileIfNeeded(result !== null)
+			return result
+		})
 	}
 
 	async findMany(schema: AnySchema, config: unknown, group: FilterGroup, options?: QueryOptions) {
-		return this.#inMemory.findMany(schema, config, group, options)
+		return this.#withCurrentFile(false, async () => await this.#inMemory.findMany(schema, config, group, options))
 	}
 
 	async count(schema: AnySchema, config: unknown, group: FilterGroup) {
-		return this.#inMemory.count(schema, config, group)
+		return this.#withCurrentFile(false, async () => await this.#inMemory.count(schema, config, group))
 	}
 
-	iterateMany(schema: AnySchema, config: unknown, group: FilterGroup, options?: IterationQueryOptions) {
-		return this.#inMemory.iterateMany(schema, config, group, options)
+	async *iterateMany(schema: AnySchema, config: unknown, group: FilterGroup, options?: IterationQueryOptions) {
+		const rows = await this.#withCurrentFile(false, async () => {
+			const results: Record<string, unknown>[] = []
+			for await (const row of this.#inMemory.iterateMany(schema, config, group, options)) results.push(row)
+			return results
+		})
+		for (const row of rows) yield row
 	}
 
 	async updateMany(schema: AnySchema, config: unknown, group: FilterGroup, data: Record<string, unknown>) {
-		const result = await this.#inMemory.updateMany(schema, config, group, data)
-		if (result.length) await this.#persistToDisk()
-		return result
+		return this.#withCurrentFile(false, async () => {
+			const result = await this.#inMemory.updateMany(schema, config, group, data)
+			await this.#persistCurrentFileIfNeeded(result.length > 0)
+			return result
+		})
 	}
 
 	async deleteMany(schema: AnySchema, config: unknown, filter: FilterGroup) {
-		const result = await this.#inMemory.deleteMany(schema, config, filter)
-		if (result.length) await this.#persistToDisk()
-		return result
+		return this.#withCurrentFile(false, async () => {
+			const result = await this.#inMemory.deleteMany(schema, config, filter)
+			await this.#persistCurrentFileIfNeeded(result.length > 0)
+			return result
+		})
 	}
 
 	async upsertOne(schema: AnySchema, config: unknown, filter: FilterGroup, create: Record<string, unknown>, ops: AnyUpdateOp[]) {
-		const result = await this.#inMemory.upsertOne(schema, config, filter, create, ops)
-		await this.#persistToDisk()
-		return result
+		return this.#withCurrentFile(true, async () => await this.#inMemory.upsertOne(schema, config, filter, create, ops))
 	}
 
 	async aggregate(schema: AnySchema, config: unknown, spec: AggregateSpec) {
-		return this.#inMemory.aggregate(schema, config, spec)
+		return this.#withCurrentFile(false, async () => await this.#inMemory.aggregate(schema, config, spec))
 	}
 
 	async session<T>(fn: () => Promise<T>): Promise<T> {
-		return this.#inMemory.session(async () => {
-			const result = await fn()
-			await this.#persistToDisk()
+		const lockPath = this.#lockPath()
+		const activeSessions = fileSessionStore.getStore()
+		if (activeSessions?.has(lockPath)) return this.#inMemory.session(fn)
+		return this.#withFileLock(async () => {
+			await this.#loadFromDisk()
+			const result = await fileSessionStore.run(new Set([...(activeSessions ?? []), lockPath]), async () =>
+				this.#inMemory.session(fn),
+			)
+			await this.#atomicWrite()
 			return result
 		})
 	}
 
 	async loadMigrations(): Promise<{ id: string; appliedAt: number }[]> {
-		await this.connect()
-		return this.#inMemory.loadMigrations()
+		return this.#withCurrentFile(false, async () => await this.#inMemory.loadMigrations())
 	}
 
 	async recordMigration(id: string, appliedAt: number): Promise<void> {
-		await this.#inMemory.recordMigration(id, appliedAt)
-		await this.#persistToDisk()
+		return this.#withCurrentFile(true, async () => await this.#inMemory.recordMigration(id, appliedAt))
 	}
 
 	async acquireMigrationLock<T>(fn: () => Promise<T>): Promise<T> {
-		const lockPath = this.config.filePath + '.lock'
-		const deadline = Date.now() + 30_000
-		while (true) {
-			try {
-				const handle = await open(lockPath, 'wx')
-				await handle.close()
-				break
-			} catch (err: any) {
-				if (err.code !== 'EEXIST') throw err
-				if (Date.now() > deadline) throw new Error('Timed out waiting for migration lock')
-				await new Promise((r) => setTimeout(r, 50))
-			}
-		}
-		try {
-			return await fn()
-		} finally {
-			await unlink(lockPath).catch(() => {})
-		}
+		return this.#withFileLock(fn)
 	}
 
 	async applyCreateTable(change: CreateTableChange<any>): Promise<void> {
-		await this.#inMemory.applyCreateTable(change)
-		await this.#persistToDisk()
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyCreateTable(change))
 	}
 
 	async applyDropTable(change: DropTableChange): Promise<void> {
-		await this.#inMemory.applyDropTable(change)
-		await this.#persistToDisk()
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropTable(change))
 	}
 
 	async applyAddField(change: AddFieldChange<any>): Promise<void> {
-		await this.#inMemory.applyAddField(change)
-		await this.#persistToDisk()
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddField(change))
 	}
 
 	async applyDropField(change: DropFieldChange): Promise<void> {
-		await this.#inMemory.applyDropField(change)
-		await this.#persistToDisk()
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropField(change))
 	}
 
 	async applyModifyField(change: ModifyFieldChange<any>): Promise<void> {
-		await this.#inMemory.applyModifyField(change)
-		await this.#persistToDisk()
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyModifyField(change))
 	}
 
 	async applyRenameTable(change: RenameTableChange): Promise<void> {
-		await this.#inMemory.applyRenameTable(change)
-		await this.#persistToDisk()
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyRenameTable(change))
 	}
 
 	async applyRenameField(change: RenameFieldChange): Promise<void> {
-		await this.#inMemory.applyRenameField(change)
-		await this.#persistToDisk()
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyRenameField(change))
 	}
 
 	async applyAddIndex(change: AddIndexChange): Promise<void> {
-		await this.#inMemory.applyAddIndex(change)
-		await this.#persistToDisk()
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddIndex(change))
 	}
 
 	async applyDropIndex(change: DropIndexChange): Promise<void> {
-		await this.#inMemory.applyDropIndex(change)
-		await this.#persistToDisk()
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropIndex(change))
 	}
 
 	async applyAddForeignKey(change: AddForeignKeyChange): Promise<void> {
-		await this.#inMemory.applyAddForeignKey(change)
-		await this.#persistToDisk()
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddForeignKey(change))
 	}
 
 	async applyDropForeignKey(change: DropForeignKeyChange): Promise<void> {
-		await this.#inMemory.applyDropForeignKey(change)
-		await this.#persistToDisk()
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropForeignKey(change))
 	}
 
 	async introspect(): Promise<DiscoveredSchema[]> {
-		return this.#inMemory.introspect()
+		return this.#withCurrentFile(false, async () => await this.#inMemory.introspect())
 	}
 }
 
@@ -666,48 +736,64 @@ if (import.meta.vitest) {
 
 		test('count returns identical result to in-memory', async () => {
 			const adapter = await makeSeededAdapter()
-			const result = await adapter.aggregate(orderSchema, { table: 'orders' }, {
-				aggregates: [{ fn: 'count', alias: 'total' }],
-				groupBy: [],
-			})
+			const result = await adapter.aggregate(
+				orderSchema,
+				{ table: 'orders' },
+				{
+					aggregates: [{ fn: 'count', alias: 'total' }],
+					groupBy: [],
+				},
+			)
 			expect(result).toEqual([{ total: 3 }])
 			await adapter.disconnect()
 		})
 
 		test('countDistinct returns identical result to in-memory', async () => {
 			const adapter = await makeSeededAdapter()
-			const result = await adapter.aggregate(orderSchema, { table: 'orders' }, {
-				aggregates: [{ fn: 'countDistinct', field: 'region', alias: 'uniqueRegions' }],
-				groupBy: [],
-			})
+			const result = await adapter.aggregate(
+				orderSchema,
+				{ table: 'orders' },
+				{
+					aggregates: [{ fn: 'countDistinct', field: 'region', alias: 'uniqueRegions' }],
+					groupBy: [],
+				},
+			)
 			expect(result).toEqual([{ uniqueRegions: 2 }])
 			await adapter.disconnect()
 		})
 
 		test('sum, avg, min, max return identical results to in-memory', async () => {
 			const adapter = await makeSeededAdapter()
-			const result = await adapter.aggregate(orderSchema, { table: 'orders' }, {
-				aggregates: [
-					{ fn: 'sum', field: 'amount', alias: 'totalAmount' },
-					{ fn: 'avg', field: 'amount', alias: 'avgAmount' },
-					{ fn: 'min', field: 'amount', alias: 'minAmount' },
-					{ fn: 'max', field: 'amount', alias: 'maxAmount' },
-				],
-				groupBy: [],
-			})
+			const result = await adapter.aggregate(
+				orderSchema,
+				{ table: 'orders' },
+				{
+					aggregates: [
+						{ fn: 'sum', field: 'amount', alias: 'totalAmount' },
+						{ fn: 'avg', field: 'amount', alias: 'avgAmount' },
+						{ fn: 'min', field: 'amount', alias: 'minAmount' },
+						{ fn: 'max', field: 'amount', alias: 'maxAmount' },
+					],
+					groupBy: [],
+				},
+			)
 			expect(result).toEqual([{ totalAmount: 450, avgAmount: 150, minAmount: 100, maxAmount: 200 }])
 			await adapter.disconnect()
 		})
 
 		test('groupBy returns identical results to in-memory', async () => {
 			const adapter = await makeSeededAdapter()
-			const result = await adapter.aggregate(orderSchema, { table: 'orders' }, {
-				aggregates: [
-					{ fn: 'count', alias: 'cnt' },
-					{ fn: 'sum', field: 'amount', alias: 'total' },
-				],
-				groupBy: ['region'],
-			})
+			const result = await adapter.aggregate(
+				orderSchema,
+				{ table: 'orders' },
+				{
+					aggregates: [
+						{ fn: 'count', alias: 'cnt' },
+						{ fn: 'sum', field: 'amount', alias: 'total' },
+					],
+					groupBy: ['region'],
+				},
+			)
 			const sorted = result.sort((a, b) => String(a.region).localeCompare(String(b.region)))
 			expect(sorted).toEqual([
 				{ region: 'eu', cnt: 1, total: 200 },
@@ -718,22 +804,30 @@ if (import.meta.vitest) {
 
 		test('where pre-filter returns identical results to in-memory', async () => {
 			const adapter = await makeSeededAdapter()
-			const result = await adapter.aggregate(orderSchema, { table: 'orders' }, {
-				where: FilterGroup.create().gt('amount', 100),
-				aggregates: [{ fn: 'count', alias: 'cnt' }],
-				groupBy: [],
-			})
+			const result = await adapter.aggregate(
+				orderSchema,
+				{ table: 'orders' },
+				{
+					where: FilterGroup.create().gt('amount', 100),
+					aggregates: [{ fn: 'count', alias: 'cnt' }],
+					groupBy: [],
+				},
+			)
 			expect(result).toEqual([{ cnt: 2 }])
 			await adapter.disconnect()
 		})
 
 		test('having post-filter returns identical results to in-memory', async () => {
 			const adapter = await makeSeededAdapter()
-			const result = await adapter.aggregate(orderSchema, { table: 'orders' }, {
-				aggregates: [{ fn: 'count', alias: 'cnt' }],
-				groupBy: ['region'],
-				having: FilterGroup.create().gt('cnt', 1),
-			})
+			const result = await adapter.aggregate(
+				orderSchema,
+				{ table: 'orders' },
+				{
+					aggregates: [{ fn: 'count', alias: 'cnt' }],
+					groupBy: ['region'],
+					having: FilterGroup.create().gt('cnt', 1),
+				},
+			)
 			expect(result).toEqual([{ region: 'us', cnt: 2 }])
 			await adapter.disconnect()
 		})
@@ -791,6 +885,50 @@ if (import.meta.vitest) {
 			const reloaded = await use2.findMany(FilterGroup.create())
 			expect(reloaded).toHaveLength(20)
 			await a2.disconnect()
+		})
+
+		test('writes from separate stale adapter instances merge against the latest file', async () => {
+			const schema = Schema.from('items')
+				.pk('id', v.string(), () => 'i')
+				.field('val', v.number())
+				.build()
+			const first = JsonAdapter.create({ filePath })
+			const second = JsonAdapter.create({ filePath })
+			await first.connect()
+			await second.connect()
+
+			await first.use(schema, { table: 'items' }).createOne({ id: 'first', val: 1 })
+			await second.use(schema, { table: 'items' }).createOne({ id: 'second', val: 2 })
+			await first.disconnect()
+			await second.disconnect()
+
+			const reloaded = JsonAdapter.create({ filePath })
+			await reloaded.connect()
+			const rows = await reloaded.use(schema, { table: 'items' }).findMany(FilterGroup.create())
+			expect(rows.map((row) => row.id).sort()).toEqual(['first', 'second'])
+			await reloaded.disconnect()
+		})
+
+		test('stale read-only disconnect does not overwrite newer writes', async () => {
+			const schema = Schema.from('items')
+				.pk('id', v.string(), () => 'i')
+				.field('val', v.number())
+				.build()
+			const staleReader = JsonAdapter.create({ filePath })
+			await staleReader.connect()
+			await staleReader.use(schema, { table: 'items' }).findMany(FilterGroup.create())
+
+			const writer = JsonAdapter.create({ filePath })
+			await writer.connect()
+			await writer.use(schema, { table: 'items' }).createOne({ id: 'written', val: 1 })
+			await writer.disconnect()
+			await staleReader.disconnect()
+
+			const reloaded = JsonAdapter.create({ filePath })
+			await reloaded.connect()
+			const rows = await reloaded.use(schema, { table: 'items' }).findMany(FilterGroup.create())
+			expect(rows).toEqual([{ id: 'written', val: 1 }])
+			await reloaded.disconnect()
 		})
 	})
 
@@ -884,19 +1022,27 @@ if (import.meta.vitest) {
 			await a1.connect()
 			await a1.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [] })
 			await a1.applyCreateTable({ kind: 'createTable', name: 'posts', pk: { name: 'id', type: 'string' }, fields: [] })
-			await a1.applyAddForeignKey({ kind: 'addForeignKey', table: 'posts', on: 'authorId', references: { table: 'users', column: 'id' }, onDelete: 'cascade' })
+			await a1.applyAddForeignKey({
+				kind: 'addForeignKey',
+				table: 'posts',
+				on: 'authorId',
+				references: { table: 'users', column: 'id' },
+				onDelete: 'cascade',
+			})
 			await a1.disconnect()
 
 			const a2 = JsonAdapter.create({ filePath })
 			await a2.connect()
 			const schemas = await a2.introspect()
 			const posts = schemas.find((s) => s.name === 'posts')!
-			expect(posts.foreignKeys).toEqual([{
-				name: 'posts_authorId_fk',
-				on: 'authorId',
-				references: { table: 'users', column: 'id' },
-				onDelete: 'cascade',
-			}])
+			expect(posts.foreignKeys).toEqual([
+				{
+					name: 'posts_authorId_fk',
+					on: 'authorId',
+					references: { table: 'users', column: 'id' },
+					onDelete: 'cascade',
+				},
+			])
 			await a2.applyDropForeignKey({ kind: 'dropForeignKey', table: 'posts', name: 'posts_authorId_fk' })
 			await a2.disconnect()
 
@@ -916,7 +1062,9 @@ if (import.meta.vitest) {
 
 			const order: string[] = []
 			let resolveGate!: () => void
-			const gate = new Promise<void>((r) => { resolveGate = r })
+			const gate = new Promise<void>((r) => {
+				resolveGate = r
+			})
 
 			const p1 = adapter.acquireMigrationLock(async () => {
 				order.push('p1-start')
@@ -943,7 +1091,9 @@ if (import.meta.vitest) {
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
 
-			await adapter.acquireMigrationLock(async () => { /* no-op */ })
+			await adapter.acquireMigrationLock(async () => {
+				/* no-op */
+			})
 
 			await expect(access(filePath + '.lock')).rejects.toThrow()
 			await adapter.disconnect()
@@ -955,7 +1105,9 @@ if (import.meta.vitest) {
 			await adapter.connect()
 
 			await expect(
-				adapter.acquireMigrationLock(async () => { throw new Error('boom') }),
+				adapter.acquireMigrationLock(async () => {
+					throw new Error('boom')
+				}),
 			).rejects.toThrow('boom')
 
 			await expect(access(filePath + '.lock')).rejects.toThrow()
@@ -983,8 +1135,21 @@ if (import.meta.vitest) {
 				{
 					id: '0001-create',
 					changes: [
-						{ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'email', type: 'string' }] },
-						{ kind: 'createTable', name: 'posts', pk: { name: 'id', type: 'string' }, fields: [{ name: 'title', type: 'string' }, { name: 'authorId', type: 'string' }] },
+						{
+							kind: 'createTable',
+							name: 'users',
+							pk: { name: 'id', type: 'string' },
+							fields: [{ name: 'email', type: 'string' }],
+						},
+						{
+							kind: 'createTable',
+							name: 'posts',
+							pk: { name: 'id', type: 'string' },
+							fields: [
+								{ name: 'title', type: 'string' },
+								{ name: 'authorId', type: 'string' },
+							],
+						},
 						{ kind: 'addIndex', table: 'users', on: ['email'], unique: true },
 						{ kind: 'addForeignKey', table: 'posts', on: 'authorId', references: { table: 'users', column: 'id' } },
 					],
@@ -993,7 +1158,12 @@ if (import.meta.vitest) {
 					id: '0002-evolve',
 					changes: [
 						{ kind: 'addField', table: 'users', field: { name: 'age', type: 'number', nullable: true } },
-						{ kind: 'modifyField', table: 'users', name: 'email', to: { name: 'email', type: 'string', unique: true, nullable: true } },
+						{
+							kind: 'modifyField',
+							table: 'users',
+							name: 'email',
+							to: { name: 'email', type: 'string', unique: true, nullable: true },
+						},
 						{ kind: 'renameField', table: 'posts', from: 'title', to: 'headline' },
 						{ kind: 'renameTable', from: 'posts', to: 'articles' },
 					],
@@ -1009,12 +1179,14 @@ if (import.meta.vitest) {
 				},
 				{
 					id: '0004-seed',
-					changes: [{
-						kind: 'execute',
-						up: async (r) => {
-							await r.on(UserSchema).one().create({ id: 'seed-1', email: 'test@example.com' })
+					changes: [
+						{
+							kind: 'execute',
+							up: async (r) => {
+								await r.on(UserSchema).one().create({ id: 'seed-1', email: 'test@example.com' })
+							},
 						},
-					}],
+					],
 				},
 			]
 
@@ -1044,23 +1216,34 @@ if (import.meta.vitest) {
 		test('file lock serialises concurrent migrator.up() runs', async () => {
 			const order: string[] = []
 			let resolveGate!: () => void
-			const gate = new Promise<void>((r) => { resolveGate = r })
+			const gate = new Promise<void>((r) => {
+				resolveGate = r
+			})
 
 			const migrations: Migration<JsonAdapter>[] = [
 				{
 					id: '0001',
-					changes: [{
-						kind: 'execute',
-						up: async () => {
-							order.push('0001-start')
-							await gate
-							order.push('0001-end')
+					changes: [
+						{
+							kind: 'execute',
+							up: async () => {
+								order.push('0001-start')
+								await gate
+								order.push('0001-end')
+							},
 						},
-					}],
+					],
 				},
 				{
 					id: '0002',
-					changes: [{ kind: 'execute', up: async () => { order.push('0002') } }],
+					changes: [
+						{
+							kind: 'execute',
+							up: async () => {
+								order.push('0002')
+							},
+						},
+					],
 				},
 			]
 
@@ -1172,12 +1355,14 @@ if (import.meta.vitest) {
 			const posts = schemas.find((s) => s.name === 'posts')!
 			expect(posts.pk).toEqual({ name: 'id', type: 'string' })
 			expect(posts.fields).toEqual([{ name: 'authorId', type: 'string', nullable: false }])
-			expect(posts.foreignKeys).toEqual([{
-				name: 'posts_authorId_fk',
-				on: 'authorId',
-				references: { table: 'users', column: 'id' },
-				onDelete: 'cascade',
-			}])
+			expect(posts.foreignKeys).toEqual([
+				{
+					name: 'posts_authorId_fk',
+					on: 'authorId',
+					references: { table: 'users', column: 'id' },
+					onDelete: 'cascade',
+				},
+			])
 
 			await a2.disconnect()
 		})
