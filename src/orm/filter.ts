@@ -1,18 +1,25 @@
-import type { FilterOpName } from './adapter'
+import type { FieldTypeName, FilterOpName } from './adapter'
 import { EquippedError } from '../errors'
 import { OrmValidationError, type OrmValidationFailure } from './errors'
-import { toFieldName, type AnyField, type Field } from './fields'
+import { Field, toFieldName, type AnyField } from './fields'
 import type { AggregateSpec } from './orm-adapter'
 import type { AnySchema } from './schema'
 
 export class Filter {
 	readonly field: string
+	readonly path: readonly string[]
+	readonly valueType: FieldTypeName | null
+
 	constructor(
 		field: string | AnyField,
 		readonly op: FilterOpName,
 		readonly value: unknown,
+		path?: readonly string[],
+		valueType?: FieldTypeName | null,
 	) {
 		this.field = toFieldName(field)
+		this.path = field instanceof Field ? field.path : (path ?? [field])
+		this.valueType = field instanceof Field ? field.valueType : (valueType ?? null)
 	}
 }
 
@@ -104,7 +111,7 @@ export class FilterGroup {
 		return new FilterGroup(
 			this.op,
 			this.children.map((c) => {
-				if (c instanceof Filter) return new Filter(c.field, c.op, structuredClone(c.value))
+				if (c instanceof Filter) return new Filter(c.field, c.op, structuredClone(c.value), c.path, c.valueType)
 				return c.clone()
 			}),
 		)
@@ -184,6 +191,10 @@ export function assertNormalisedAggregate(schema: AnySchema, adapter: { aggregat
 	}
 }
 
+function filterRoot(node: Filter): string {
+	return node.path[0] ?? node.field
+}
+
 export function assertNormalisedFilter(schema: AnySchema, group: FilterGroup): void {
 	const allFields = schema.fields as Record<string, unknown>
 	const fieldNames = new Set(Object.keys(allFields))
@@ -191,7 +202,7 @@ export function assertNormalisedFilter(schema: AnySchema, group: FilterGroup): v
 
 	function walk(node: FilterChild): void {
 		if (node instanceof Filter) {
-			if (!fieldNames.has(node.field)) {
+			if (!fieldNames.has(filterRoot(node))) {
 				errors.push({ field: node.field, cause: `Unknown field "${node.field}" on schema "${schema.name}"` })
 			}
 		} else if (node instanceof FilterGroup) {
@@ -222,6 +233,11 @@ if (import.meta.vitest) {
 		.field('age', v.number())
 		.field('name', v.string())
 		.field('tags', v.array(v.string()))
+		.build()
+
+	const LinkSchema = Schema.from('links')
+		.pk('id', v.string(), () => 'link-1')
+		.field('def', v.object({ type: v.string() }))
 		.build()
 
 	describe('FilterGroup', () => {
@@ -328,6 +344,15 @@ if (import.meta.vitest) {
 				const g = FilterGroup.create().eq(UserSchema.fields.age, 18)
 				const f = g.children[0] as Filter
 				expect(f.field).toBe('age')
+			})
+
+			test('preserves nested field path and value type', () => {
+				const g = FilterGroup.create().eq(LinkSchema.fields.def.nested('type', 'string'), 'depends-on')
+				const f = g.children[0] as Filter
+
+				expect(f.field).toBe('def.type')
+				expect(f.path).toEqual(['def', 'type'])
+				expect(f.valueType).toBe('string')
 			})
 		})
 
@@ -475,6 +500,16 @@ if (import.meta.vitest) {
 			const f = g.children[0] as Filter
 			expect(f.field).toBe('age')
 			assertNormalisedFilter(UserSchema, g)
+		})
+
+		test('accepts nested filters under a known root field', () => {
+			const g = FilterGroup.create().eq(LinkSchema.fields.def.nested('type', 'string'), 'depends-on')
+			expect(() => assertNormalisedFilter(LinkSchema, g)).not.toThrow()
+		})
+
+		test('rejects nested filters under an unknown root field', () => {
+			const g = FilterGroup.create().eq('missing.type', 'value')
+			expect(() => assertNormalisedFilter(UserSchema, g)).toThrow(OrmValidationError)
 		})
 
 		test('walks nested groups to detect unknown fields', () => {

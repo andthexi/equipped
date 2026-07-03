@@ -1,18 +1,53 @@
 import { v, type Pipe, type PipeOutput } from 'valleyed'
 
+import type { FieldTypeName } from './adapter'
+
+type ObjectLike = Record<string, unknown>
+
+type NestedKey<T> = T extends unknown ? (T extends ObjectLike ? keyof T & string : never) : never
+
+type NestedValue<T, K extends string> = T extends unknown ? (T extends ObjectLike ? (K extends keyof T ? T[K] : never) : never) : never
+
+type FieldTypeFor<T> = T extends unknown
+	? T extends Date
+		? 'date'
+		: T extends readonly unknown[]
+			? 'array'
+			: T extends string
+				? 'string'
+				: T extends number
+					? 'number'
+					: T extends boolean
+						? 'boolean'
+						: T extends null
+							? 'null'
+							: T extends ObjectLike
+								? 'object'
+								: never
+	: never
+
 export class Field<T = unknown, Name extends string = string, S = unknown> {
 	declare readonly __valueType?: T
 	declare readonly __schema?: S
 	readonly name: Name
 	readonly path: readonly string[]
+	readonly valueType: FieldTypeName | null
 
-	constructor(name: Name, path?: readonly string[]) {
+	constructor(name: Name, path?: readonly string[], valueType?: FieldTypeName | null) {
 		this.name = name
 		this.path = path ?? [name]
+		this.valueType = valueType ?? null
+	}
+
+	nested<const K extends NestedKey<T>, const Type extends FieldTypeFor<NestedValue<T, K>>>(
+		key: K,
+		type: Type,
+	): Field<NestedValue<T, K>, Name, any> {
+		return new Field(this.name, [...this.path, key], type)
 	}
 }
 
-export type AnyField = Field<unknown, string, any>
+export type AnyField = Field<any, string, any>
 
 export function toFieldName(field: string | AnyField): string {
 	if (field instanceof Field) return field.path.join('.')
@@ -63,12 +98,22 @@ if (import.meta.vitest) {
 				const f = new Field('email')
 				expect(f.name).toBe('email')
 				expect(f.path).toEqual(['email'])
+				expect(f.valueType).toBeNull()
 			})
 
 			test('stores provided custom path', () => {
 				const f = new Field('profile', ['profile', 'displayName'])
 				expect(f.name).toBe('profile')
 				expect(f.path).toEqual(['profile', 'displayName'])
+			})
+
+			test('creates typed nested field paths', () => {
+				const f = new Field<{ profile: { displayName: string } }>('account')
+				const nested = f.nested('profile', 'object').nested('displayName', 'string')
+
+				expect(nested.name).toBe('account')
+				expect(nested.path).toEqual(['account', 'profile', 'displayName'])
+				expect(nested.valueType).toBe('string')
 			})
 		})
 

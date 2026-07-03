@@ -71,12 +71,22 @@ function compareValues(a: unknown, b: unknown): number {
 	return sa < sb ? -1 : 1
 }
 
+function valueAtPath(doc: Record<string, unknown>, path: readonly string[]): unknown {
+	let current: unknown = doc
+	for (const segment of path) {
+		if (current == null) return undefined
+		if (typeof current !== 'object') return undefined
+		current = (current as Record<string, unknown>)[segment]
+	}
+	return current
+}
+
 function resolveConfigName(_: AnySchema, config: InMemoryRepoConfig): string {
 	return `${config.prefix ?? ''}${config.table}`
 }
 
 function evaluateFilter(doc: Record<string, unknown>, filter: Filter): boolean {
-	const fieldValue = doc[filter.field]
+	const fieldValue = valueAtPath(doc, filter.path)
 	const value = filter.value
 
 	switch (filter.op) {
@@ -611,6 +621,7 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
+	const { Field } = await import('../../fields')
 	const { FilterGroup } = await import('../../filter')
 	const { OrderBy } = await import('../../query-options')
 	const { Schema } = await import('../../schema')
@@ -764,6 +775,60 @@ if (import.meta.vitest) {
 
 			const notExistsRows = await use.findMany(FilterGroup.create().notExists('val'))
 			expect(notExistsRows).toHaveLength(2)
+		})
+
+		test('nested filter paths work for all filter ops', async () => {
+			const schema = Schema.from('nested_items')
+				.pk('id', v.string(), () => `nested-${Math.random().toString(36).slice(2)}`)
+				.field(
+					'meta',
+					v.object({
+						kind: v.string(),
+						count: v.number(),
+						enabled: v.boolean(),
+						tags: v.array(v.string()),
+						config: v.object({ role: v.string() }),
+					}),
+				)
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'nested_items' })
+			await use.createMany([
+				{
+					id: 'n1',
+					meta: { kind: 'alpha', count: 1, enabled: true, tags: ['a', 'b'], config: { role: 'owner' } },
+				},
+				{
+					id: 'n2',
+					meta: { kind: 'beta', count: 2, enabled: false, tags: ['b'], config: { role: 'reviewer' } },
+				},
+			])
+
+			const kind = schema.fields.meta.nested('kind', 'string')
+			const count = schema.fields.meta.nested('count', 'number')
+			const enabled = schema.fields.meta.nested('enabled', 'boolean')
+			const tags = new Field<string>('meta', ['meta', 'tags'], 'array')
+			const role = schema.fields.meta.nested('config', 'object').nested('role', 'string')
+			const missing = new Field<unknown>('meta', ['meta', 'missing'], 'string')
+			const expectFindIds = async (filter: FilterGroup, expectedIds: string[]) => {
+				const rows = await use.findMany(filter)
+				expect(rows.map((row) => row.id).sort()).toEqual(expectedIds.sort())
+			}
+
+			await expectFindIds(FilterGroup.create().eq(kind, 'alpha'), ['n1'])
+			await expectFindIds(FilterGroup.create().ne(kind, 'alpha'), ['n2'])
+			await expectFindIds(FilterGroup.create().gt(count, 1), ['n2'])
+			await expectFindIds(FilterGroup.create().gte(count, 2), ['n2'])
+			await expectFindIds(FilterGroup.create().lt(count, 2), ['n1'])
+			await expectFindIds(FilterGroup.create().lte(count, 1), ['n1'])
+			await expectFindIds(FilterGroup.create().in(kind, ['alpha']), ['n1'])
+			await expectFindIds(FilterGroup.create().notIn(kind, ['alpha']), ['n2'])
+			await expectFindIds(FilterGroup.create().like(kind, 'alp'), ['n1'])
+			await expectFindIds(FilterGroup.create().exists(role), ['n1', 'n2'])
+			await expectFindIds(FilterGroup.create().notExists(missing), ['n1', 'n2'])
+			await expectFindIds(FilterGroup.create().contains(tags, ['a']), ['n1'])
+			await expectFindIds(FilterGroup.create().notContains(tags, ['a']), ['n2'])
+			await expectFindIds(FilterGroup.create().eq(enabled, true), ['n1'])
 		})
 
 		test('findByPk returns seeded document and null for missing', async () => {

@@ -14,6 +14,68 @@ function likeLiteral(value: unknown): string {
 	return `%${String(value).replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`
 }
 
+function quoteIdentifier(value: string): string {
+	return `"${value.replaceAll('"', '""')}"`
+}
+
+function pgJsonPath(path: readonly string[]): string {
+	return `'{${path.map((segment) => segment.replaceAll('\\', '\\\\').replaceAll('"', '\\"')).join(',')}}'`
+}
+
+function isNestedFilter(f: Filter): boolean {
+	return f.path.length > 1
+}
+
+function rootColumn(f: Filter, primaryKey: string): string {
+	return quoteIdentifier(mapField(f.path[0] ?? f.field, primaryKey))
+}
+
+function jsonPath(f: Filter): string {
+	return pgJsonPath(f.path.slice(1))
+}
+
+function nestedJsonExpr(f: Filter, primaryKey: string): string {
+	return `${rootColumn(f, primaryKey)} #> ${jsonPath(f)}`
+}
+
+function nestedTextExpr(f: Filter, primaryKey: string): string {
+	return `${rootColumn(f, primaryKey)} #>> ${jsonPath(f)}`
+}
+
+function nestedScalarExpr(f: Filter, primaryKey: string): string {
+	const text = nestedTextExpr(f, primaryKey)
+	switch (f.valueType) {
+		case 'number':
+			return `((${text})::numeric)`
+		case 'boolean':
+			return `((${text})::boolean)`
+		case 'date':
+			return `((${text})::timestamptz)`
+		case 'null':
+		case 'object':
+		case 'array':
+			return nestedJsonExpr(f, primaryKey)
+		case 'string':
+		case null:
+			return text
+	}
+}
+
+function pgNestedParamValue(f: Filter, value: unknown): unknown {
+	switch (f.valueType) {
+		case 'object':
+		case 'array':
+		case 'null':
+			return JSON.stringify(value)
+		default:
+			return value
+	}
+}
+
+function needsJsonbParamCast(f: Filter): boolean {
+	return f.valueType === 'object' || f.valueType === 'array' || f.valueType === 'null'
+}
+
 function compileOps(f: Filter, field: string, nextParam: (v: unknown) => string): string {
 	switch (f.op) {
 		case 'eq':
@@ -47,8 +109,48 @@ function compileOps(f: Filter, field: string, nextParam: (v: unknown) => string)
 	}
 }
 
+function compileNestedOps(f: Filter, primaryKey: string, nextParam: (v: unknown) => string): string {
+	const scalar = nestedScalarExpr(f, primaryKey)
+	const json = nestedJsonExpr(f, primaryKey)
+	const text = nestedTextExpr(f, primaryKey)
+	const param = (value: unknown) => nextParam(pgNestedParamValue(f, value))
+	const jsonbCast = needsJsonbParamCast(f) ? '::jsonb' : ''
+
+	switch (f.op) {
+		case 'eq':
+			return f.value === null ? `${json} IS NULL` : `${scalar} = ${param(f.value)}${jsonbCast}`
+		case 'ne':
+			return f.value === null ? `${json} IS NOT NULL` : `${scalar} != ${param(f.value)}${jsonbCast}`
+		case 'gt':
+			return `${scalar} > ${param(f.value)}`
+		case 'gte':
+			return `${scalar} >= ${param(f.value)}`
+		case 'lt':
+			return `${scalar} < ${param(f.value)}`
+		case 'lte':
+			return `${scalar} <= ${param(f.value)}`
+		case 'in':
+			return `${scalar} = ANY(${nextParam(f.value)})`
+		case 'notIn':
+			return `NOT (${scalar} = ANY(${nextParam(f.value)}))`
+		case 'like':
+			return `${text} ILIKE ${nextParam(likeLiteral(f.value))} ESCAPE '\\'`
+		case 'exists':
+			return `${json} IS NOT NULL`
+		case 'notExists':
+			return `${json} IS NULL`
+		case 'contains':
+			return `${json} @> ${nextParam(JSON.stringify(f.value))}::jsonb`
+		case 'notContains':
+			return `NOT (${json} @> ${nextParam(JSON.stringify(f.value))}::jsonb)`
+		default:
+			return `${scalar} = ${param(f.value)}${jsonbCast}`
+	}
+}
+
 function compileFilter(f: Filter, primaryKey: string, nextParam: (v: unknown) => string): string {
-	return compileOps(f, `"${mapField(f.field, primaryKey)}"`, nextParam)
+	if (isNestedFilter(f)) return compileNestedOps(f, primaryKey, nextParam)
+	return compileOps(f, quoteIdentifier(mapField(f.field, primaryKey)), nextParam)
 }
 
 function compileChildren(group: FilterGroup, compileLeaf: (f: Filter) => string): string[] {
@@ -353,6 +455,7 @@ export function buildAggregateQuery(
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
+	const { Field } = await import('../../fields')
 	const { FilterGroup } = await import('../../filter')
 	const { OrderBy } = await import('../../query-options')
 	const { IncOp, MulOp, MinOp, MaxOp, UnsetOp, PushOp, PullOp, PatchOp, SetOp, flattenOps } = await import('../../updates')
@@ -474,6 +577,58 @@ if (import.meta.vitest) {
 			const group = FilterGroup.create().eq('id', 'abc')
 			const { sql } = buildSelectQuery(group, undefined, 'users', 'user_id')
 			expect(sql).toContain('"user_id" = $1')
+		})
+
+		test('nested eq compiles to a JSONB text path expression', () => {
+			const typeField = new Field<string>('def', ['def', 'type'], 'string')
+			const { sql, params } = buildSelectQuery(FilterGroup.create().eq(typeField, 'depends-on'), undefined, 'links', 'id')
+
+			expect(sql).toContain('"def" #>>')
+			expect(sql).toContain("'{type}'")
+			expect(sql).not.toContain('"def.type"')
+			expect(params).toEqual(['depends-on'])
+		})
+
+		test('nested filters compile all scalar comparison ops without quoted dotted columns', () => {
+			const typeField = new Field<string>('def', ['def', 'type'], 'string')
+			const countField = new Field<number>('meta', ['meta', 'count'], 'number')
+			const cases = [
+				FilterGroup.create().ne(typeField, 'produced'),
+				FilterGroup.create().gt(countField, 3),
+				FilterGroup.create().gte(countField, 3),
+				FilterGroup.create().lt(countField, 7),
+				FilterGroup.create().lte(countField, 7),
+				FilterGroup.create().in(typeField, ['depends-on']),
+				FilterGroup.create().notIn(typeField, ['produced']),
+				FilterGroup.create().like(typeField, 'depends'),
+			]
+
+			for (const group of cases) {
+				const { sql } = buildSelectQuery(group, undefined, 'items', 'id')
+				expect(sql).not.toContain('"def.type"')
+				expect(sql).not.toContain('"meta.count"')
+			}
+			expect(buildSelectQuery(FilterGroup.create().gt(countField, 3), undefined, 'items', 'id').sql).toContain('::numeric')
+		})
+
+		test('nested existence and containment ops compile against JSONB paths', () => {
+			const roleField = new Field<string>('meta', ['meta', 'config', 'role'], 'string')
+			const tagsField = new Field<string>('meta', ['meta', 'tags'], 'array')
+
+			const existsSql = buildSelectQuery(FilterGroup.create().exists(roleField), undefined, 'items', 'id').sql
+			const notExistsSql = buildSelectQuery(FilterGroup.create().notExists(roleField), undefined, 'items', 'id').sql
+			const contains = buildSelectQuery(FilterGroup.create().contains(tagsField, ['a']), undefined, 'items', 'id')
+			const notContains = buildSelectQuery(FilterGroup.create().notContains(tagsField, ['a']), undefined, 'items', 'id')
+
+			expect(existsSql).toContain('"meta" #>')
+			expect(existsSql).toContain('IS NOT NULL')
+			expect(notExistsSql).toContain('"meta" #>')
+			expect(notExistsSql).toContain('IS NULL')
+			expect(contains.sql).toContain('"meta" #>')
+			expect(contains.sql).toContain('@>')
+			expect(contains.params).toEqual([JSON.stringify(['a'])])
+			expect(notContains.sql).toContain('NOT ("meta" #>')
+			expect(notContains.params).toEqual([JSON.stringify(['a'])])
 		})
 	})
 

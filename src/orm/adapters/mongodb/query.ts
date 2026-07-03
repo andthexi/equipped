@@ -205,6 +205,7 @@ export function compileMongoAggregate(spec: AggregateSpec, primaryKey: string): 
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
+	const { Field } = await import('../../fields')
 	const { FilterGroup } = await import('../../filter')
 	const { OrderBy } = await import('../../query-options')
 
@@ -295,6 +296,20 @@ if (import.meta.vitest) {
 		test('maps id field to _id when primaryKey is _id', () => {
 			const group = FilterGroup.create().eq('id', 'abc')
 			expect(compileMongoFilter(group, '_id')).toEqual({ _id: { $eq: 'abc' } })
+		})
+
+		test('keeps nested field paths as Mongo dotted field names', () => {
+			const defType = new Field<string>('def', ['def', 'type'], 'string')
+			const group = FilterGroup.create().eq(defType, 'depends-on')
+
+			expect(compileMongoFilter(group, 'id')).toEqual({ 'def.type': { $eq: 'depends-on' } })
+		})
+
+		test('uses nested dotted field names for non-eq ops', () => {
+			const defType = new Field<string>('def', ['def', 'type'], 'string')
+			const result = compileMongoFilter(FilterGroup.create().like(defType, 'depends'), 'id')
+
+			expect(result).toEqual({ 'def.type': { $regex: expect.any(RegExp) } })
 		})
 	})
 
