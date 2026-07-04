@@ -14,6 +14,8 @@ export class Instance {
 	static #hooks: Partial<Record<HookEvent, HookRecord[]>> = {}
 	readonly settings: Readonly<Settings>
 	readonly log: Logger<never>
+	#closed = false
+	#closing: Promise<void> | null = null
 
 	private constructor(settings: Settings) {
 		Instance.#instance = this
@@ -54,6 +56,14 @@ export class Instance {
 		} catch (error) {
 			Instance.crash(new EquippedError(`Error starting instance`, {}, error))
 		}
+	}
+
+	async close(): Promise<void> {
+		if (this.#closed) return
+		this.#closing ??= runHooks(Instance.#hooks['close'] ?? [], () => {}, true).then(() => {
+			this.#closed = true
+		})
+		return this.#closing
 	}
 
 	static envs<E extends object>(envsPipe: Pipe<unknown, E>): E {
@@ -108,7 +118,7 @@ export class Instance {
 
 		Object.entries(signals).forEach(([signal, code]) => {
 			process.on(signal, async () => {
-				await runHooks(Instance.#hooks['close'] ?? [], () => {}, true)
+				await Instance.get().close()
 				process.exit(128 + code)
 			})
 		})
@@ -129,4 +139,24 @@ export class Instance {
 	static createId(opts?: { prefix?: string; time?: Date }) {
 		return `${opts?.prefix ?? ''}${ulid(opts?.time?.getTime())}`
 	}
+}
+
+if (import.meta.vitest) {
+	const { describe, expect, it } = import.meta.vitest
+
+	describe('Instance close', () => {
+		it('runs close hooks through public close without exiting and does not run them twice', async () => {
+			const instance = Instance.maybeGet() ?? Instance.create({ app: { name: 'instance-close-test' }, log: { level: 'silent' } })
+			let callCount = 0
+
+			Instance.on('close', () => {
+				callCount += 1
+			})
+
+			await instance.close()
+			await instance.close()
+
+			expect(callCount).toBe(1)
+		})
+	})
 }

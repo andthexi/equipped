@@ -33,8 +33,8 @@ A **hook** is a callback registered against one of three lifecycle
 keyed by event. Hooks for an event run when that event fires:
 
 - `setup` and `start` fire from `instance.start()` (in that order).
-- `close` fires from the SIGHUP/SIGINT/SIGTERM handler installed at
-  `Instance` construction.
+- `close` fires from `instance.close()` and from the SIGHUP/SIGINT/SIGTERM
+  handler installed at `Instance` construction.
 
 Each hook has:
 - A **callback** (`HookCb`) — `() => void | Promise<void | unknown>` (or a
@@ -73,8 +73,8 @@ class if necessary).
 
 **Registration** is the call to `Instance.on(...)` — it adds the hook to
 the static registry. **Firing** happens when `instance.start()` runs (for
-`setup` and `start` events) or when a termination signal is received (for
-`close`).
+`setup` and `start` events), when `instance.close()` runs (for `close`), or
+when a termination signal is received (for `close`).
 
 A hook may register at any point before its event fires; in practice
 adapters register from their constructors at module-load time.
@@ -235,7 +235,17 @@ against a user-provided pipe and returns the typed result; failure
 crashes. Both are validate-once boundaries — same pattern as the orm
 Repo-entry boundary.
 
-### 5.4 `resolveBeforeCrash`
+### 5.4 Explicit close
+
+`instance.close()` fires the `close` hook DAG without exiting the process.
+It is idempotent: after close has completed once, later calls are no-ops.
+Closing does not reset the singleton or permit another `Instance.create(...)`
+in the same process.
+
+The process signal handler delegates to `instance.close()` before exiting with
+the signal-derived exit code.
+
+### 5.5 `resolveBeforeCrash`
 
 `Instance.resolveBeforeCrash(cb)` registers the in-flight promise as an
 anonymous `close` hook so it gets awaited during shutdown. Used for "fire
