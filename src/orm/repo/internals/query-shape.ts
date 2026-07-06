@@ -1,9 +1,7 @@
-import { Instance } from '../../../instance'
 import { OrmValidationError, type OrmValidationFailure } from '../../errors'
 import { ManyRelation, OneRelation, type AnyPreloadDef, type AnyRelDef, type NestedPreloadDef } from '../../relations'
 import type { AnySchema } from '../../schema'
 
-const FALLBACK_PAGINATION_DEFAULT_LIMIT = 100
 const MAX_PRELOAD_DEPTH = 5
 
 export type ReadOffsetSource =
@@ -22,8 +20,8 @@ export type NormalisedIterationReadQuery = NormalisedAllReadQuery & {
 }
 
 export type NormalisedPaginatedReadQuery = {
-	limit: number
-	offset: number
+	limit?: number
+	offset?: number
 	current: number
 }
 
@@ -45,10 +43,6 @@ function isPositiveInteger(value: unknown): value is number {
 
 function isNonNegativeInteger(value: unknown): value is number {
 	return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
-}
-
-function getPaginationDefaultLimit() {
-	return Instance.maybeGet()?.settings.utils.paginationDefaultLimit ?? FALLBACK_PAGINATION_DEFAULT_LIMIT
 }
 
 function collectSelectFailures(schema: AnySchema, select: readonly string[] | undefined, failures: OrmValidationFailure[]) {
@@ -140,6 +134,10 @@ function collectBatchSizeFailure(value: unknown, failures: OrmValidationFailure[
 	return undefined
 }
 
+function collectOffsetRequiresLimitFailure(failures: OrmValidationFailure[]): void {
+	failures.push({ field: 'limit', option: 'limit', cause: 'Limit is required when using page or offset' })
+}
+
 function collectIterationOptionFailures(options: unknown, failures: OrmValidationFailure[]): number | undefined {
 	if (options === undefined) return undefined
 	if (options == null || typeof options !== 'object' || Array.isArray(options)) {
@@ -181,20 +179,15 @@ export function normaliseAllFindReadShape(
 	collectSelectFailures(schema, state.select, failures)
 	collectPreloadFailures(schema, state.preloads, failures)
 
-	let limit = state.limitSource === undefined ? undefined : collectLimitFailure(state.limitSource.value, failures)
+	const limit = state.limitSource === undefined ? undefined : collectLimitFailure(state.limitSource.value, failures)
 	let offset: number | undefined
+
+	if (state.offsetSource !== undefined && state.limitSource === undefined) collectOffsetRequiresLimitFailure(failures)
 
 	if (state.offsetSource?.kind === 'offset') {
 		offset = collectOffsetFailure(state.offsetSource.value, failures)
 	} else if (state.offsetSource?.kind === 'page') {
 		const page = collectPageFailure(state.offsetSource.value, failures)
-		if (limit === undefined && state.limitSource === undefined) {
-			limit = getPaginationDefaultLimit()
-			if (!isPositiveInteger(limit)) {
-				failures.push({ field: 'limit', cause: 'Default page limit must be a positive safe integer' })
-				limit = undefined
-			}
-		}
 		if (page !== undefined && limit !== undefined) {
 			const resolvedOffset = (page - 1) * limit
 			if (isNonNegativeInteger(resolvedOffset)) {
@@ -224,21 +217,16 @@ export function normaliseAllIterateReadShape(
 	collectSelectFailures(schema, state.select, failures)
 	collectPreloadFailures(schema, state.preloads, failures)
 
-	let limit = state.limitSource === undefined ? undefined : collectLimitFailure(state.limitSource.value, failures)
+	const limit = state.limitSource === undefined ? undefined : collectLimitFailure(state.limitSource.value, failures)
 	let offset: number | undefined
 	const batchSize = collectIterationOptionFailures(options, failures)
+
+	if (state.offsetSource !== undefined && state.limitSource === undefined) collectOffsetRequiresLimitFailure(failures)
 
 	if (state.offsetSource?.kind === 'offset') {
 		offset = collectOffsetFailure(state.offsetSource.value, failures)
 	} else if (state.offsetSource?.kind === 'page') {
 		const page = collectPageFailure(state.offsetSource.value, failures)
-		if (limit === undefined && state.limitSource === undefined) {
-			limit = getPaginationDefaultLimit()
-			if (!isPositiveInteger(limit)) {
-				failures.push({ field: 'limit', option: 'limit', cause: 'Default page limit must be a positive safe integer' })
-				limit = undefined
-			}
-		}
 		if (page !== undefined && limit !== undefined) {
 			const resolvedOffset = (page - 1) * limit
 			if (isNonNegativeInteger(resolvedOffset)) {
@@ -267,19 +255,11 @@ export function normaliseAllPaginateReadShape(
 	collectSelectFailures(schema, state.select, failures)
 	collectPreloadFailures(schema, state.preloads, failures)
 
-	let limit: number | undefined
-	if (state.limitSource === undefined) {
-		limit = getPaginationDefaultLimit()
-		if (!isPositiveInteger(limit)) {
-			failures.push({ field: 'limit', cause: 'Default page limit must be a positive safe integer' })
-			limit = undefined
-		}
-	} else {
-		limit = collectLimitFailure(state.limitSource.value, failures)
-	}
-
-	let offset = 0
+	const limit = state.limitSource === undefined ? undefined : collectLimitFailure(state.limitSource.value, failures)
+	let offset: number | undefined
 	let current = 1
+
+	if (state.offsetSource !== undefined && state.limitSource === undefined) collectOffsetRequiresLimitFailure(failures)
 
 	if (state.offsetSource?.kind === 'offset') {
 		const resolvedOffset = collectOffsetFailure(state.offsetSource.value, failures)
@@ -301,5 +281,5 @@ export function normaliseAllPaginateReadShape(
 	}
 
 	throwIfFailures(schema, operation, failures)
-	return { limit: limit as number, offset, current }
+	return { limit, offset, current }
 }

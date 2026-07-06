@@ -26,6 +26,12 @@ a configuration object users compose programmatically. It is a thin
 process-wide handle that carries: validated settings (frozen), a `pino`
 logger, an optional `id` alias, and the static hook registry.
 
+### 1.1.1 Instance id generator
+
+`Instance.createId()` is the package-level record id generator. It takes no
+arguments and returns lowercase monotonic ULID strings, so callers that need a
+prefix or other decoration compose that outside the generator.
+
 ### 1.2 Hook
 
 A **hook** is a callback registered against one of three lifecycle

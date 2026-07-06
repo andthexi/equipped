@@ -1,6 +1,6 @@
-import { ulid } from 'ulid'
 import { v } from 'valleyed'
 
+import { Instance } from '../../instance'
 import { OrmValidationError } from '../errors'
 import type { EventContext, HandlerDef } from './registry'
 import { EventLogSchema } from './schema'
@@ -23,7 +23,7 @@ export async function fire<R>(
 	return repo.session(async () => {
 		const at = ctx?.at ?? new Date()
 		const ts = at.getTime()
-		const key = ulid(ts)
+		const key = Instance.createId()
 		const by = ctx?.by ?? null
 
 		await repo.on(EventLogSchema).one().create({
@@ -102,7 +102,7 @@ if (import.meta.vitest) {
 			expect(rows[0].body).toEqual({ email: 'a@b.com' })
 			expect(rows[0].by).toBe('admin')
 			expect(typeof rows[0].ts).toBe('number')
-			expect(typeof rows[0].key).toBe('string')
+			expect(rows[0].key).toMatch(/^[0-9a-hjkmnp-tv-z]{26}$/)
 		})
 
 		test('handler receives EventContext with firstRun: true', async () => {
@@ -125,7 +125,7 @@ if (import.meta.vitest) {
 			expect(captured!.at).toEqual(at)
 			expect(captured!.ts).toBe(at.getTime())
 			expect(captured!.body).toEqual({ x: 42 })
-			expect(typeof captured!.key).toBe('string')
+			expect(captured!.key).toMatch(/^[0-9a-hjkmnp-tv-z]{26}$/)
 		})
 
 		test('handler throws → no EventLogSchema row remains', async () => {

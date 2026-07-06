@@ -942,28 +942,27 @@ A **page step** is `.page(page)`, a chain step on `AllBuilder` that records a
 The **offset-source rule**: `AllBuilder` stores a terminal-evaluated offset
 source. `.offset(n)` sets the source to `(_limit) => n`; `.page(page)` sets the
 source to `(limit) => (page - 1) * limit`; the last source-setting step wins by
-replacement. The source is evaluated only at the terminal using the effective
-page limit, so `.page(2).limit(50)` offsets by `50`, not by the default limit.
-If no offset source is present, `.paginate()` behaves as page `1` (offset `0`),
-and flat `.find()` uses no offset.
+replacement. Any terminal that consumes an offset source requires an explicit
+`.limit(...)` step, so `.page(2).find()`, `.offset(10).paginate()`, and
+`.page(2).iterate()` are query-shape errors. If no offset source is present,
+`.paginate()` behaves as page `1` and flat `.find()` uses no offset.
 
 The **page limit** is the maximum number of page items requested for the page.
-It comes from `.limit(n)` when present; otherwise any query that uses the page
-step uses the **default page limit**. Duplicate `.limit(...)` calls are allowed;
-the latest limit wins. The **safe default-limit resolver** reads
-`Instance.get().settings.utils.paginationDefaultLimit` when an `Instance` is
-initialised, and otherwise falls back to the settings default `100` without
-crashing; this preserves standalone ORM usage while still honoring application
-settings. The envelope's `docs.limit` reports the effective page limit used for
-the query.
+It comes from `.limit(n)` when present. Duplicate `.limit(...)` calls are
+allowed; the latest limit wins. The envelope's `docs.limit` reports the
+effective page limit for bounded pages. An unbounded `.paginate()` call with no
+`.limit(...)` returns every matching item in one envelope and reports
+`docs.limit` as `items.length`.
 
 The **count method** is the adapter method `count(schema, schemaCfg, filter):
 Promise<number>`. It receives only the filter, not select/order/limit/offset,
 because `docs.total` means "all documents matching the filter before
 pagination." It consumes the same `FilterGroup` shape and `queryableOps` gates
 as `findMany`; there is no separate count-specific filter-op capability.
-`.paginate()` uses it to compute `docs.total` without loading all matching rows;
-the framework never emulates count by calling `findMany` without pagination.
+Bounded `.paginate()` uses it to compute `docs.total` without loading all
+matching rows; the framework never emulates count by calling `findMany` without
+pagination. Unbounded `.paginate()` with no `.limit(...)` loads all matching
+rows and uses `items.length` for `docs.limit`, `docs.total`, and `docs.count`.
 `docs.count` is the number of returned page items (`items.length`). `.paginate()`
 is gated on both `findMany` and `count`.
 
@@ -985,9 +984,9 @@ aggregators, group keys, and having filters.
 from the existing query-shape chain (`.page(...)`, `.limit(...)`) so the
 terminal only means "return the current all-query as a paginated query
 envelope". `.offset(...)` is also allowed before `.paginate()` for callers
-that already think in row offsets; the builder derives the effective page from
-the evaluated offset as `Math.floor(offset / limit) + 1`. `.page(...)` is the
-preferred semantic step for paginated queries.
+that already think in row offsets; with an explicit limit, the builder derives
+the effective page from the evaluated offset as `Math.floor(offset / limit) + 1`.
+`.page(...)` is the preferred semantic step for paginated queries.
 
 A **page item** is one selected and preloaded document in the current page. The
 `items` array has the same selected/preloaded row shape as the equivalent
@@ -1020,8 +1019,11 @@ page.pages // { current, start, last, previous, next }
 page.docs  // { limit, total, count }
 ```
 
-The **last-page floor rule**: `pages.last` is `Math.ceil(total / limit) || 1`,
-so an empty result set still reports `pages.last = 1`.
+The **last-page floor rule**: for bounded pages, `pages.last` is
+`Math.ceil(total / limit) || 1`, so an empty result set still reports
+`pages.last = 1`. For unbounded `.paginate()` with no `.limit(...)`, the envelope
+always reports one page: `{ current: 1, start: 1, last: 1, previous: null, next:
+null }`.
 
 The **past-last-page no-neighbors rule**: requesting a page past `pages.last`
 returns an empty `items` array, preserves `pages.current` as the
@@ -1031,9 +1033,10 @@ framework never clamps the requested page down to the last page, and navigation
 links only describe adjacent real pages.
 
 The **parallel pagination reads rule**: after validation and config
-resolution, `.paginate()` runs the page-item `findMany` and the filter-only
-`count` concurrently with `Promise.all`; they are independent reads over the
-same filter.
+resolution, bounded `.paginate()` runs the page-item `findMany` and the
+filter-only `count` concurrently with `Promise.all`; they are independent reads
+over the same filter. Unbounded `.paginate()` performs only the all-matching
+`findMany` read.
 
 The **stable-pagination order rule**: `.paginate()` does not require
 `.orderBy(...)`, matching `.find().limit().offset()`; callers who need stable
@@ -1042,7 +1045,8 @@ pages across writes must provide a deterministic order explicitly. Multiple
 
 `.page(...)` also affects flat `.find()` queries as pure offset sugar; e.g.
 `.limit(25).page(2).find()` returns the second page as a flat array with no
-count query and no envelope.
+count query and no envelope. `.page(...)` and `.offset(...)` require an explicit
+`.limit(...)` for `.find()`, `.paginate()`, and `.iterate()`.
 
 `.paginate()` is a separate terminal from `.find()`. Calling `.find()` with
 `.limit()` / `.offset()` / `.page()` remains a flat-array query; it never

@@ -551,7 +551,6 @@ export class AggregateBuilder<
 if (import.meta.vitest) {
 	const { describe, test, expect, expectTypeOf, beforeEach, vi } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { Instance } = await import('../../instance')
 	const { InMemoryAdapter } = await import('../adapters/in-memory')
 	const { OrmValidationError } = await import('../errors')
 	const { OrmAdapter } = await import('../orm-adapter')
@@ -967,15 +966,27 @@ if (import.meta.vitest) {
 			expect(rows).toHaveLength(2)
 		})
 
-		test('page-based reads without an initialized Instance use default limit 100', async () => {
+		test('page and offset sources require an explicit limit at read terminals', async () => {
 			const repo = makeRepo()
-			await seedItems(repo, 250)
+			await seedItems(repo, 10)
 
-			const rows = await repo.on(ItemSchema).all().orderBy('position', 'asc').page(2).find()
-
-			expect(rows).toHaveLength(100)
-			expect(rows[0].position).toBe(101)
-			expect(rows.at(-1)?.position).toBe(200)
+			for (const [field, read] of [
+				['limit', () => repo.on(ItemSchema).all().page(2).find()],
+				['limit', () => repo.on(ItemSchema).all().offset(2).find()],
+				['limit', () => repo.on(ItemSchema).all().page(2).paginate()],
+				['limit', async () => {
+					for await (const _row of repo.on(ItemSchema).all().page(2).iterate()) {
+						expect.unreachable('iterate should fail before yielding rows')
+					}
+				}],
+			] as const) {
+				try {
+					await read()
+					expect.unreachable(`${field} should have failed`)
+				} catch (error) {
+					expectQueryShapeError(error, field)
+				}
+			}
 		})
 
 		test('find() without page, offset, or limit keeps existing flat-array behavior', async () => {
@@ -1043,22 +1054,28 @@ if (import.meta.vitest) {
 			expect(page.pages).toEqual({ current: 1, start: 1, last: 2, previous: null, next: 2 })
 		})
 
-		test('.paginate() without an explicit limit uses the safe default page limit without Instance.get()', async () => {
+		test('.paginate() without an explicit limit returns all matches in a single-page envelope', async () => {
 			const repo = makeRepo()
 			await seedItems(repo, 101)
-			const getSpy = vi.spyOn(Instance, 'get').mockImplementation(() => {
-				throw new Error('Instance.get() should not be required for pagination defaults')
-			})
 
-			try {
-				const page = await repo.on(ItemSchema).all().orderBy('position', 'asc').paginate()
+			const page = await repo.on(ItemSchema).all().orderBy('position', 'asc').paginate()
 
-				expect(page.items).toHaveLength(100)
-				expect(page.docs).toEqual({ limit: 100, total: 101, count: 100 })
-				expect(page.pages).toEqual({ current: 1, start: 1, last: 2, previous: null, next: 2 })
-			} finally {
-				getSpy.mockRestore()
-			}
+			expect(page.items).toHaveLength(101)
+			expect(page.items[0].position).toBe(1)
+			expect(page.items.at(-1)?.position).toBe(101)
+			expect(page.docs).toEqual({ limit: 101, total: 101, count: 101 })
+			expect(page.pages).toEqual({ current: 1, start: 1, last: 1, previous: null, next: null })
+		})
+
+		test('.paginate() without an explicit limit reports zero limit for empty result sets', async () => {
+			const repo = makeRepo()
+			await seedItems(repo, 3)
+
+			const page = await repo.on(ItemSchema).all().where((q) => q.eq('name', 'missing')).paginate()
+
+			expect(page.items).toEqual([])
+			expect(page.docs).toEqual({ limit: 0, total: 0, count: 0 })
+			expect(page.pages).toEqual({ current: 1, start: 1, last: 1, previous: null, next: null })
 		})
 
 		test('.paginate() counts only the filter while page items honor limit and offset', async () => {

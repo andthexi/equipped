@@ -1,5 +1,5 @@
 import pino, { type Logger } from 'pino'
-import { ulid } from 'ulid'
+import { monotonicFactory } from 'ulid'
 import { type Pipe, v } from 'valleyed'
 
 import { EquippedError } from '../errors'
@@ -7,6 +7,8 @@ import { type ClassRef, type HookCb, type HookEvent, type HookOptions, type Hook
 import { instanceSettingsPipe, type Settings, type SettingsInput } from './settings'
 
 export type { ClassRef, HookCb, HookEvent, HookOptions }
+
+const createMonotonicId = monotonicFactory()
 
 export class Instance {
 	static #id: string | undefined
@@ -136,13 +138,24 @@ export class Instance {
 		process.exit(1)
 	}
 
-	static createId(opts?: { prefix?: string; time?: Date }) {
-		return `${opts?.prefix ?? ''}${ulid(opts?.time?.getTime())}`
+	static createId() {
+		return createMonotonicId().toLowerCase()
 	}
 }
 
 if (import.meta.vitest) {
 	const { describe, expect, it } = import.meta.vitest
+
+	describe('Instance createId', () => {
+		it('generates lowercase monotonic ULIDs', () => {
+			const first = Instance.createId()
+			const second = Instance.createId()
+
+			expect(first).toMatch(/^[0-9a-hjkmnp-tv-z]{26}$/)
+			expect(second).toMatch(/^[0-9a-hjkmnp-tv-z]{26}$/)
+			expect(second > first).toBe(true)
+		})
+	})
 
 	describe('Instance close', () => {
 		it('runs close hooks through public close without exiting and does not run them twice', async () => {

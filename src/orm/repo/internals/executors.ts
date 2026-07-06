@@ -56,8 +56,15 @@ export async function runAllCount<S extends AnySchema>(
 	return context.use.count(state.where)
 }
 
-function toPaginated<T>(items: T[], total: number, limit: number, current: number): Paginated<T> {
+function toPaginated<T>(items: T[], total: number, limit: number | undefined, current: number): Paginated<T> {
 	const start = 1
+	if (limit === undefined) {
+		return {
+			pages: { current: 1, start, last: 1, previous: null, next: null },
+			docs: { limit: items.length, total: items.length, count: items.length },
+			items,
+		}
+	}
 	const last = Math.ceil(total / limit) || 1
 	const previous = current <= start || current > last ? null : current - 1
 	const next = current >= last ? null : current + 1
@@ -83,6 +90,14 @@ export async function runAllPaginate<S extends AnySchema, Sel extends string, P 
 	const query = normaliseAllPaginateReadShape(context.schema, 'paginate', state)
 	const plan = planSelection(context.schema, state.select as readonly string[] | undefined)
 	const use = context.use
+	if (query.limit === undefined) {
+		const rows = await use.findMany(state.where, {
+			select: plan.adapterSelect,
+			orderBy: [...state.orderBy],
+		})
+		const items = await context.shapeRows(state.select, state.preloads, rows)
+		return toPaginated(items, items.length, query.limit, query.current)
+	}
 	const [rows, total] = await Promise.all([
 		use.findMany(state.where, {
 			select: plan.adapterSelect,
