@@ -365,7 +365,7 @@
 		"valleyed": "4.5.19"
 	},
 	"repository": {
-		"url": "git://github.com/kevinand11/equipped.git"
+		"url": "git+https://github.com/andthexi/equipped.git"
 	},
 	"publishConfig": {
 		"registry": "https://registry.npmjs.org/"
