@@ -91,6 +91,17 @@ if (import.meta.vitest) {
 			])
 		})
 
+		test('discovers a CRUD-created container rather than proposing to create it again', async () => {
+			const { adapter, repo } = makeEnv()
+			await repo.on(UserSchema).one().create({ id: 'u1', email: 'alice@example.com', age: 30 })
+			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema]).build()
+			expect(await codegen.discover()).toEqual([{ name: 'users', pk: undefined, fields: [], indexes: [], foreignKeys: [] }])
+			const changes = await codegen.diff()
+			expect(changes).not.toBeNull()
+			expect(changes!.every((c) => c.kind === 'addField')).toBe(true)
+			expect(changes!.map((c) => c.kind === 'addField' ? c.field.name : '')).toEqual(['email', 'age'])
+		})
+
 		test('diff() returns null when target matches current', async () => {
 			const { adapter, repo } = makeEnv()
 			await adapter.applyCreateTable({

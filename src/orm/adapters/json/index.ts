@@ -608,6 +608,34 @@ if (import.meta.vitest) {
 	})
 
 	describe('json adapter — persistence', () => {
+		test('lazy discovery and table rename/drop remain consistent across reloads', async () => {
+			const schema = Schema.from('users').pk('id', v.string(), () => 'u').field('name', v.string()).build()
+			const first = JsonAdapter.create({ filePath })
+			await first.connect()
+			await first.use(schema, { table: 'users' }).createMany([{ id: 'u1', name: 'Alice' }])
+			await first.disconnect()
+
+			const second = JsonAdapter.create({ filePath })
+			await second.connect()
+			expect((await second.introspect()).map((s) => s.name)).toEqual(['users'])
+			await second.applyRenameTable({ kind: 'renameTable', from: 'users', to: 'members' })
+			await second.disconnect()
+
+			const third = JsonAdapter.create({ filePath })
+			await third.connect()
+			expect(await third.use(schema, { table: 'members' }).findMany(FilterGroup.create())).toEqual([{ id: 'u1', name: 'Alice' }])
+			expect(await third.use(schema, { table: 'users' }).findMany(FilterGroup.create())).toEqual([])
+			expect((await third.introspect()).map((s) => s.name)).toEqual(['members'])
+			await third.applyDropTable({ kind: 'dropTable', name: 'members' })
+			await third.disconnect()
+
+			const fourth = JsonAdapter.create({ filePath })
+			await fourth.connect()
+			expect(await fourth.use(schema, { table: 'members' }).findMany(FilterGroup.create())).toEqual([])
+			expect(await fourth.introspect()).toEqual([])
+			await fourth.disconnect()
+		})
+
 		test('state persists across adapter restarts', async () => {
 			const schema = Schema.from('users')
 				.pk('id', v.string(), () => 'u')
