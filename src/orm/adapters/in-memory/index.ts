@@ -4,6 +4,7 @@ import { v, differ } from 'valleyed'
 
 import { configurable } from '../../../utilities/configurable'
 import type { FieldTypeName } from '../../adapter'
+import { OrmValidationError } from '../../errors/validation'
 import { Filter, FilterGroup, type FilterChild } from '../../filter'
 import type { DiscoveredSchema, ForeignKeyAction } from '../../migrations/introspection-types'
 import type { AddFieldChange, AddForeignKeyChange, AddIndexChange, AnyFieldSpec, CreateTableChange, DropFieldChange, DropForeignKeyChange, DropIndexChange, DropTableChange, ModifyFieldChange, RenameFieldChange, RenameTableChange } from '../../migrations/types'
@@ -269,13 +270,13 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		super(config)
 	}
 
-	#getStore(name: string) {
-		if (!this.stores.has(name)) this.stores.set(name, new Map())
-		return this.stores.get(name)!
-	}
-
-	#resolveStore(schema: AnySchema, config: unknown) {
-		return this.#getStore(resolveConfigName(schema, config as InMemoryRepoConfig))
+	#resolveStore(schema: AnySchema, config: unknown, create = false) {
+		const name = resolveConfigName(schema, config as InMemoryRepoConfig)
+		const existing = this.stores.get(name)
+		if (existing) return existing
+		const store = new Map<string, Record<string, unknown>>()
+		if (create) this.stores.set(name, store)
+		return store
 	}
 
 	#snapshot(): Snapshot {
@@ -312,8 +313,9 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async createMany(schema: AnySchema, config: unknown, data: Record<string, unknown>[]) {
+		if (data.length === 0) return []
 		const pk = schema.pkField.name
-		const store = this.#resolveStore(schema, config)
+		const store = this.#resolveStore(schema, config, true)
 		return data.map((d) => {
 			const row = clone(d)
 			store.set(String(row[pk]), row)
@@ -397,7 +399,7 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		}
 		const base = clone(create)
 		const result = ops.length > 0 ? applyOps(base, ops) : base
-		store.set(String(result[pk]), result)
+		this.#resolveStore(schema, config, true).set(String(result[pk]), result)
 		return clone(result)
 	}
 
@@ -493,7 +495,19 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async applyDropTable(change: DropTableChange): Promise<void> {
+		for (const foreignKey of this.foreignKeys.values()) {
+			if (foreignKey.table !== change.name && foreignKey.references.table === change.name) {
+				throw new OrmValidationError('changes', change.name, 'dropTable', [{ cause: 'table is referenced by a foreign key' }])
+			}
+		}
+		this.stores.delete(change.name)
 		this.tables.delete(change.name)
+		for (const [name, index] of this.indexes) {
+			if (index.table === change.name) this.indexes.delete(name)
+		}
+		for (const [name, foreignKey] of this.foreignKeys) {
+			if (foreignKey.table === change.name) this.foreignKeys.delete(name)
+		}
 	}
 
 	async applyAddField(change: AddFieldChange<any>): Promise<void> {
@@ -520,9 +534,31 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 
 	async applyRenameTable(change: RenameTableChange): Promise<void> {
 		const table = this.tables.get(change.from)
+		const store = this.stores.get(change.from)
+		if (!table && !store) return
+		if (change.from === change.to) return
+		if (this.tables.has(change.to) || this.stores.has(change.to)) {
+			throw new OrmValidationError('changes', change.from, 'renameTable', [{ cause: `destination table '${change.to}' already exists` }])
+		}
+		if (store) {
+			this.stores.delete(change.from)
+			this.stores.set(change.to, store)
+		}
 		if (table) {
 			this.tables.delete(change.from)
 			this.tables.set(change.to, table)
+		}
+		for (const [name, index] of this.indexes) {
+			if (index.table === change.from) this.indexes.set(name, { ...index, table: change.to })
+		}
+		for (const [name, foreignKey] of this.foreignKeys) {
+			if (foreignKey.table === change.from || foreignKey.references.table === change.from) {
+				this.foreignKeys.set(name, {
+					...foreignKey,
+					table: foreignKey.table === change.from ? change.to : foreignKey.table,
+					references: foreignKey.references.table === change.from ? { ...foreignKey.references, table: change.to } : foreignKey.references,
+				})
+			}
 		}
 	}
 
@@ -563,8 +599,10 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 
 	async introspect(): Promise<DiscoveredSchema[]> {
 		const schemas: DiscoveredSchema[] = []
-		for (const [name, meta] of this.tables.entries()) {
-			const fields = [...meta.fields.values()].map((f) => ({
+		const names = new Set([...this.tables.keys(), ...this.stores.keys()])
+		for (const name of names) {
+			const meta = this.tables.get(name)
+			const fields = [...(meta?.fields.values() ?? [])].map((f) => ({
 				name: f.name,
 				type: f.type as FieldTypeName,
 				nullable: f.nullable ?? false,
@@ -585,7 +623,7 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 				}))
 			schemas.push({
 				name,
-				pk: { name: meta.pk.name, type: meta.pk.type as FieldTypeName },
+				pk: meta ? { name: meta.pk.name, type: meta.pk.type as FieldTypeName } : undefined,
 				fields,
 				indexes,
 				foreignKeys,
@@ -630,6 +668,174 @@ if (import.meta.vitest) {
 	const { v } = await import('valleyed')
 
 	describe('in-memory adapter', () => {
+		test('introspect discovers lazily written stores without inventing schema metadata', async () => {
+			const schema = Schema.from('users').pk('id', v.string(), () => 'u').field('name', v.string()).build()
+			const adapter = InMemoryAdapter.create({})
+			await adapter.use(schema, { table: 'tenant_users' }).createMany([{ id: 'u1', name: 'Alice' }])
+			await adapter.applyAddIndex({ kind: 'addIndex', table: 'tenant_users', on: ['name'], name: 'users_name' })
+
+			expect(await adapter.introspect()).toEqual([{
+				name: 'tenant_users',
+				pk: undefined,
+				fields: [],
+				indexes: [{ name: 'users_name', on: ['name'], unique: false }],
+				foreignKeys: [],
+			}])
+		})
+
+		test('missing reads and non-inserting mutations do not create discoverable stores', async () => {
+			const schema = Schema.from('absent').pk('id', v.string(), () => 'u').field('name', v.string()).build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'absent' })
+			const filter = FilterGroup.create()
+
+			expect(await adapter.findByPk(schema, { table: 'absent' }, 'missing')).toBeNull()
+			expect(await use.findMany(filter)).toEqual([])
+			expect(await use.count(filter)).toBe(0)
+			for await (const row of use.iterateMany(filter)) expect.unreachable(String(row))
+			expect(await adapter.aggregate(schema, { table: 'absent' }, { aggregates: [{ fn: 'count', alias: 'count' }], groupBy: [] })).toEqual([{ count: 0 }])
+			expect(await adapter.updateByPk(schema, { table: 'absent' }, 'missing', [new SetOp({ name: 'Changed' })])).toBeNull()
+			expect(await adapter.deleteByPk(schema, { table: 'absent' }, 'missing')).toBeNull()
+			expect(await adapter.updateMany(schema, { table: 'absent' }, filter, { name: 'Changed' })).toEqual([])
+			expect(await adapter.deleteMany(schema, { table: 'absent' }, filter)).toEqual([])
+			expect(await adapter.createMany(schema, { table: 'absent' }, [])).toEqual([])
+			expect(await adapter.introspect()).toEqual([])
+		})
+
+		test('upsert insertion creates a discoverable store', async () => {
+			const schema = Schema.from('upserts').pk('id', v.string(), () => 'u').field('name', v.string()).build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'upserts' })
+			await use.upsertOne(FilterGroup.create().eq('id', 'u1'), { id: 'u1', name: 'Alice' }, [])
+			expect(await use.findOne(FilterGroup.create().eq('id', 'u1'))).toEqual({ id: 'u1', name: 'Alice' })
+			expect((await adapter.introspect()).map((s) => s.name)).toEqual(['upserts'])
+		})
+
+		test.each([false, true])('dropTable removes rows and owned metadata (declared: %s)', async (declared) => {
+			const schema = Schema.from('users').pk('id', v.string(), () => 'u').field('name', v.string()).build()
+			const adapter = InMemoryAdapter.create({})
+			if (declared) await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'name', type: 'string' }] })
+			const use = adapter.use(schema, { table: 'users' })
+			await use.createMany([{ id: 'u1', name: 'Alice' }])
+			await adapter.applyAddIndex({ kind: 'addIndex', table: 'users', on: ['name'], name: 'users_name' })
+			await adapter.applyAddForeignKey({ kind: 'addForeignKey', table: 'users', on: 'id', references: { table: 'users', column: 'id' }, name: 'users_self' })
+			await adapter.applyDropTable({ kind: 'dropTable', name: 'users' })
+
+			expect(await use.findOne(FilterGroup.create().eq('id', 'u1'))).toBeNull()
+			expect(await adapter.introspect()).toEqual([])
+			await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [] })
+			expect(await adapter.introspect()).toEqual([{ name: 'users', pk: { name: 'id', type: 'string' }, fields: [], indexes: [], foreignKeys: [] }])
+			expect(await use.findMany(FilterGroup.create())).toEqual([])
+		})
+
+		test.each([false, true])('renameTable moves rows and rewrites table references (declared: %s)', async (declared) => {
+			const schema = Schema.from('users').pk('id', v.string(), () => 'u').field('name', v.string()).build()
+			const adapter = InMemoryAdapter.create({})
+			if (declared) await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'name', type: 'string' }] })
+			await adapter.applyCreateTable({ kind: 'createTable', name: 'posts', pk: { name: 'id', type: 'string' }, fields: [] })
+			await adapter.use(schema, { table: 'users' }).createMany([{ id: 'u1', name: 'Alice' }])
+			await adapter.applyAddIndex({ kind: 'addIndex', table: 'users', on: ['name'], name: 'users_name' })
+			await adapter.applyAddForeignKey({ kind: 'addForeignKey', table: 'users', on: 'id', references: { table: 'users', column: 'id' }, name: 'users_self' })
+			await adapter.applyAddForeignKey({ kind: 'addForeignKey', table: 'posts', on: 'author', references: { table: 'users', column: 'id' }, name: 'posts_author' })
+			await adapter.applyRenameTable({ kind: 'renameTable', from: 'users', to: 'members' })
+
+			expect(await adapter.use(schema, { table: 'members' }).findOne(FilterGroup.create().eq('id', 'u1'))).toEqual({ id: 'u1', name: 'Alice' })
+			expect(await adapter.use(schema, { table: 'users' }).findMany(FilterGroup.create())).toEqual([])
+			const discovered = await adapter.introspect()
+			expect(discovered.map((s) => s.name).sort()).toEqual(['members', 'posts'])
+			const members = discovered.find((s) => s.name === 'members')!
+			expect(members.indexes).toEqual([{ name: 'users_name', on: ['name'], unique: false }])
+			expect(members.foreignKeys).toEqual([{ name: 'users_self', on: 'id', references: { table: 'members', column: 'id' } }])
+			expect(discovered.find((s) => s.name === 'posts')!.foreignKeys).toEqual([{ name: 'posts_author', on: 'author', references: { table: 'members', column: 'id' } }])
+		})
+
+		test.each(['rows', 'metadata'])('renameTable refuses an occupied destination (%s)', async (destination) => {
+			const schema = Schema.from('users').pk('id', v.string(), () => 'u').build()
+			const adapter = InMemoryAdapter.create({})
+			const users = adapter.use(schema, { table: 'users' })
+			const members = adapter.use(schema, { table: 'members' })
+			await users.createMany([{ id: 'original' }])
+			if (destination === 'rows') await members.createMany([{ id: 'existing' }])
+			else await adapter.applyCreateTable({ kind: 'createTable', name: 'members', pk: { name: 'id', type: 'string' }, fields: [] })
+			const before = await adapter.introspect()
+
+			await expect(adapter.applyRenameTable({ kind: 'renameTable', from: 'users', to: 'members' })).rejects.toThrow(OrmValidationError)
+			expect(await users.findMany(FilterGroup.create())).toEqual([{ id: 'original' }])
+			expect(await members.findMany(FilterGroup.create())).toEqual(destination === 'rows' ? [{ id: 'existing' }] : [])
+			expect(await adapter.introspect()).toEqual(before)
+		})
+
+		test('dropTable refuses inbound foreign keys without deleting rows', async () => {
+			const schema = Schema.from('users').pk('id', v.string(), () => 'u').build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'users' })
+			await use.createMany([{ id: 'u1' }])
+			await adapter.applyCreateTable({ kind: 'createTable', name: 'posts', pk: { name: 'id', type: 'string' }, fields: [] })
+			await adapter.applyAddForeignKey({ kind: 'addForeignKey', table: 'posts', on: 'author', references: { table: 'users', column: 'id' }, name: 'posts_author' })
+			const before = await adapter.introspect()
+			await expect(adapter.applyDropTable({ kind: 'dropTable', name: 'users' })).rejects.toThrow(OrmValidationError)
+			expect(await use.findMany(FilterGroup.create())).toEqual([{ id: 'u1' }])
+			expect(await adapter.introspect()).toEqual(before)
+			await adapter.applyDropForeignKey({ kind: 'dropForeignKey', table: 'posts', name: 'posts_author' })
+			await adapter.applyDropTable({ kind: 'dropTable', name: 'users' })
+			expect(await use.findMany(FilterGroup.create())).toEqual([])
+		})
+
+		test('introspect deduplicates declared stores and preserves empty declared tables', async () => {
+			const schema = Schema.from('users').pk('id', v.string(), () => 'u').field('name', v.string()).build()
+			const adapter = InMemoryAdapter.create({})
+			await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'name', type: 'string' }] })
+			const expected = [{ name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'name', type: 'string', nullable: false }], indexes: [], foreignKeys: [] }]
+			expect(await adapter.introspect()).toEqual(expected)
+			const use = adapter.use(schema, { table: 'users' })
+			await use.createMany([{ id: 'u1', name: 'Alice' }])
+			expect(await adapter.introspect()).toEqual(expected)
+			await use.deleteOne(FilterGroup.create().eq('id', 'u1'))
+			expect(await adapter.introspect()).toEqual(expected)
+		})
+
+		test('deleting the last row retains a lazily created container', async () => {
+			const schema = Schema.from('users').pk('id', v.string(), () => 'u').build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'users' })
+			await use.createMany([{ id: 'u1' }])
+			await use.deleteOne(FilterGroup.create().eq('id', 'u1'))
+			expect((await adapter.introspect()).map((s) => s.name)).toEqual(['users'])
+		})
+
+		test.each(['rename', 'drop'])('session rollback restores table rows and metadata after %s', async (operation) => {
+			const schema = Schema.from('users').pk('id', v.string(), () => 'u').build()
+			const adapter = InMemoryAdapter.create({})
+			await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [] })
+			const use = adapter.use(schema, { table: 'users' })
+			await use.createMany([{ id: 'u1' }])
+			await adapter.applyAddIndex({ kind: 'addIndex', table: 'users', on: ['id'], name: 'users_id' })
+			await adapter.applyAddForeignKey({ kind: 'addForeignKey', table: 'users', on: 'id', references: { table: 'users', column: 'id' }, name: 'users_self' })
+			const before = await adapter.introspect()
+			await expect(adapter.session(async () => {
+				if (operation === 'rename') {
+					await adapter.applyRenameTable({ kind: 'renameTable', from: 'users', to: 'members' })
+					expect(await adapter.use(schema, { table: 'members' }).findMany(FilterGroup.create())).toEqual([{ id: 'u1' }])
+				} else await adapter.applyDropTable({ kind: 'dropTable', name: 'users' })
+				throw new Error('rollback table change')
+			})).rejects.toThrow('rollback table change')
+			expect(await adapter.introspect()).toEqual(before)
+			expect(await use.findMany(FilterGroup.create())).toEqual([{ id: 'u1' }])
+			expect(await adapter.use(schema, { table: 'members' }).findMany(FilterGroup.create())).toEqual([])
+			expect(await adapter.introspect()).toEqual(before)
+		})
+
+		test('session rollback removes newly discovered lazy stores', async () => {
+			const schema = Schema.from('users').pk('id', v.string(), () => 'u').build()
+			const adapter = InMemoryAdapter.create({})
+			await expect(adapter.session(async () => {
+				await adapter.use(schema, { table: 'users' }).createMany([{ id: 'u1' }])
+				throw new Error('rollback insertion')
+			})).rejects.toThrow('rollback insertion')
+			expect(await adapter.use(schema, { table: 'users' }).findMany(FilterGroup.create())).toEqual([])
+			expect(await adapter.introspect()).toEqual([])
+		})
+
 		test('InMemoryAdapter.create({}) produces a working adapter', () => {
 			const adapter = InMemoryAdapter.create({})
 			expect(adapter).toBeInstanceOf(InMemoryAdapter)

@@ -2788,6 +2788,25 @@ emits `createTable` / `addField` / `dropField` / `modifyField` /
 produced. Field-level migrations on Mongo go through `execute` (data
 backfills, `$set` / `$unset` operations).
 
+The **in-memory container-discovery rule**: introspection lists the union of
+migration-declared tables and lazily created record stores, once per physical
+name. Declared tables remain visible when empty. Stores created by CRUD without
+DDL are visible with no declared primary key or field metadata (`pk: undefined`,
+`fields: []`); introspection does not infer a schema by sampling rows or treating
+the caller's current Schema as the stored schema. Index and foreign-key metadata
+are retained where declared. JSON persistence uses the same discovery behavior.
+Reads, unmatched updates/deletes, and empty bulk inserts do not create stores;
+inserting through CRUD or upsert does. Deleting the last row retains the
+container until an explicit `dropTable`.
+
+In-memory `renameTable` moves both rows and declared metadata, preserves index
+and constraint names, and rewrites their table references. An occupied destination
+is rejected before any change. `dropTable` removes rows, declared metadata, and
+owned indexes/foreign keys; foreign keys owned by another table must be explicitly
+dropped first. These changes participate in adapter session rollback and JSON
+persistence. This does not add field-shape enforcement or change field-level
+migration semantics.
+
 The **introspection-error-loud rule**: when the adapter's
 `introspect()` encounters a DB column type that doesn't map to the
 canonical `FieldType` set (§4.3) — e.g. PG `bytea` (binary, §4.6
