@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [5.3.4](https://github.com/kevinand11/equipped/compare/v5.3.3...v5.3.4) (2026-11-11)
+
+
+### Features
+
+* **cache:** add json cache adapter ([4f1ec32](https://github.com/kevinand11/equipped/commit/4f1ec3221c9c237627710ff673fc7d1f4a6931ef))
+* **instance:** expose explicit close ([3bffda0](https://github.com/kevinand11/equipped/commit/3bffda0b8b9ab65c87a8c7172d41b19c3082a82a))
+* **orm:** support nested field filters ([7e5da13](https://github.com/kevinand11/equipped/commit/7e5da1371e74cdb8a0aef1b23d1c72956c3f668e))
+* **orm:** support unbounded pagination envelopes ([380d47d](https://github.com/kevinand11/equipped/commit/380d47d550d57b7f3b8b9bfdd45107641730cf36))
+* **server:** add no content status support ([688a8ee](https://github.com/kevinand11/equipped/commit/688a8eee59f09917676af1bb18fe4c08496db9e3))
+* **server:** add route contracts ([9e4fbb9](https://github.com/kevinand11/equipped/commit/9e4fbb91be2f0439ced39e7d4314eee5f1fdcb71))
+* **server:** support extensible status codes ([1adc702](https://github.com/kevinand11/equipped/commit/1adc70259ccba966b2ac70a817a833f9e912792d))
+
+
+### Bug Fixes
+
+* **adapters:** serialize json file operations ([3865a00](https://github.com/kevinand11/equipped/commit/3865a00ad55d575bd8c01dee66bbf7ba1e30ef69))
+* **orm:** make like match literal substrings ([f6aba4c](https://github.com/kevinand11/equipped/commit/f6aba4c0c3f1096e5c3dbc44580e5a9b943a9476))
+* **orm:** synchronize in-memory table discovery and data ([fda615c](https://github.com/kevinand11/equipped/commit/fda615c1ceb08867420209ce1be6f37097f8031a))
+
 ### [5.3.3](https://github.com/kevinand11/equipped/compare/v5.3.2...v5.3.3) (2026-06-21)
 
 
