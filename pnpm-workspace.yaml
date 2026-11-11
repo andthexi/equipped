@@ -4,3 +4,8 @@ allowBuilds:
   msgpackr-extract: true
 
 minimumReleaseAge: 1440
+
+nodeVersion: 24.5.0
+engineStrict: true
+strictPeerDependencies: false
+enablePrePostScripts: true

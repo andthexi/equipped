@@ -6,6 +6,13 @@
 	"type": "module",
 	"sideEffects": false,
 	"packageManager": "pnpm@11.7.0",
+	"devEngines": {
+		"runtime": {
+			"name": "node",
+			"version": "24.5.0",
+			"onFail": "download"
+		}
+	},
 	"main": "./dist/cjs/index.cjs",
 	"module": "./dist/esm/index.mjs",
 	"types": "./dist/types/index.d.ts",
