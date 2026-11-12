@@ -124,7 +124,7 @@ describe.skipIf(skipIfNoDb())('PostgresAdapter: real PG integration', () => {
 				changes: [
 					{ kind: 'dropField', table: 'users', name: 'bio' },
 					{ kind: 'dropForeignKey', table: 'articles', name: 'fk_posts_authorId' },
-					{ kind: 'dropIndex', name: 'idx_users_email_unique' },
+					{ kind: 'dropIndex', table: 'users', name: 'idx_users_email_unique' },
 					{ kind: 'dropTable', name: 'articles' },
 				],
 			},

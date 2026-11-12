@@ -512,7 +512,7 @@ if (import.meta.vitest) {
 			await adapter.applyAddIndex({ kind: 'addIndex', table: 'users', on: ['email'], name: 'users_email_idx' })
 			const m: Migration<typeof adapter> = {
 				id: '0001-drop-idx',
-				changes: [{ kind: 'dropIndex', name: 'users_email_idx' }],
+				changes: [{ kind: 'dropIndex', table: 'users', name: 'users_email_idx' }],
 			}
 			const migrator = Migrator.from(repo, adapter).migrations([m]).build()
 			await migrator.up()
@@ -602,7 +602,7 @@ if (import.meta.vitest) {
 					changes: [
 						{ kind: 'dropField', table: 'users', name: 'age' },
 						{ kind: 'dropForeignKey', table: 'posts', name: 'posts_authorId_fk' },
-						{ kind: 'dropIndex', name: 'users_email_idx' },
+						{ kind: 'dropIndex', table: 'users', name: 'users_email_idx' },
 						{ kind: 'dropTable', name: 'articles' },
 					],
 				},

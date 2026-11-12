@@ -94,10 +94,10 @@ export abstract class OrmAdapter {
 	applyModifyField?(change: ModifyFieldChange<any>, target: unknown): Promise<void>
 	applyRenameTable?(change: RenameTableChange, from: unknown, to: unknown): Promise<void>
 	applyRenameField?(change: RenameFieldChange, target: unknown): Promise<void>
-	applyAddIndex?(change: AddIndexChange): Promise<void>
-	applyDropIndex?(change: DropIndexChange): Promise<void>
-	applyAddForeignKey?(change: AddForeignKeyChange): Promise<void>
-	applyDropForeignKey?(change: DropForeignKeyChange): Promise<void>
+	applyAddIndex?(change: AddIndexChange, target: unknown): Promise<void>
+	applyDropIndex?(change: DropIndexChange, target: unknown): Promise<void>
+	applyAddForeignKey?(change: AddForeignKeyChange, target: unknown, referencedTarget: unknown): Promise<void>
+	applyDropForeignKey?(change: DropForeignKeyChange, target: unknown): Promise<void>
 	introspect?(): Promise<DiscoveredSchema[]>
 	introspectTarget?(config: unknown): Promise<DiscoveredSchema | null>
 	physicalTargetIdentity?(config: unknown): string

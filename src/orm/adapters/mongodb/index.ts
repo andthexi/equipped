@@ -377,26 +377,28 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 		await db.collection(MIGRATION_TRACKER_COLLECTION).insertOne({ _id: id as any, appliedAt })
 	}
 
-	async applyAddIndex(change: AddIndexChange): Promise<void> {
-		const db = this.client.db()
+	async applyAddIndex(change: AddIndexChange, target?: unknown): Promise<void> {
+		const config = (target as MongoDbRepoConfig | undefined) ?? {
+			db: this.client.db().databaseName,
+			col: change.table,
+		}
+		const db = this.client.db(config.db)
 		const fields: Record<string, 1> = {}
 		for (const f of change.on) {
 			fields[f] = 1
 		}
-		const name = change.name ?? `${change.table}_${change.on.join('_')}_idx`
-		await db.collection(change.table).createIndex(fields, { unique: change.unique ?? false, name })
+		const name = change.name ?? `${config.col}_${change.on.join('_')}_idx`
+		await db.collection(config.col).createIndex(fields, { unique: change.unique ?? false, name })
 	}
 
-	async applyDropIndex(change: DropIndexChange): Promise<void> {
-		const db = this.client.db()
-		const collections = await db.listCollections().toArray()
-		for (const col of collections) {
-			const indexes = await db.collection(col.name).listIndexes().toArray()
-			if (indexes.some((idx) => idx.name === change.name)) {
-				await db.collection(col.name).dropIndex(change.name)
-				return
-			}
+	async applyDropIndex(change: DropIndexChange, target?: unknown): Promise<void> {
+		const config = (target as MongoDbRepoConfig | undefined) ?? {
+			db: this.client.db().databaseName,
+			col: change.table,
 		}
+		const collection = this.client.db(config.db).collection(config.col)
+		const indexes = await collection.listIndexes().toArray()
+		if (indexes.some((idx) => idx.name === change.name)) await collection.dropIndex(change.name)
 	}
 
 	physicalTargetIdentity(config: MongoDbRepoConfig): string {
@@ -1049,21 +1051,28 @@ if (import.meta.vitest) {
 			expect(col.indexes[0].key).toEqual({ userId: 1, createdAt: 1 })
 		})
 
-		test('applyDropIndex finds and drops index by scanning collections', async () => {
+		test('applyDropIndex only drops from the resolved database and collection', async () => {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
 			const state = mockMongoDb(adapter)
 			state.collections.set('users', { indexes: [{ name: 'users_email_idx', key: { email: 1 }, unique: true }] })
+			state.collections.set('unrelated', {
+				indexes: [{ name: 'users_email_idx', key: { email: 1 }, unique: true }],
+			})
 
-			await adapter.applyDropIndex({ kind: 'dropIndex', name: 'users_email_idx' })
+			await adapter.applyDropIndex(
+				{ kind: 'dropIndex', table: 'logicalUsers', name: 'users_email_idx' },
+				{ db: 'mappedDb', col: 'users' },
+			)
 
 			expect(state.collections.get('users')!.indexes).toHaveLength(0)
+			expect(state.collections.get('unrelated')!.indexes).toHaveLength(1)
 		})
 
 		test('applyDropIndex is a no-op when index not found', async () => {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
 			mockMongoDb(adapter)
 
-			await adapter.applyDropIndex({ kind: 'dropIndex', name: 'nonexistent_idx' })
+			await adapter.applyDropIndex({ kind: 'dropIndex', table: 'users', name: 'nonexistent_idx' })
 		})
 
 		test('introspect returns DiscoveredSchema with empty fields, pk, and foreignKeys', async () => {
@@ -1193,7 +1202,7 @@ if (import.meta.vitest) {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
 			const state = mockMongoDb(adapter)
 			const repo = Repo.from(adapter)
-				.resolve(() => ({ db: 'test', col: 'test' }))
+				.resolve((name) => ({ db: 'test', col: name }))
 				.build()
 
 			let executeRan = false
@@ -1219,7 +1228,7 @@ if (import.meta.vitest) {
 				{
 					id: '0003-drop-idx',
 					tx: false,
-					changes: [{ kind: 'dropIndex', name: 'users_email_idx' }],
+					changes: [{ kind: 'dropIndex', table: 'users', name: 'users_email_idx' }],
 				},
 			]
 

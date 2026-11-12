@@ -2382,7 +2382,7 @@ type Change<A extends OrmAdapter> =
 	| { kind: 'renameTable'; from: string; to: string }
 	| { kind: 'renameField'; table: string; from: string; to: string }
 	| { kind: 'addIndex'; table: string; on: ReadonlyArray<string>; unique?: boolean; name?: string }
-	| { kind: 'dropIndex'; name: string }
+	| { kind: 'dropIndex'; table: string; name: string }
 	| { kind: 'addForeignKey'; table; on: string; references: { table; column }; onDelete?; onUpdate?; name? }
 	| { kind: 'dropForeignKey'; table: string; name: string }
 	| { kind: 'execute'; up: (repo: Repo) => Promise<void> }
@@ -2412,6 +2412,14 @@ Vocabulary:
   `repo.resolve(...)` scope. `renameTable` resolves `from` and `to`
   independently; adapters reject unsupported cross-namespace renames before
   issuing the rename and do not provision namespaces.
+- Index and foreign-key changes resolve their owning logical table the same way;
+  `addForeignKey` resolves its referenced table independently. `dropIndex`
+  requires `table` so adapters never search unrelated tables or collections by
+  index name. Column names and explicit index/constraint names remain literal;
+  generated names use the resolved physical owner.
+- **Upgrade note:** existing `dropIndex` changes must add the owning logical
+  `table`. A name-only drop is no longer accepted at either the TypeScript or
+  runtime validation boundary.
 - **Long-tail features** — partial indexes, functional indexes, GIN/GIST,
   TTL, text indexes, CHECK constraints, triggers, views, sequences,
   composite PKs/FKs — are explicitly out of the canonical algebra. They

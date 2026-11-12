@@ -116,7 +116,7 @@ export function diffSchemas(
 				changes.push({ kind: 'dropForeignKey', table: disc.name, name: fk.name })
 			}
 			for (const idx of disc.indexes) {
-				changes.push({ kind: 'dropIndex', name: idx.name })
+				changes.push({ kind: 'dropIndex', table: disc.name, name: idx.name })
 			}
 			changes.push({ kind: 'dropTable', name: disc.name })
 		}

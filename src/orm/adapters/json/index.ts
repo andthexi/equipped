@@ -364,20 +364,23 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 		return this.#withCurrentFile(true, async () => await this.#inMemory.applyRenameField(change, target))
 	}
 
-	async applyAddIndex(change: AddIndexChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddIndex(change))
+	async applyAddIndex(change: AddIndexChange, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddIndex(change, target))
 	}
 
-	async applyDropIndex(change: DropIndexChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropIndex(change))
+	async applyDropIndex(change: DropIndexChange, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropIndex(change, target))
 	}
 
-	async applyAddForeignKey(change: AddForeignKeyChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddForeignKey(change))
+	async applyAddForeignKey(change: AddForeignKeyChange, target?: unknown, referencedTarget?: unknown): Promise<void> {
+		return this.#withCurrentFile(
+			true,
+			async () => await this.#inMemory.applyAddForeignKey(change, target, referencedTarget),
+		)
 	}
 
-	async applyDropForeignKey(change: DropForeignKeyChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropForeignKey(change))
+	async applyDropForeignKey(change: DropForeignKeyChange, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropForeignKey(change, target))
 	}
 
 	physicalTargetIdentity(config: JsonAdapterConfig): string {
@@ -1103,7 +1106,7 @@ if (import.meta.vitest) {
 			await a2.connect()
 			const schemas = await a2.introspect()
 			expect(schemas[0].indexes).toEqual([{ name: 'users_email_idx', on: ['email'], unique: true }])
-			await a2.applyDropIndex({ kind: 'dropIndex', name: 'users_email_idx' })
+			await a2.applyDropIndex({ kind: 'dropIndex', table: 'users', name: 'users_email_idx' })
 			await a2.disconnect()
 
 			const a3 = JsonAdapter.create({ filePath })
@@ -1284,7 +1287,7 @@ if (import.meta.vitest) {
 					changes: [
 						{ kind: 'dropField', table: 'users', name: 'age' },
 						{ kind: 'dropForeignKey', table: 'posts', name: 'posts_authorId_fk' },
-						{ kind: 'dropIndex', name: 'users_email_idx' },
+						{ kind: 'dropIndex', table: 'users', name: 'users_email_idx' },
 						{ kind: 'dropTable', name: 'articles' },
 					],
 				},
