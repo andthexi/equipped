@@ -2443,10 +2443,10 @@ The **Migrator** is constructed via the builder-chain rule (§2.2). It is
 the only verb-bearing entity in this subsystem.
 
 ```ts
-const migrator = Migrator.from(repo, adapter)
-  .migrations([m1, m2, m3])                        // explicit array; lex-sorted by id; dupes throw
-  .withoutLock?()                                  // optional opt-out; only allowed when adapter lacks acquireMigrationLock
-  .build()
+const migrator = Migrator.from(repo)
+	.withLock() // or .withoutLock(); policy is always explicit
+	.migrations([m1, m2, m3]) // explicit array; lex-sorted by id; dupes throw
+	.build()
 ```
 
 `.build()` prerequisites (per §2.6):
@@ -2458,11 +2458,13 @@ discovery (`fs.readdir` breaks edge runtimes) and no post-build
 registration (EventLog-style `migrator.migration(id, def)` adds ceremony
 without payoff — there's no per-migration return value to import).
 
-The **`withoutLock` opt-out rule**: the builder step is a compile error
-unless the adapter doesn't declare `acquireMigrationLock`. Calling it
-when the adapter _does_ declare locking is a type-system rejection —
-locking is the cluster-safety primitive and silently disabling it would
-violate §13 #6 always-throw-never-silently-drop.
+The **explicit lock-policy rule** requires `.withLock()` or `.withoutLock()`
+immediately after `.from(repo)`. `.withLock()` is visible only when the Repo's
+adapter declares `acquireMigrationLock`; `.withoutLock()` is always visible so
+the safety tradeoff cannot be selected implicitly. The built Migrator is also
+capability-narrowed: `status()` and `dry()` require `loadMigrations`, while
+`up()` additionally requires `recordMigration`. An unsupported adapter can
+still build a Migrator with those terminals narrowed out.
 
 ### 16.4 Adapter surface for migrations
 
@@ -2672,7 +2674,7 @@ tracker row from the adapter's storage.
 
 ### 16.8 Validation flow
 
-Validation runs once at `Migrator.from(repo, adapter).migrations(arr).build()` —
+Validation runs once at `Migrator.from(repo).withLock().migrations(arr).build()` —
 the **validate-once rule** (§7.1) applies to migrations too. The
 **`assertNormalisedChanges` function** walks every Change in every
 Migration and enforces:
@@ -2769,7 +2771,7 @@ The **MigrationCodegen artifact** is constructed via the builder-chain
 rule (§2.2):
 
 ```ts
-const codegen = MigrationCodegen.from(repo, adapter)
+const codegen = MigrationCodegen.from(repo)
   .target([UserSchema, PostSchema, …])           // declared schemas = desired state
   .build()
 ```

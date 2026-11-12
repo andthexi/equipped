@@ -1823,9 +1823,9 @@ if (import.meta.vitest) {
 			const repo = Repo.from(adapter)
 				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
-			const step = Migrator.from(repo, adapter).migrations([])
+			const step = Migrator.from(repo).withLock().migrations([])
 			expectTypeOf(step).toHaveProperty('build')
-			expectTypeOf(step).not.toHaveProperty('withoutLock')
+			expectTypeOf(Migrator.from(repo)).toHaveProperty('withoutLock')
 		})
 
 		test('applyCreateTable maps all field types to correct PG types', async () => {
@@ -1880,7 +1880,7 @@ if (import.meta.vitest) {
 			expect(queries[0].sql).toContain("DEFAULT 'it''s'")
 		})
 
-		test('end-to-end: Migrator.from(repo, adapter) wires up correctly', async () => {
+		test('end-to-end: Migrator.from(repo) wires up correctly', async () => {
 			const { Repo } = await import('../../repo/repo.js')
 			const { Migrator } = await import('../../migrations/migrator.js')
 			const { Schema } = await import('../../schema.js')
@@ -1912,7 +1912,8 @@ if (import.meta.vitest) {
 			;(adapter.pool as any).query = mockClient.query
 			;(adapter.pool as any).connect = async () => mockClient
 
-			const migrator = Migrator.from(repo, adapter)
+			const migrator = Migrator.from(repo)
+				.withLock()
 				.migrations([
 					{
 						id: '0001',

@@ -45,14 +45,11 @@ Migration records are stored in `equipped_migrations` (default database from the
 
 ### No lock support
 
-The Mongo adapter does not implement `acquireMigrationLock` (no native advisory-lock equivalent). Since the adapter lacks the lock method, `Migrator.from(repo, adapter).migrations([...]).build()` compiles without `.withoutLock()`. Both paths work:
+The Mongo adapter does not implement `acquireMigrationLock` (no native advisory-lock equivalent), so migration construction requires the explicit `.withoutLock()` policy:
 
 ```ts
-// Direct — compiles because adapter lacks acquireMigrationLock
-const migrator = Migrator.from(repo, adapter).migrations(migrations).build()
-
-// Explicit opt-out — also compiles
-const migrator = Migrator.from(repo, adapter).migrations(migrations).withoutLock().build()
+// Explicit opt-out; withLock() is not exposed for this adapter
+const migrator = Migrator.from(repo).withoutLock().migrations(migrations).build()
 ```
 
 ### Introspection

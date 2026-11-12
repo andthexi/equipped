@@ -1169,7 +1169,7 @@ if (import.meta.vitest) {
 			expectTypeOf<Extract<Changes, { kind: 'dropForeignKey' }>>().toBeNever()
 		})
 
-		test('type-level: Migrator.from(repo, adapter).build() works without withoutLock', async () => {
+		test('type-level: Migrator requires an explicit lock policy', async () => {
 			const { Migrator } = await import('../../migrations/migrator.js')
 			const { Repo } = await import('../../repo/repo.js')
 
@@ -1177,13 +1177,13 @@ if (import.meta.vitest) {
 			const repo = Repo.from(adapter)
 				.resolve(() => ({ db: 'test', col: 'test' }))
 				.build()
-			const step = Migrator.from(repo, adapter).migrations([])
+			const step = Migrator.from(repo).withoutLock().migrations([])
 
 			expectTypeOf(step).toHaveProperty('build')
-			expectTypeOf(step).toHaveProperty('withoutLock')
+			expectTypeOf(Migrator.from(repo)).not.toHaveProperty('migrations')
 		})
 
-		test('type-level: Migrator.from(repo, adapter).withoutLock().build() also works', async () => {
+		test('type-level: Migrator.from(repo).withoutLock().build() also works', async () => {
 			const { Migrator } = await import('../../migrations/migrator.js')
 			const { Repo } = await import('../../repo/repo.js')
 
@@ -1191,7 +1191,7 @@ if (import.meta.vitest) {
 			const repo = Repo.from(adapter)
 				.resolve(() => ({ db: 'test', col: 'test' }))
 				.build()
-			const migrator = Migrator.from(repo, adapter).migrations([]).withoutLock().build()
+			const migrator = Migrator.from(repo).withoutLock().migrations([]).build()
 			expect(migrator).toBeDefined()
 		})
 
@@ -1232,7 +1232,7 @@ if (import.meta.vitest) {
 				},
 			]
 
-			const migrator = Migrator.from(repo, adapter).migrations(migrations).build()
+			const migrator = Migrator.from(repo).withoutLock().migrations(migrations).build()
 			const result = await migrator.up()
 
 			expect(result.ran).toEqual(['0001-add-idx', '0002-backfill', '0003-drop-idx'])
@@ -1285,7 +1285,7 @@ if (import.meta.vitest) {
 				],
 			}
 
-			const migrator = Migrator.from(repo, adapter).migrations([m]).build()
+			const migrator = Migrator.from(repo).withoutLock().migrations([m]).build()
 			await migrator.up()
 
 			expect(backfilledData).toEqual(['user-1-normalized', 'user-2-normalized'])

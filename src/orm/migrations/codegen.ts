@@ -1,6 +1,5 @@
 import type { OrmAdapterLike } from '../adapters/base.js'
 import type { OrmAdapter } from '../orm-adapter.js'
-import { resolveRepoConfig } from '../repo/internals/config.js'
 import type { Repo } from '../repo/repo.js'
 import type { AnySchema } from '../schema.js'
 import { diffSchemas } from './diff.js'
@@ -12,11 +11,16 @@ type TargetIntrospection = {
 	physicalTargetIdentity(config: unknown): string
 }
 
-export type IntrospectableAdapter<A> = A extends TargetIntrospection & {
-	introspect(): Promise<DiscoveredSchema[]>
-}
-	? A
-	: never
+type HasMethod<A, K extends PropertyKey> = K extends keyof A
+	? A[K] extends (...args: any[]) => any
+		? true
+		: false
+	: false
+type HasTargetIntrospection<A> =
+	HasMethod<A, 'introspectTarget'> extends true ? HasMethod<A, 'physicalTargetIdentity'> : false
+type CodegenSurface<A extends OrmAdapterLike<any>> = MigrationCodegen<A> &
+	(HasTargetIntrospection<A> extends true ? {} : { diff: never }) &
+	(HasMethod<A, 'introspect'> extends true ? {} : { discover: never })
 
 export class MigrationCodegen<A extends OrmAdapterLike<any>> {
 	readonly #repo: Repo<A>
@@ -37,7 +41,7 @@ export class MigrationCodegen<A extends OrmAdapterLike<any>> {
 		const current: DiscoveredSchema[] = []
 		const identities = new Map<string, string>()
 		for (const schema of this.#target) {
-			const config = resolveRepoConfig<A>(this.#repo, schema.name)
+			const config = this.#repo.resolveConfig(schema.name)
 			const identity = this.#adapter.physicalTargetIdentity(config)
 			const existing = identities.get(identity)
 			if (existing)
@@ -55,15 +59,18 @@ export class MigrationCodegen<A extends OrmAdapterLike<any>> {
 		return this.#adapter.introspect()
 	}
 
-	static from<A extends OrmAdapterLike<any>>(
-		repo: Repo<IntrospectableAdapter<A>>,
-		adapter: A & OrmAdapter & TargetIntrospection & { introspect(): Promise<DiscoveredSchema[]> },
-	) {
+	static from<A extends OrmAdapterLike<any>>(repo: Repo<A>) {
+		if (!repo || typeof (repo as any).resolveConfig !== 'function' || !(repo as any).adapter) {
+			throw new TypeError('MigrationCodegen.from requires a Repo')
+		}
+		const adapter = repo.adapter as A &
+			OrmAdapter &
+			TargetIntrospection & { introspect(): Promise<DiscoveredSchema[]> }
 		return {
 			target(schemas: ReadonlyArray<AnySchema>) {
 				return {
-					build(): MigrationCodegen<A> {
-						return new MigrationCodegen(repo as unknown as Repo<A>, adapter, schemas)
+					build(): CodegenSurface<A> {
+						return new MigrationCodegen(repo, adapter, schemas) as CodegenSurface<A>
 					},
 				}
 			},
@@ -101,15 +108,15 @@ if (import.meta.vitest) {
 		test('an empty managed target is a no-op without introspection', async () => {
 			const { adapter, repo } = makeEnv()
 			const introspectTarget = vi.spyOn(adapter, 'introspectTarget')
-			const codegen = MigrationCodegen.from(repo, adapter).target([]).build()
+			const codegen = MigrationCodegen.from(repo).target([]).build()
 
 			expect(await codegen.diff()).toBeNull()
 			expect(introspectTarget).not.toHaveBeenCalled()
 		})
 
 		test('diff() returns createTable changes for fresh DB', async () => {
-			const { adapter, repo } = makeEnv()
-			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema]).build()
+			const { repo } = makeEnv()
+			const codegen = MigrationCodegen.from(repo).target([UserSchema]).build()
 			const changes = await codegen.diff()
 			expect(changes).not.toBeNull()
 			expect(changes).toHaveLength(1)
@@ -124,9 +131,9 @@ if (import.meta.vitest) {
 		})
 
 		test('discovers a CRUD-created container rather than proposing to create it again', async () => {
-			const { adapter, repo } = makeEnv()
+			const { repo } = makeEnv()
 			await repo.on(UserSchema).one().create({ id: 'u1', email: 'alice@example.com', age: 30 })
-			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema]).build()
+			const codegen = MigrationCodegen.from(repo).target([UserSchema]).build()
 			expect(await codegen.discover()).toEqual([
 				{ name: 'users', pk: undefined, fields: [], indexes: [], foreignKeys: [] },
 			])
@@ -147,7 +154,7 @@ if (import.meta.vitest) {
 					{ name: 'age', type: 'number' },
 				],
 			})
-			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema]).build()
+			const codegen = MigrationCodegen.from(repo).target([UserSchema]).build()
 			const changes = await codegen.diff()
 			expect(changes).toBeNull()
 		})
@@ -169,7 +176,7 @@ if (import.meta.vitest) {
 				fields: new Map([['unsupported', { name: 'unsupported', type: 'bytea' as any }]]),
 			})
 
-			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema]).build()
+			const codegen = MigrationCodegen.from(repo).target([UserSchema]).build()
 			expect(await codegen.diff()).toBeNull()
 			expect((await codegen.discover()).map((schema) => schema.name).sort()).toEqual([
 				'mapped_users',
@@ -191,7 +198,7 @@ if (import.meta.vitest) {
 					{ name: 'age', type: 'number' },
 				],
 			})
-			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema]).build()
+			const codegen = MigrationCodegen.from(repo).target([UserSchema]).build()
 
 			expect(
 				await repo.resolve(
@@ -212,24 +219,25 @@ if (import.meta.vitest) {
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: `mapped_${name}` }))
 				.build()
-			const changes = await MigrationCodegen.from(repo, adapter).target([UserSchema]).build().diff()
+			const changes = await MigrationCodegen.from(repo).target([UserSchema]).build().diff()
 			expect(changes?.[0]).toMatchObject({ kind: 'createTable', name: 'users' })
 
 			const { Migrator } = await import('./migrator.js')
-			await Migrator.from(repo, adapter)
+			await Migrator.from(repo)
+				.withLock()
 				.migrations([{ id: 'generated-create', changes: changes! }])
 				.build()
 				.up()
 
 			expect(adapter.tables.has('mapped_users')).toBe(true)
 			expect(adapter.tables.has('mapped_mapped_users')).toBe(false)
-			expect(await MigrationCodegen.from(repo, adapter).target([UserSchema]).build().diff()).toBeNull()
+			expect(await MigrationCodegen.from(repo).target([UserSchema]).build().diff()).toBeNull()
 		})
 
 		test('diff rejects logical schemas resolving to one physical target', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const repo = new Repo({ adapter, resolve: () => ({ table: 'shared' }) })
-			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema, PostSchema]).build()
+			const codegen = MigrationCodegen.from(repo).target([UserSchema, PostSchema]).build()
 			await expect(codegen.diff()).rejects.toThrow(/'users'.*'posts'.*same physical target/)
 		})
 
@@ -242,7 +250,7 @@ if (import.meta.vitest) {
 				fields: [{ name: 'email', type: 'string' }],
 			})
 			await adapter.applyAddIndex({ kind: 'addIndex', table: 'users', on: ['email'], unique: true })
-			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema]).build()
+			const codegen = MigrationCodegen.from(repo).target([UserSchema]).build()
 			const discovered = await codegen.discover()
 			expect(discovered).toHaveLength(1)
 			expect(discovered[0].name).toBe('users')
@@ -259,7 +267,7 @@ if (import.meta.vitest) {
 				pk: { name: 'id', type: 'string' },
 				fields: [{ name: 'email', type: 'string' }],
 			})
-			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema, PostSchema]).build()
+			const codegen = MigrationCodegen.from(repo).target([UserSchema, PostSchema]).build()
 			const changes = await codegen.diff()
 			expect(changes).not.toBeNull()
 			const kinds = changes!.map((c) => c.kind)
@@ -272,14 +280,16 @@ if (import.meta.vitest) {
 			expect(createTable.name).toBe('posts')
 		})
 
-		test('compile-time: IntrospectableAdapter requires broad and targeted introspection', async () => {
+		test('compile-time: construction succeeds while terminals are capability-narrowed', async () => {
 			const { OrmAdapter } = await import('../orm-adapter.js')
 			class _NoIntrospectAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({ table: v.string() })
 				readonly supportedFieldTypes = ['string'] as const
 			}
 			type NoIntrospect = InstanceType<typeof _NoIntrospectAdapter>
-			expectTypeOf<IntrospectableAdapter<NoIntrospect>>().toBeNever()
+			type NoIntrospectCodegen = CodegenSurface<NoIntrospect>
+			expectTypeOf<NoIntrospectCodegen['diff']>().toBeNever()
+			expectTypeOf<NoIntrospectCodegen['discover']>().toBeNever()
 
 			class _BroadOnlyAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({ table: v.string() })
@@ -289,7 +299,13 @@ if (import.meta.vitest) {
 				}
 			}
 			type BroadOnly = InstanceType<typeof _BroadOnlyAdapter>
-			expectTypeOf<IntrospectableAdapter<BroadOnly>>().toBeNever()
+			type BroadOnlyCodegen = CodegenSurface<BroadOnly>
+			expectTypeOf<BroadOnlyCodegen['diff']>().toBeNever()
+			expectTypeOf<BroadOnlyCodegen['discover']>().toBeFunction()
+		})
+
+		test('runtime: from rejects malformed JavaScript input', () => {
+			expect(() => MigrationCodegen.from({} as any)).toThrow(TypeError)
 		})
 
 		test('OrmIntrospectionError on the requested target remains explicit', async () => {
@@ -312,7 +328,7 @@ if (import.meta.vitest) {
 				return schema
 			}
 			const brokenRepo = new Repo({ adapter, resolve: () => ({ table: 'broken' }) })
-			const codegen = MigrationCodegen.from(brokenRepo, adapter).target([UserSchema]).build()
+			const codegen = MigrationCodegen.from(brokenRepo).target([UserSchema]).build()
 			await expect(codegen.diff()).rejects.toThrow(OrmIntrospectionError)
 			try {
 				await codegen.diff()
