@@ -64,7 +64,6 @@ const postgresqlConnectionPipe = () =>
 	})
 
 const TRACKER_TABLE = '_equipped_migrations'
-const ADVISORY_LOCK_KEY = 3_735_928_559
 const DEFAULT_CURSOR_BATCH_SIZE = 1000
 
 type PostgresCursor<T extends Record<string, unknown>> = {
@@ -131,6 +130,7 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 
 	readonly pool: Pool
 	#sessionStore = new AsyncLocalStorage<PoolClient | undefined>()
+	#migrationLockStore = new AsyncLocalStorage<PoolClient | undefined>()
 
 	protected constructor(config: typeof PostgresAdapter.Config) {
 		super(config)
@@ -145,11 +145,18 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 	}
 
 	#getClient() {
-		return this.#sessionStore.getStore() ?? this.pool
+		return this.#sessionStore.getStore() ?? this.#migrationLockStore.getStore() ?? this.pool
 	}
 
 	#resolveTableName(config: PostgresqlRepoConfig) {
 		return config.schema && config.schema !== 'public' ? `${config.schema}.${config.table}` : config.table
+	}
+
+	#quoteTable(config: PostgresqlRepoConfig) {
+		const quotePart = (value: string) => `"${value.replaceAll('"', '""')}"`
+		return config.schema && config.schema !== 'public'
+			? `${quotePart(config.schema)}.${quotePart(config.table)}`
+			: quotePart(config.table)
 	}
 
 	async connect() {}
@@ -423,7 +430,7 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 
 	async loadMigrations(config: PostgresqlRepoConfig): Promise<{ id: string; appliedAt: number }[]> {
 		const client = this.#getClient()
-		const table = quoteQualifiedIdentifier(this.#resolveTableName(config))
+		const table = this.#quoteTable(config)
 		await client.query(`
 			CREATE TABLE IF NOT EXISTS ${table} (
 				id text PRIMARY KEY,
@@ -436,19 +443,28 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 
 	async recordMigration(config: PostgresqlRepoConfig, id: string, appliedAt: number): Promise<void> {
 		const client = this.#getClient()
-		const table = quoteQualifiedIdentifier(this.#resolveTableName(config))
+		const table = this.#quoteTable(config)
 		await client.query(`INSERT INTO ${table} (id, applied_at) VALUES ($1, $2)`, [id, appliedAt])
 	}
 
 	async acquireMigrationLock<T>(config: PostgresqlRepoConfig, fn: () => Promise<T>): Promise<T> {
-		const client = this.#getClient()
-		const lockKey = `${ADVISORY_LOCK_KEY}:${this.physicalTargetIdentity(config)}`
-		await client.query(`SELECT pg_advisory_lock(hashtextextended($1, 0))`, [lockKey])
+		const activeClient = this.#sessionStore.getStore()
+		const client = activeClient ?? (await this.pool.connect())
+		const lockKey = this.#migrationHistoryIdentity(config)
 		try {
-			return await fn()
+			await client.query(`SELECT pg_advisory_lock(hashtextextended($1, 0))`, [lockKey])
+			try {
+				return activeClient ? await fn() : await this.#migrationLockStore.run(client, fn)
+			} finally {
+				await client.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [lockKey])
+			}
 		} finally {
-			await client.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [lockKey])
+			if (!activeClient) client.release()
 		}
+	}
+
+	#migrationHistoryIdentity(config: PostgresqlRepoConfig): string {
+		return JSON.stringify([this.config.database, config.schema ?? 'public', config.table])
 	}
 
 	async applyCreateTable(change: CreateTableChange<any>, target?: unknown): Promise<void> {
@@ -792,9 +808,10 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 
 	async session<T>(fn: () => Promise<T>): Promise<T> {
 		if (this.#sessionStore.getStore()) return fn()
-		let client: PoolClient | undefined
+		let client = this.#migrationLockStore.getStore()
+		const releaseClient = !client
 		try {
-			client = await this.pool.connect()
+			client ??= await this.pool.connect()
 			await client.query('BEGIN')
 			const result = await this.#sessionStore.run(client, fn)
 			await client.query('COMMIT')
@@ -810,7 +827,7 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			if (error instanceof EquippedError) throw error
 			throw new EquippedError('PostgreSQL session failed', { adapter: 'postgresql', operation: 'session' }, error)
 		} finally {
-			client?.release()
+			if (releaseClient) client?.release()
 		}
 	}
 }
@@ -1423,6 +1440,18 @@ if (import.meta.vitest) {
 			expect(result).toEqual([{ id: '0001', appliedAt: 1700000000000 }])
 		})
 
+		test('history DDL and DML quote resolved schema and table separately', async () => {
+			await adapter.loadMigrations({ schema: 'tenant.one', table: '_history.table' })
+			await adapter.recordMigration({ schema: 'tenant.one', table: '_history.table' }, '0001', 42)
+
+			expect(queries[0].sql).toContain('CREATE TABLE IF NOT EXISTS "tenant.one"."_history.table"')
+			expect(queries[1].sql).toContain('SELECT id, applied_at FROM "tenant.one"."_history.table"')
+			expect(queries[2]).toEqual({
+				sql: 'INSERT INTO "tenant.one"."_history.table" (id, applied_at) VALUES ($1, $2)',
+				params: ['0001', 42],
+			})
+		})
+
 		test('recordMigration inserts into tracker table', async () => {
 			await adapter.recordMigration({ table: '_equipped_migrations' }, '0001-init', 1700000000000)
 			expect(queries).toHaveLength(1)
@@ -1431,18 +1460,43 @@ if (import.meta.vitest) {
 			expect(queries[0].params).toEqual(['0001-init', 1700000000000])
 		})
 
-		test('acquireMigrationLock wraps fn with pg_advisory_lock/unlock', async () => {
-			const result = await adapter.acquireMigrationLock({ table: '_equipped_migrations' }, async () => {
-				queries.push({ sql: 'USER_FN' })
-				return 42
-			})
+		test('acquireMigrationLock holds one dedicated client for lock, callback, and unlock', async () => {
+			const release = vi.fn()
+			const client = {
+				query: vi.fn(async (sql: string, params?: unknown[]) => {
+					queries.push({ sql, params })
+					return { rows: [] }
+				}),
+				release,
+			}
+			;(adapter.pool as any).connect = vi.fn(async () => client)
+
+			const result = await adapter.acquireMigrationLock(
+				{ schema: 'tenant', table: '_equipped_migrations' },
+				async () => {
+					await adapter.recordMigration({ schema: 'tenant', table: '_equipped_migrations' }, '0001', 42)
+					return 42
+				},
+			)
 			expect(result).toBe(42)
 			expect(queries[0].sql).toContain('pg_advisory_lock')
-			expect(queries[1].sql).toBe('USER_FN')
+			expect(queries[0].params).toEqual([JSON.stringify(['testdb', 'tenant', '_equipped_migrations'])])
+			expect(queries[1].sql).toContain('INSERT INTO "tenant"."_equipped_migrations"')
 			expect(queries[2].sql).toContain('pg_advisory_unlock')
+			expect(client.query).toHaveBeenCalledTimes(3)
+			expect(release).toHaveBeenCalledTimes(1)
 		})
 
-		test('acquireMigrationLock unlocks even on error', async () => {
+		test('acquireMigrationLock unlocks and releases its dedicated client on error', async () => {
+			const release = vi.fn()
+			const client = {
+				query: vi.fn(async (sql: string, params?: unknown[]) => {
+					queries.push({ sql, params })
+					return { rows: [] }
+				}),
+				release,
+			}
+			;(adapter.pool as any).connect = vi.fn(async () => client)
 			await expect(
 				adapter.acquireMigrationLock({ table: '_equipped_migrations' }, async () => {
 					throw new Error('boom')
@@ -1450,6 +1504,65 @@ if (import.meta.vitest) {
 			).rejects.toThrow('boom')
 			expect(queries[0].sql).toContain('pg_advisory_lock')
 			expect(queries[1].sql).toContain('pg_advisory_unlock')
+			expect(release).toHaveBeenCalledTimes(1)
+		})
+
+		test('acquireMigrationLock releases its dedicated client when lock acquisition fails', async () => {
+			const release = vi.fn()
+			const client = {
+				query: vi.fn(async () => {
+					throw new Error('lock unavailable')
+				}),
+				release,
+			}
+			;(adapter.pool as any).connect = vi.fn(async () => client)
+
+			await expect(
+				adapter.acquireMigrationLock({ table: '_equipped_migrations' }, async () => {}),
+			).rejects.toThrow('lock unavailable')
+			expect(release).toHaveBeenCalledTimes(1)
+		})
+
+		test('acquireMigrationLock reuses the active transaction client', async () => {
+			const events: string[] = []
+			const release = vi.fn(() => events.push('release'))
+			const client = {
+				query: vi.fn(async (sql: string) => {
+					events.push(sql.includes('pg_advisory_') ? sql.match(/pg_advisory_\w+/)![0] : sql)
+					return { rows: [] }
+				}),
+				release,
+			}
+			;(adapter.pool as any).connect = vi.fn(async () => client)
+
+			await adapter.session(() =>
+				adapter.acquireMigrationLock({ table: '_equipped_migrations' }, async () => {
+					events.push('callback')
+				}),
+			)
+
+			expect((adapter.pool as any).connect).toHaveBeenCalledTimes(1)
+			expect(events).toEqual(['BEGIN', 'pg_advisory_lock', 'callback', 'pg_advisory_unlock', 'COMMIT', 'release'])
+		})
+
+		test('migration lock identity includes database, schema, and table without covered collisions', async () => {
+			const params: unknown[][] = []
+			const client = {
+				query: vi.fn(async (_sql: string, values?: unknown[]) => {
+					if (values) params.push(values)
+					return { rows: [] }
+				}),
+				release: vi.fn(),
+			}
+			;(adapter.pool as any).connect = vi.fn(async () => client)
+
+			await adapter.acquireMigrationLock({ schema: 'ab', table: 'c' }, async () => {})
+			await adapter.acquireMigrationLock({ schema: 'a', table: 'bc' }, async () => {})
+			await adapter.acquireMigrationLock({ schema: 'ab', table: 'c' }, async () => {})
+
+			expect(params[0]).toEqual(params[4])
+			expect(params[0]).not.toEqual(params[2])
+			expect(params[0]).toEqual([JSON.stringify(['testdb', 'ab', 'c'])])
 		})
 
 		test('applyCreateTable generates correct DDL', async () => {
