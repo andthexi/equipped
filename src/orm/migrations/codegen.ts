@@ -70,7 +70,7 @@ if (import.meta.vitest) {
 
 	function makeEnv() {
 		const adapter = InMemoryAdapter.create({})
-		const repo = new Repo({ adapter, resolve: (s) => ({ table: s.name }) })
+		const repo = new Repo({ adapter, resolve: (name) => ({ table: name }) })
 		return { adapter, repo }
 	}
 

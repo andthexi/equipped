@@ -55,10 +55,10 @@ if (import.meta.vitest) {
 		const adapter = InMemoryAdapter.create({})
 		return new Repo({
 			adapter,
-			resolve: (s) => {
-				if (s === EventLogSchema) return { table: 'events' }
-				if (s === UserSchema) return { table: 'users' }
-				return { table: s.name }
+			resolve: (name) => {
+				if (name === EventLogSchema.name) return { table: 'events' }
+				if (name === UserSchema.name) return { table: 'users' }
+				return { table: name }
 			},
 		})
 	}

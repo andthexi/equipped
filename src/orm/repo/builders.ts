@@ -667,7 +667,7 @@ if (import.meta.vitest) {
 		beforeEach(() => {
 			const adapter = InMemoryAdapter.create({})
 			repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 		})
 
@@ -743,7 +743,7 @@ if (import.meta.vitest) {
 		beforeEach(() => {
 			const adapter = InMemoryAdapter.create({})
 			repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 		})
 
@@ -967,7 +967,7 @@ if (import.meta.vitest) {
 		function makeRepo() {
 			const adapter = InMemoryAdapter.create({})
 			return Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 		}
 
@@ -1327,9 +1327,9 @@ if (import.meta.vitest) {
 				}
 			})
 			const repo = Repo.from(adapter)
-				.resolve((s) => {
+				.resolve((name) => {
 					events.push('resolve')
-					return { table: s.name }
+					return { table: name }
 				})
 				.build()
 			await seedItems(repo, 3)

@@ -231,7 +231,7 @@ supported — a crash means the process dies.
 cache key prefixes) across environments. Adapters and consumers use it to
 keep multi-tenant or multi-environment resources isolated; the orm does
 **not** auto-scope schema-config naming via this — the resolver
-(`Repo.from(adapter).resolve(schema => ...)`) is the user's escape hatch
+(`Repo.from(adapter).resolve(name => ...)`) is the user's escape hatch
 and they call `getScopedName` themselves if needed.
 
 ### 5.3 Settings and envs

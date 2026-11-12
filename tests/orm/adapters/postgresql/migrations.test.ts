@@ -51,7 +51,7 @@ describe.skipIf(skipIfNoDb())('PostgresAdapter: real PG integration', () => {
 			database: parsed.pathname.slice(1),
 		})
 		repo = Repo.from(adapter)
-			.resolve((s) => ({ table: s.name }))
+			.resolve((name) => ({ table: name }))
 			.build()
 	})
 

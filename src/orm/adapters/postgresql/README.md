@@ -17,7 +17,7 @@ const adapter = PostgresAdapter.create({
 })
 
 const repo = Repo.from(adapter)
-	.resolve((schema) => ({ table: schema.name }))
+	.resolve((name) => ({ table: name }))
 	.build()
 ```
 

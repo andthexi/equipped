@@ -11,7 +11,7 @@ import { Repo } from 'equipped/orm'
 const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 
 const repo = Repo.from(adapter)
-	.resolve((schema) => ({ db: 'myapp', col: schema.name }))
+	.resolve((name) => ({ db: 'myapp', col: name }))
 	.build()
 
 // MongoClient is exposed as a readonly field for change streams, aggregations, etc.
