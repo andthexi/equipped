@@ -1,12 +1,12 @@
 import type { Pipe, PipeInput } from 'valleyed'
 
-import { fire } from './executor'
-import { HandlerRegistry, type FireFn, type HandlerDef } from './registry'
-import { replay, rerun } from './walker'
-import type { OrmAdapterLike } from '../adapters/base'
-import type { Repo } from '../repo/repo'
+import type { OrmAdapterLike } from '../adapters/base.js'
+import type { Repo } from '../repo/repo.js'
+import { fire } from './executor.js'
+import { HandlerRegistry, type FireFn, type HandlerDef } from './registry.js'
+import { replay, rerun } from './walker.js'
 
-export { type EventContext } from './registry'
+export { type EventContext } from './registry.js'
 
 export class EventLog<A extends OrmAdapterLike<any>> {
 	readonly #repo: Repo<A>
@@ -17,10 +17,7 @@ export class EventLog<A extends OrmAdapterLike<any>> {
 		this.#registry = registry
 	}
 
-	handler<P extends Pipe<any, any>, R>(
-		name: string,
-		def: HandlerDef<P, R>,
-	): FireFn<P, R> {
+	handler<P extends Pipe<any, any>, R>(name: string, def: HandlerDef<P, R>): FireFn<P, R> {
 		this.#registry.register(name, def)
 		return (payload: PipeInput<P>, ctx?: { by?: string; at?: Date }) =>
 			fire<R>(this.#repo as Repo<any>, name, def, payload, ctx)
@@ -42,11 +39,11 @@ export class EventLog<A extends OrmAdapterLike<any>> {
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { InMemoryAdapter } = await import('../adapters/in-memory')
-	const { Schema } = await import('../schema')
-	const { Repo } = await import('../repo/repo')
-	const { OrmValidationError } = await import('../errors')
-	const { EventLogSchema } = await import('./schema')
+	const { InMemoryAdapter } = await import('../adapters/in-memory/index.js')
+	const { Schema } = await import('../schema.js')
+	const { Repo } = await import('../repo/repo.js')
+	const { OrmValidationError } = await import('../errors/index.js')
+	const { EventLogSchema } = await import('./schema.js')
 
 	const UserSchema = Schema.from('users')
 		.pk('id', v.string(), () => `u-${Math.random()}`)
@@ -232,9 +229,7 @@ if (import.meta.vitest) {
 			const usersBefore = await repo.on(UserSchema).all().find()
 			expect(usersBefore).toHaveLength(2)
 
-			await expect(
-				repo.session(() => log.replay()),
-			).rejects.toThrow()
+			await expect(repo.session(() => log.replay())).rejects.toThrow()
 
 			const usersAfter = await repo.on(UserSchema).all().find()
 			expect(usersAfter).toHaveLength(2)

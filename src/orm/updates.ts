@@ -1,9 +1,9 @@
 import type { PipeInput, PipeOutput } from 'valleyed'
 
-import type { AnyField, AnySchemaField, SchemaField } from './fields'
-import { toFieldName } from './fields'
-import type { AnySchema, SchemaFields } from './schema'
-import type { Prettify } from './utils'
+import type { AnyField, AnySchemaField, SchemaField } from './fields.js'
+import { toFieldName } from './fields.js'
+import type { AnySchema, SchemaFields } from './schema.js'
+import type { Prettify } from './utils.js'
 
 export type NumericFieldOf<S extends AnySchema> = {
 	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, infer P, any>
@@ -49,7 +49,9 @@ export type ObjectFieldOf<S extends AnySchema> = {
 
 export type SetValues<S extends AnySchema> = Prettify<
 	Partial<{
-		[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends AnySchemaField ? PipeInput<SchemaFields<S>[K]['pipe']> : never
+		[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends AnySchemaField
+			? PipeInput<SchemaFields<S>[K]['pipe']>
+			: never
 	}>
 >
 
@@ -127,7 +129,11 @@ export function isUpdateOp(v: unknown): v is AnyUpdateOp {
 	)
 }
 
-export type HasOp<A, Op extends string> = A extends { updateOps: readonly (infer U)[] } ? (Op extends U ? true : false) : false
+export type HasOp<A, Op extends string> = A extends { updateOps: readonly (infer U)[] }
+	? Op extends U
+		? true
+		: false
+	: false
 
 export type UpdateOp<_S extends AnySchema, A> =
 	| (HasOp<A, 'set'> extends true ? SetOp : never)
@@ -193,7 +199,7 @@ export function flattenOps(ops: AnyUpdateOp[]): Record<string, unknown> {
 if (import.meta.vitest) {
 	const { describe, test, expect, expectTypeOf } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { Schema } = await import('./schema')
+	const { Schema } = await import('./schema.js')
 
 	const TestSchema = Schema.from('test')
 		.pk('id', v.string(), () => 'x')
@@ -368,7 +374,7 @@ if (import.meta.vitest) {
 
 	describe('type-level: per-op gating via UpdateOp<S, A>', () => {
 		test('undeclared ops resolve to never', async () => {
-			const { OrmAdapter } = await import('./orm-adapter')
+			const { OrmAdapter } = await import('./orm-adapter.js')
 			class LimitedAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string', 'number'] as const
@@ -380,7 +386,7 @@ if (import.meta.vitest) {
 		})
 
 		test('adapter with no updateOps resolves all variants to never', async () => {
-			const { OrmAdapter } = await import('./orm-adapter')
+			const { OrmAdapter } = await import('./orm-adapter.js')
 			class NoOpsAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
@@ -392,7 +398,7 @@ if (import.meta.vitest) {
 		})
 
 		test('adapter with all updateOps includes all variants', async () => {
-			const { OrmAdapter } = await import('./orm-adapter')
+			const { OrmAdapter } = await import('./orm-adapter.js')
 			class FullAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string', 'number'] as const
@@ -400,16 +406,7 @@ if (import.meta.vitest) {
 			}
 
 			type Full = UpdateOp<typeof TestSchema, FullAdapter>
-			type Expected =
-				| SetOp
-				| IncOp
-				| MulOp
-				| MinOp
-				| MaxOp
-				| UnsetOp
-				| PushOp
-				| PullOp
-				| PatchOp
+			type Expected = SetOp | IncOp | MulOp | MinOp | MaxOp | UnsetOp | PushOp | PullOp | PatchOp
 			expectTypeOf<Full>().toEqualTypeOf<Expected>()
 		})
 	})

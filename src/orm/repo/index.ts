@@ -8,5 +8,5 @@ export {
 	SchemaContext,
 	SchemaRef,
 	type SchemaRefSurface,
-} from './builders'
-export { Repo, type RepoSurface, type ConfigTransform } from './repo'
+} from './builders.js'
+export { Repo, type RepoSurface, type ConfigTransform } from './repo.js'

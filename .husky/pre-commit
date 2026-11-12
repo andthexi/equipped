@@ -1,2 +1,4 @@
 pnpm lint
-pnpm prebuild
+pnpm typecheck
+pnpm test
+pnpm build

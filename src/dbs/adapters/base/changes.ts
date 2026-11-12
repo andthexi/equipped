@@ -1,9 +1,9 @@
 import axios from 'axios'
 import { v } from 'valleyed'
 
-import * as core from './core'
-import { dbChangeConfigPipe, type DbChangeConfig } from './types'
-import { EquippedError } from '../../../errors'
+import { EquippedError } from '../../../errors/index.js'
+import type * as core from './core.js'
+import { dbChangeConfigPipe, type DbChangeConfig } from './types.js'
 
 export const TopicPrefix = 'db-changes'
 

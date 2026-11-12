@@ -1,6 +1,6 @@
 import { type IncomingHttpHeaders } from 'node:http2'
 
-import { BadRequestError, RequestError } from '../../errors'
+import { BadRequestError, RequestError } from '../../errors/index.js'
 
 export abstract class BaseRequestAuthMethod<T extends { id: string }> {
 	public abstract parse(headers: IncomingHttpHeaders): Promise<T>

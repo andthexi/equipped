@@ -1,11 +1,15 @@
-import { EquippedError } from '../../errors'
+import { EquippedError } from '../../errors/index.js'
 
 export class OrmIntrospectionError extends EquippedError {
 	readonly adapter: string
 	readonly table: string
 
 	constructor(opts: { adapter: string; table: string; cause: unknown }) {
-		super(`Introspection failed for table '${opts.table}' on adapter '${opts.adapter}'`, { adapter: opts.adapter, table: opts.table }, opts.cause)
+		super(
+			`Introspection failed for table '${opts.table}' on adapter '${opts.adapter}'`,
+			{ adapter: opts.adapter, table: opts.table },
+			opts.cause,
+		)
 		this.adapter = opts.adapter
 		this.table = opts.table
 	}
@@ -13,7 +17,7 @@ export class OrmIntrospectionError extends EquippedError {
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
-	const { EquippedError } = await import('../../errors')
+	const { EquippedError } = await import('../../errors/index.js')
 
 	describe('OrmIntrospectionError', () => {
 		test('stores adapter, table, and cause on the instance', () => {
@@ -42,8 +46,8 @@ if (import.meta.vitest) {
 		})
 
 		test('discriminates from sibling error classes', async () => {
-			const { OrmMigrationError } = await import('./migration')
-			const { OrmValidationError } = await import('./validation')
+			const { OrmMigrationError } = await import('./migration.js')
+			const { OrmValidationError } = await import('./validation.js')
 			const err = new OrmIntrospectionError({ adapter: 'x', table: 'y', cause: null })
 			expect(err).not.toBeInstanceOf(OrmMigrationError)
 			expect(err).not.toBeInstanceOf(OrmValidationError)

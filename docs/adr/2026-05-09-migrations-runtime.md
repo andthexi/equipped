@@ -56,7 +56,7 @@ v1 spec lives in `docs/orm/CONTEXT.md` §16.
 - **`migrationOps: readonly [...] as const` capability array on the
   adapter.** Rejected mid-grill: redundant with method presence. §3.3
   already locks "presence on the class is the declaration"; op-list
-  arrays only earn their keep when *one method handles many ops*
+  arrays only earn their keep when _one method handles many ops_
   (filter trees, op lists). For migrations it's one method per
   variant — structural inference from `apply*` keys is sufficient.
 - **CLI in v1.** Rejected: zero new dependencies, edge-runtime safe,

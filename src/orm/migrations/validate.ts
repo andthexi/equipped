@@ -1,6 +1,6 @@
-import { OrmValidationError, type OrmValidationFailure } from '../errors/validation'
-import type { OrmAdapter } from '../orm-adapter'
-import type { AnyChange, AnyMigration } from './types'
+import { OrmValidationError, type OrmValidationFailure } from '../errors/validation.js'
+import type { OrmAdapter } from '../orm-adapter.js'
+import type { AnyChange, AnyMigration } from './types.js'
 
 function isEmpty(s: string | undefined | null): boolean {
 	return !s || s.trim() === ''
@@ -10,18 +10,42 @@ type ChangeContext = { adapter: OrmAdapter; migrationId: string; changeIndex: nu
 
 function validateFieldSpec(ctx: ChangeContext, fieldSpec: { name: string; type: string }, fieldLabel: string): void {
 	if (isEmpty(fieldSpec.name)) {
-		ctx.failures.push({ migrationId: ctx.migrationId, changeIndex: ctx.changeIndex, field: fieldLabel, cause: `${fieldLabel} name must be non-empty` })
+		ctx.failures.push({
+			migrationId: ctx.migrationId,
+			changeIndex: ctx.changeIndex,
+			field: fieldLabel,
+			cause: `${fieldLabel} name must be non-empty`,
+		})
 	}
-	if (ctx.adapter.supportedFieldTypes.length > 0 && !ctx.adapter.supportedFieldTypes.includes(fieldSpec.type as any)) {
-		ctx.failures.push({ migrationId: ctx.migrationId, changeIndex: ctx.changeIndex, field: fieldLabel, cause: `unsupported field type '${fieldSpec.type}'` })
+	if (
+		ctx.adapter.supportedFieldTypes.length > 0 &&
+		!ctx.adapter.supportedFieldTypes.includes(fieldSpec.type as any)
+	) {
+		ctx.failures.push({
+			migrationId: ctx.migrationId,
+			changeIndex: ctx.changeIndex,
+			field: fieldLabel,
+			cause: `unsupported field type '${fieldSpec.type}'`,
+		})
 	}
 }
 
 function fail(ctx: ChangeContext, field: string | undefined, cause: string): void {
-	ctx.failures.push({ migrationId: ctx.migrationId, changeIndex: ctx.changeIndex, ...(field ? { field } : {}), cause })
+	ctx.failures.push({
+		migrationId: ctx.migrationId,
+		changeIndex: ctx.changeIndex,
+		...(field ? { field } : {}),
+		cause,
+	})
 }
 
-function validateChange(adapter: OrmAdapter, change: AnyChange, migrationId: string, changeIndex: number, failures: OrmValidationFailure[]): void {
+function validateChange(
+	adapter: OrmAdapter,
+	change: AnyChange,
+	migrationId: string,
+	changeIndex: number,
+	failures: OrmValidationFailure[],
+): void {
 	if (change.kind === 'execute') return
 
 	const ctx: ChangeContext = { adapter, migrationId, changeIndex, failures }
@@ -34,7 +58,10 @@ function validateChange(adapter: OrmAdapter, change: AnyChange, migrationId: str
 		case 'createTable': {
 			if (isEmpty(change.name)) fail(ctx, 'name', 'table name must be non-empty')
 			if (isEmpty(change.pk.name)) fail(ctx, 'pk.name', 'pk name must be non-empty')
-			if (adapter.supportedFieldTypes.length > 0 && !adapter.supportedFieldTypes.includes(change.pk.type as any)) {
+			if (
+				adapter.supportedFieldTypes.length > 0 &&
+				!adapter.supportedFieldTypes.includes(change.pk.type as any)
+			) {
 				fail(ctx, 'pk.type', `unsupported field type '${change.pk.type}'`)
 			}
 			const fieldNames = new Set<string>()
@@ -92,7 +119,8 @@ function validateChange(adapter: OrmAdapter, change: AnyChange, migrationId: str
 			if (isEmpty(change.table)) fail(ctx, 'table', 'table name must be non-empty')
 			if (isEmpty(change.on)) fail(ctx, 'on', 'addForeignKey.on must be non-empty')
 			if (isEmpty(change.references?.table)) fail(ctx, 'references.table', 'references table must be non-empty')
-			if (isEmpty(change.references?.column)) fail(ctx, 'references.column', 'references column must be non-empty')
+			if (isEmpty(change.references?.column))
+				fail(ctx, 'references.column', 'references column must be non-empty')
 			break
 		}
 		case 'dropForeignKey': {
@@ -152,12 +180,25 @@ if (import.meta.vitest) {
 
 		test('passes for valid migrations with all variant kinds', () => {
 			const migrations = [
-				{ id: '0001', changes: [
-					{ kind: 'createTable' as const, name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'email', type: 'string' }] },
-					{ kind: 'addField' as const, table: 'users', field: { name: 'age', type: 'number' } },
-					{ kind: 'addIndex' as const, table: 'users', on: ['email'] },
-					{ kind: 'addForeignKey' as const, table: 'users', on: 'orgId', references: { table: 'orgs', column: 'id' } },
-				] },
+				{
+					id: '0001',
+					changes: [
+						{
+							kind: 'createTable' as const,
+							name: 'users',
+							pk: { name: 'id', type: 'string' },
+							fields: [{ name: 'email', type: 'string' }],
+						},
+						{ kind: 'addField' as const, table: 'users', field: { name: 'age', type: 'number' } },
+						{ kind: 'addIndex' as const, table: 'users', on: ['email'] },
+						{
+							kind: 'addForeignKey' as const,
+							table: 'users',
+							on: 'orgId',
+							references: { table: 'orgs', column: 'id' },
+						},
+					],
+				},
 			]
 			expect(() => assertNormalisedChanges(fullAdapter, migrations)).not.toThrow()
 		})
@@ -165,7 +206,9 @@ if (import.meta.vitest) {
 		test('invariant A: throws on empty migration id', () => {
 			const migrations = [{ id: '', changes: [] }]
 			expect(() => assertNormalisedChanges(fullAdapter, migrations)).toThrow(OrmValidationError)
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.kind).toBe('changes')
 				expect(err.failures).toHaveLength(1)
 				expect(err.failures[0].cause).toContain('non-empty')
@@ -173,9 +216,14 @@ if (import.meta.vitest) {
 		})
 
 		test('invariant B: throws on duplicate migration ids with migrationId field', () => {
-			const migrations = [{ id: 'dup', changes: [] }, { id: 'dup', changes: [] }]
+			const migrations = [
+				{ id: 'dup', changes: [] },
+				{ id: 'dup', changes: [] },
+			]
 			expect(() => assertNormalisedChanges(fullAdapter, migrations)).toThrow(OrmValidationError)
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.kind).toBe('changes')
 				const dup = err.failures.find((f: any) => f.cause.includes('duplicate'))
 				expect(dup).toBeDefined()
@@ -184,68 +232,131 @@ if (import.meta.vitest) {
 		})
 
 		test('invariant C: throws when field type not in supportedFieldTypes', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'createTable' as const, name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'data', type: 'bigint' }] },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			const migrations = [
+				{
+					id: '0001',
+					changes: [
+						{
+							kind: 'createTable' as const,
+							name: 'users',
+							pk: { name: 'id', type: 'string' },
+							fields: [{ name: 'data', type: 'bigint' }],
+						},
+					],
+				},
+			]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.failures.some((f: any) => f.cause.includes("unsupported field type 'bigint'"))).toBe(true)
 			}
 		})
 
 		test('invariant C: throws when pk type not in supportedFieldTypes', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'createTable' as const, name: 'users', pk: { name: 'id', type: 'uuid' }, fields: [] },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			const migrations = [
+				{
+					id: '0001',
+					changes: [
+						{ kind: 'createTable' as const, name: 'users', pk: { name: 'id', type: 'uuid' }, fields: [] },
+					],
+				},
+			]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.failures.some((f: any) => f.cause.includes("unsupported field type 'uuid'"))).toBe(true)
 			}
 		})
 
 		test('invariant C: throws for addField with unsupported type', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'addField' as const, table: 'users', field: { name: 'x', type: 'bigint' } },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
-				expect(err.failures.some((f: any) => f.cause.includes("unsupported field type"))).toBe(true)
+			const migrations = [
+				{
+					id: '0001',
+					changes: [{ kind: 'addField' as const, table: 'users', field: { name: 'x', type: 'bigint' } }],
+				},
+			]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
+				expect(err.failures.some((f: any) => f.cause.includes('unsupported field type'))).toBe(true)
 			}
 		})
 
 		test('invariant C: throws for modifyField with unsupported type', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'modifyField' as const, table: 'users', name: 'x', to: { name: 'x', type: 'bigint' } },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
-				expect(err.failures.some((f: any) => f.cause.includes("unsupported field type"))).toBe(true)
+			const migrations = [
+				{
+					id: '0001',
+					changes: [
+						{ kind: 'modifyField' as const, table: 'users', name: 'x', to: { name: 'x', type: 'bigint' } },
+					],
+				},
+			]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
+				expect(err.failures.some((f: any) => f.cause.includes('unsupported field type'))).toBe(true)
 			}
 		})
 
 		test('invariant C: skips field type check when supportedFieldTypes is empty', () => {
 			const adapter = { ...fullAdapter, supportedFieldTypes: [] } as any
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'createTable' as const, name: 'users', pk: { name: 'id', type: 'anything' }, fields: [{ name: 'x', type: 'custom' }] },
-			] }]
+			const migrations = [
+				{
+					id: '0001',
+					changes: [
+						{
+							kind: 'createTable' as const,
+							name: 'users',
+							pk: { name: 'id', type: 'anything' },
+							fields: [{ name: 'x', type: 'custom' }],
+						},
+					],
+				},
+			]
 			expect(() => assertNormalisedChanges(adapter, migrations)).not.toThrow()
 		})
 
 		test('invariant D: throws on duplicate field names in createTable', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'createTable' as const, name: 'users', pk: { name: 'id', type: 'string' }, fields: [
-					{ name: 'email', type: 'string' },
-					{ name: 'email', type: 'string' },
-				] },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			const migrations = [
+				{
+					id: '0001',
+					changes: [
+						{
+							kind: 'createTable' as const,
+							name: 'users',
+							pk: { name: 'id', type: 'string' },
+							fields: [
+								{ name: 'email', type: 'string' },
+								{ name: 'email', type: 'string' },
+							],
+						},
+					],
+				},
+			]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.failures.some((f: any) => f.cause.includes("duplicate field name 'email'"))).toBe(true)
 			}
 		})
 
 		test('invariant D: throws when pk.name collides with a field name', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'createTable' as const, name: 'users', pk: { name: 'email', type: 'string' }, fields: [
-					{ name: 'email', type: 'string' },
-				] },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			const migrations = [
+				{
+					id: '0001',
+					changes: [
+						{
+							kind: 'createTable' as const,
+							name: 'users',
+							pk: { name: 'email', type: 'string' },
+							fields: [{ name: 'email', type: 'string' }],
+						},
+					],
+				},
+			]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.failures.some((f: any) => f.cause.includes("pk name 'email' collides"))).toBe(true)
 			}
 		})
@@ -256,101 +367,146 @@ if (import.meta.vitest) {
 		})
 
 		test('invariant E: throws on empty names in dropTable, dropField, renameTable, renameField, dropIndex, dropForeignKey', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'dropTable' as const, name: '' },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			const migrations = [{ id: '0001', changes: [{ kind: 'dropTable' as const, name: '' }] }]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.failures.some((f: any) => f.cause.includes('table name must be non-empty'))).toBe(true)
 			}
 		})
 
 		test('invariant E: throws on empty field name in dropField', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'dropField' as const, table: 'users', name: '' },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			const migrations = [{ id: '0001', changes: [{ kind: 'dropField' as const, table: 'users', name: '' }] }]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.failures.some((f: any) => f.cause.includes('field name must be non-empty'))).toBe(true)
 			}
 		})
 
 		test('invariant E: throws on empty renameTable from/to', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'renameTable' as const, from: '', to: '' },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
-				expect(err.failures.filter((f: any) => f.cause.includes('table name must be non-empty'))).toHaveLength(2)
+			const migrations = [{ id: '0001', changes: [{ kind: 'renameTable' as const, from: '', to: '' }] }]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
+				expect(err.failures.filter((f: any) => f.cause.includes('table name must be non-empty'))).toHaveLength(
+					2,
+				)
 			}
 		})
 
 		test('invariant E: throws on empty renameField from/to/table', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'renameField' as const, table: '', from: '', to: '' },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			const migrations = [
+				{ id: '0001', changes: [{ kind: 'renameField' as const, table: '', from: '', to: '' }] },
+			]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.failures.length).toBeGreaterThanOrEqual(3)
 			}
 		})
 
 		test('invariant E: throws on empty dropIndex name', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'dropIndex' as const, name: '' },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			const migrations = [{ id: '0001', changes: [{ kind: 'dropIndex' as const, name: '' }] }]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.failures.some((f: any) => f.cause.includes('index name must be non-empty'))).toBe(true)
 			}
 		})
 
 		test('invariant E: throws on empty dropForeignKey table/name', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'dropForeignKey' as const, table: '', name: '' },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			const migrations = [{ id: '0001', changes: [{ kind: 'dropForeignKey' as const, table: '', name: '' }] }]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.failures.length).toBeGreaterThanOrEqual(2)
 			}
 		})
 
 		test('invariant F: throws on empty addIndex.on', () => {
-			const migrations = [{ id: '0001', changes: [{ kind: 'addIndex' as const, table: 'users', on: [] as string[] }] }]
+			const migrations = [
+				{ id: '0001', changes: [{ kind: 'addIndex' as const, table: 'users', on: [] as string[] }] },
+			]
 			expect(() => assertNormalisedChanges(adapterWithIndex, migrations)).toThrow(OrmValidationError)
-			try { assertNormalisedChanges(adapterWithIndex, migrations) } catch (err: any) {
+			try {
+				assertNormalisedChanges(adapterWithIndex, migrations)
+			} catch (err: any) {
 				expect(err.failures.some((f: any) => f.cause.includes('non-empty'))).toBe(true)
 			}
 		})
 
 		test('invariant F: throws on empty addForeignKey.on', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'addForeignKey' as const, table: 'users', on: '', references: { table: 'orgs', column: 'id' } },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			const migrations = [
+				{
+					id: '0001',
+					changes: [
+						{
+							kind: 'addForeignKey' as const,
+							table: 'users',
+							on: '',
+							references: { table: 'orgs', column: 'id' },
+						},
+					],
+				},
+			]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.failures.some((f: any) => f.cause.includes('addForeignKey.on must be non-empty'))).toBe(true)
 			}
 		})
 
 		test('invariant F: throws on empty addForeignKey references', () => {
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'addForeignKey' as const, table: 'users', on: 'orgId', references: { table: '', column: '' } },
-			] }]
-			try { assertNormalisedChanges(fullAdapter, migrations) } catch (err: any) {
+			const migrations = [
+				{
+					id: '0001',
+					changes: [
+						{
+							kind: 'addForeignKey' as const,
+							table: 'users',
+							on: 'orgId',
+							references: { table: '', column: '' },
+						},
+					],
+				},
+			]
+			try {
+				assertNormalisedChanges(fullAdapter, migrations)
+			} catch (err: any) {
 				expect(err.failures.some((f: any) => f.cause.includes('references table must be non-empty'))).toBe(true)
-				expect(err.failures.some((f: any) => f.cause.includes('references column must be non-empty'))).toBe(true)
+				expect(err.failures.some((f: any) => f.cause.includes('references column must be non-empty'))).toBe(
+					true,
+				)
 			}
 		})
 
 		test('invariant G: throws when adapter lacks required apply method', () => {
 			const migrations = [{ id: '0001', changes: [{ kind: 'addIndex' as const, table: 'users', on: ['email'] }] }]
 			expect(() => assertNormalisedChanges(adapterWithout, migrations)).toThrow(OrmValidationError)
-			try { assertNormalisedChanges(adapterWithout, migrations) } catch (err: any) {
+			try {
+				assertNormalisedChanges(adapterWithout, migrations)
+			} catch (err: any) {
 				expect(err.failures.some((f: any) => f.cause.includes('does not support'))).toBe(true)
 			}
 		})
 
 		test('invariant G: throws for each unsupported variant', () => {
 			const noOpAdapter = { supportedFieldTypes: ['string'] } as any
-			const migrations = [{ id: '0001', changes: [
-				{ kind: 'createTable' as const, name: 'users', pk: { name: 'id', type: 'string' }, fields: [] },
-			] }]
-			try { assertNormalisedChanges(noOpAdapter, migrations) } catch (err: any) {
-				expect(err.failures.some((f: any) => f.cause.includes("does not support change kind 'createTable'"))).toBe(true)
+			const migrations = [
+				{
+					id: '0001',
+					changes: [
+						{ kind: 'createTable' as const, name: 'users', pk: { name: 'id', type: 'string' }, fields: [] },
+					],
+				},
+			]
+			try {
+				assertNormalisedChanges(noOpAdapter, migrations)
+			} catch (err: any) {
+				expect(
+					err.failures.some((f: any) => f.cause.includes("does not support change kind 'createTable'")),
+				).toBe(true)
 			}
 		})
 
@@ -365,16 +521,20 @@ if (import.meta.vitest) {
 				{ id: 'dup', changes: [] },
 				{ id: 'dup', changes: [{ kind: 'addIndex' as const, table: '', on: [] as string[] }] },
 			]
-			try { assertNormalisedChanges(adapterWithIndex, migrations) } catch (err: any) {
+			try {
+				assertNormalisedChanges(adapterWithIndex, migrations)
+			} catch (err: any) {
 				expect(err.failures.length).toBeGreaterThanOrEqual(4)
 			}
 		})
 
 		test('failures carry migrationId and changeIndex', () => {
-			const migrations = [{ id: 'mig-1', changes: [
-				{ kind: 'addIndex' as const, table: '', on: [] as string[] },
-			] }]
-			try { assertNormalisedChanges(adapterWithIndex, migrations) } catch (err: any) {
+			const migrations = [
+				{ id: 'mig-1', changes: [{ kind: 'addIndex' as const, table: '', on: [] as string[] }] },
+			]
+			try {
+				assertNormalisedChanges(adapterWithIndex, migrations)
+			} catch (err: any) {
 				for (const f of err.failures) {
 					expect(f.migrationId).toBe('mig-1')
 					expect(f.changeIndex).toBe(0)

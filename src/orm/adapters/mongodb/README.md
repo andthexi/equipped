@@ -11,8 +11,8 @@ import { Repo } from 'equipped/orm'
 const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 
 const repo = Repo.from(adapter)
-  .resolve((schema) => ({ db: 'myapp', col: schema.name }))
-  .build()
+	.resolve((schema) => ({ db: 'myapp', col: schema.name }))
+	.build()
 
 // MongoClient is exposed as a readonly field for change streams, aggregations, etc.
 const client = adapter.client
@@ -20,12 +20,12 @@ const client = adapter.client
 
 ## Capabilities
 
-| Category | Declared |
-|----------|----------|
-| `supportedFieldTypes` | `string`, `number`, `boolean`, `null`, `object`, `array`, `date` |
-| `queryableOps` | all 13 canonical ops |
-| `updateOps` | `set`, `inc`, `mul`, `min`, `max`, `unset`, `push`, `pull`, `patch` |
-| Methods | `connect`, `disconnect`, `findByPk`, `createMany`, `updateByPk`, `deleteByPk`, `raw`, `findMany`, `iterateMany`, `updateMany`, `deleteMany`, `upsertOne`, `session` |
+| Category              | Declared                                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supportedFieldTypes` | `string`, `number`, `boolean`, `null`, `object`, `array`, `date`                                                                                                    |
+| `queryableOps`        | all 13 canonical ops                                                                                                                                                |
+| `updateOps`           | `set`, `inc`, `mul`, `min`, `max`, `unset`, `push`, `pull`, `patch`                                                                                                 |
+| Methods               | `connect`, `disconnect`, `findByPk`, `createMany`, `updateByPk`, `deleteByPk`, `raw`, `findMany`, `iterateMany`, `updateMany`, `deleteMany`, `upsertOne`, `session` |
 
 ## Migrations
 
@@ -37,11 +37,11 @@ Migration records are stored in `equipped_migrations` (default database from the
 
 ### Supported Change kinds
 
-| Kind | Method |
-|------|--------|
-| `addIndex` | `applyAddIndex` — `createIndex({ field: 1 }, { unique, name })` |
-| `dropIndex` | `applyDropIndex` — scans collections to find and drop by name |
-| `execute` | User callback receives the `Repo` |
+| Kind        | Method                                                          |
+| ----------- | --------------------------------------------------------------- |
+| `addIndex`  | `applyAddIndex` — `createIndex({ field: 1 }, { unique, name })` |
+| `dropIndex` | `applyDropIndex` — scans collections to find and drop by name   |
+| `execute`   | User callback receives the `Repo`                               |
 
 ### No lock support
 

@@ -3,9 +3,9 @@ import { open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 
 import { v } from 'valleyed'
 
-import { configurable } from '../../../utilities/configurable'
-import type { FilterGroup } from '../../filter'
-import type { DiscoveredSchema } from '../../migrations/introspection-types'
+import { configurable } from '../../../utilities/configurable.js'
+import type { FilterGroup } from '../../filter.js'
+import type { DiscoveredSchema } from '../../migrations/introspection-types.js'
 import type {
 	AddFieldChange,
 	AddForeignKeyChange,
@@ -19,12 +19,12 @@ import type {
 	ModifyFieldChange,
 	RenameFieldChange,
 	RenameTableChange,
-} from '../../migrations/types'
-import { OrmAdapter, type AggregateSpec } from '../../orm-adapter'
-import type { IterationQueryOptions, QueryOptions } from '../../query-options'
-import type { AnySchema } from '../../schema'
-import type { AnyUpdateOp } from '../../updates'
-import { InMemoryAdapter, type InMemoryRepoConfig } from '../in-memory'
+} from '../../migrations/types.js'
+import { OrmAdapter, type AggregateSpec } from '../../orm-adapter.js'
+import type { IterationQueryOptions, QueryOptions } from '../../query-options.js'
+import type { AnySchema } from '../../schema.js'
+import type { AnyUpdateOp } from '../../updates.js'
+import { InMemoryAdapter, type InMemoryRepoConfig } from '../in-memory/index.js'
 
 export type JsonAdapterConfig = InMemoryRepoConfig
 
@@ -293,8 +293,17 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 		})
 	}
 
-	async upsertOne(schema: AnySchema, config: unknown, filter: FilterGroup, create: Record<string, unknown>, ops: AnyUpdateOp[]) {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.upsertOne(schema, config, filter, create, ops))
+	async upsertOne(
+		schema: AnySchema,
+		config: unknown,
+		filter: FilterGroup,
+		create: Record<string, unknown>,
+		ops: AnyUpdateOp[],
+	) {
+		return this.#withCurrentFile(
+			true,
+			async () => await this.#inMemory.upsertOne(schema, config, filter, create, ops),
+		)
 	}
 
 	async aggregate(schema: AnySchema, config: unknown, spec: AggregateSpec) {
@@ -378,18 +387,19 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 
 if (import.meta.vitest) {
 	const { describe, test, expect, beforeEach, afterEach } = import.meta.vitest
-	const { FilterGroup } = await import('../../filter')
-	const { OrderBy } = await import('../../query-options')
-	const { Schema } = await import('../../schema')
-	const { IncOp, PatchOp, PullOp, PushOp } = await import('../../updates')
+	const { FilterGroup } = await import('../../filter.js')
+	const { OrderBy } = await import('../../query-options.js')
+	const { Schema } = await import('../../schema.js')
+	const { IncOp, PatchOp, PullOp, PushOp } = await import('../../updates.js')
 	const { v } = await import('valleyed')
 	const { mkdtemp, rm } = await import('node:fs/promises')
 	const { tmpdir } = await import('node:os')
 	const { join } = await import('node:path')
-	const { Migrator } = await import('../../migrations/migrator')
-	const { Repo } = await import('../../repo/repo')
-	const { OrmMigrationError } = await import('../../errors/migration')
-	type Migration<A extends import('../base').OrmAdapterLike<any>> = import('../../migrations/types').Migration<A>
+	const { Migrator } = await import('../../migrations/migrator.js')
+	const { Repo } = await import('../../repo/repo.js')
+	const { OrmMigrationError } = await import('../../errors/migration.js')
+	type Migration<A extends import('../base.js').OrmAdapterLike<any>> =
+		import('../../migrations/types.js').Migration<A>
 
 	let tmpDir: string
 	let filePath: string
@@ -408,17 +418,33 @@ if (import.meta.vitest) {
 			const adapter = JsonAdapter.create({ filePath })
 			expect(adapter).toBeInstanceOf(JsonAdapter)
 			expect(adapter.schemaConfigPipe).toBeDefined()
-			expect(adapter.supportedFieldTypes).toEqual(['string', 'number', 'boolean', 'null', 'object', 'array', 'date'])
+			expect(adapter.supportedFieldTypes).toEqual([
+				'string',
+				'number',
+				'boolean',
+				'null',
+				'object',
+				'array',
+				'date',
+			])
 		})
 
 		test('auto-wired Instance hooks register connect/disconnect keyed by class', async () => {
-			const { Instance: Inst } = await import('../../../instance')
+			const { Instance: Inst } = await import('../../../instance/index.js')
 			const onSpy = (await import('vitest')).vi.spyOn(Inst, 'on').mockImplementation(() => {})
 
 			JsonAdapter.create({ filePath })
 
-			expect(onSpy).toHaveBeenCalledWith('start', expect.any(Function), expect.objectContaining({ class: JsonAdapter }))
-			expect(onSpy).toHaveBeenCalledWith('close', expect.any(Function), expect.objectContaining({ class: JsonAdapter }))
+			expect(onSpy).toHaveBeenCalledWith(
+				'start',
+				expect.any(Function),
+				expect.objectContaining({ class: JsonAdapter }),
+			)
+			expect(onSpy).toHaveBeenCalledWith(
+				'close',
+				expect.any(Function),
+				expect.objectContaining({ class: JsonAdapter }),
+			)
 
 			onSpy.mockRestore()
 		})
@@ -488,7 +514,12 @@ if (import.meta.vitest) {
 				(q) => q.gt('age', 19),
 				(q) => q.or([(g) => g.eq('name', 'Alice'), (g) => g.eq('name', 'Carol')]),
 			])
-			const options = { orderBy: [new OrderBy('age', 'desc')], offset: 1, limit: 1, select: ['id', 'name'] as const }
+			const options = {
+				orderBy: [new OrderBy('age', 'desc')],
+				offset: 1,
+				limit: 1,
+				select: ['id', 'name'] as const,
+			}
 			const rows = await use.findMany(builtGroup, options)
 			expect(rows).toEqual([{ id: 'u1', name: 'Alice' }])
 
@@ -600,7 +631,9 @@ if (import.meta.vitest) {
 			const inserted = await use.upsertOne(FilterGroup.create().eq('id', 'i1'), { id: 'i1', val: 10 }, [])
 			expect(inserted).toEqual({ id: 'i1', val: 10 })
 
-			const updated = await use.upsertOne(FilterGroup.create().eq('id', 'i1'), { id: 'i1', val: 10 }, [new IncOp('val', 5)])
+			const updated = await use.upsertOne(FilterGroup.create().eq('id', 'i1'), { id: 'i1', val: 10 }, [
+				new IncOp('val', 5),
+			])
 			expect(updated).toEqual({ id: 'i1', val: 15 })
 
 			await adapter.disconnect()
@@ -609,7 +642,10 @@ if (import.meta.vitest) {
 
 	describe('json adapter — persistence', () => {
 		test('lazy discovery and table rename/drop remain consistent across reloads', async () => {
-			const schema = Schema.from('users').pk('id', v.string(), () => 'u').field('name', v.string()).build()
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.field('name', v.string())
+				.build()
 			const first = JsonAdapter.create({ filePath })
 			await first.connect()
 			await first.use(schema, { table: 'users' }).createMany([{ id: 'u1', name: 'Alice' }])
@@ -623,7 +659,9 @@ if (import.meta.vitest) {
 
 			const third = JsonAdapter.create({ filePath })
 			await third.connect()
-			expect(await third.use(schema, { table: 'members' }).findMany(FilterGroup.create())).toEqual([{ id: 'u1', name: 'Alice' }])
+			expect(await third.use(schema, { table: 'members' }).findMany(FilterGroup.create())).toEqual([
+				{ id: 'u1', name: 'Alice' },
+			])
 			expect(await third.use(schema, { table: 'users' }).findMany(FilterGroup.create())).toEqual([])
 			expect((await third.introspect()).map((s) => s.name)).toEqual(['members'])
 			await third.applyDropTable({ kind: 'dropTable', name: 'members' })
@@ -1027,7 +1065,12 @@ if (import.meta.vitest) {
 		test('applyAddIndex and applyDropIndex persist across restarts', async () => {
 			const a1 = JsonAdapter.create({ filePath })
 			await a1.connect()
-			await a1.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [] })
+			await a1.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
 			await a1.applyAddIndex({ kind: 'addIndex', table: 'users', on: ['email'], unique: true })
 			await a1.disconnect()
 
@@ -1048,8 +1091,18 @@ if (import.meta.vitest) {
 		test('applyAddForeignKey and applyDropForeignKey persist across restarts', async () => {
 			const a1 = JsonAdapter.create({ filePath })
 			await a1.connect()
-			await a1.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [] })
-			await a1.applyCreateTable({ kind: 'createTable', name: 'posts', pk: { name: 'id', type: 'string' }, fields: [] })
+			await a1.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
+			await a1.applyCreateTable({
+				kind: 'createTable',
+				name: 'posts',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
 			await a1.applyAddForeignKey({
 				kind: 'addForeignKey',
 				table: 'posts',
@@ -1179,7 +1232,12 @@ if (import.meta.vitest) {
 							],
 						},
 						{ kind: 'addIndex', table: 'users', on: ['email'], unique: true },
-						{ kind: 'addForeignKey', table: 'posts', on: 'authorId', references: { table: 'users', column: 'id' } },
+						{
+							kind: 'addForeignKey',
+							table: 'posts',
+							on: 'authorId',
+							references: { table: 'users', column: 'id' },
+						},
 					],
 				},
 				{
@@ -1304,7 +1362,12 @@ if (import.meta.vitest) {
 			const { adapter } = makeEnv()
 			await adapter.connect()
 
-			await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [] })
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
 			await adapter.disconnect()
 
 			const { adapter: a2, repo: r2 } = makeEnv()
@@ -1399,7 +1462,12 @@ if (import.meta.vitest) {
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
 			await adapter.recordMigration('m-001', 1000)
-			await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [] })
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
 
 			expect(adapter.stores.has('__migrations')).toBe(false)
 			expect(adapter.stores.has('__tables')).toBe(false)

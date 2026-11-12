@@ -15,7 +15,7 @@ guessing whether they're the same thing.
 
 - **Keep `insert` as the action verb; rename `onCreate` → `onInsert`.**
   Aligns the other direction. Rejected: `onCreate` reads more naturally for
-  a default-value generator (the field is *created* with this value), and
+  a default-value generator (the field is _created_ with this value), and
   `onInsert` would also clash with the existing `onUpdate` hook's naming
   convention (which uses the lifecycle event, not the SQL/Mongo verb).
 - **Leave both as-is.** Rejected: the inconsistency was never resolved

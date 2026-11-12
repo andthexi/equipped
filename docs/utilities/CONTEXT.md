@@ -172,7 +172,7 @@ intermediate subclass must keep its own constructor `protected`.
 ### 3.2 Validate-before-construct rule
 
 **Validate-before-construct rule.** Validation runs in `static create`
-*before* the constructor is called. The constructor body never sees
+_before_ the constructor is called. The constructor body never sees
 unvalidated input. Adapter authors do not — and must not — call
 `v.assert(pipe, ...)` from inside their constructors.
 

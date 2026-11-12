@@ -2,10 +2,10 @@ import { connect, type ChannelWrapper } from 'amqp-connection-manager'
 import type { ConfirmChannel } from 'amqplib'
 import { v } from 'valleyed'
 
-import { Instance } from '../../../instance'
-import type { Events } from '../../../types'
-import { configurable, parseJSONValue, Random } from '../../../utilities'
-import { EventBus, type Stream, type StreamOptions } from '../base'
+import { Instance } from '../../../instance/index.js'
+import type { Events } from '../../../types/index.js'
+import { configurable, parseJSONValue, Random } from '../../../utilities/index.js'
+import { EventBus, type Stream, type StreamOptions } from '../base.js'
 
 export const rabbitmqConfigPipe = () =>
 	v.meta(
@@ -33,18 +33,25 @@ export class RabbitMQEventBus extends configurable(rabbitmqConfigPipe, EventBus)
 		})
 	}
 
-	stream<Event extends Events[keyof Events]>(topicName: Event['topic'], options: Partial<StreamOptions> = {}): Stream<Event['data']> {
+	stream<Event extends Events[keyof Events]>(
+		topicName: Event['topic'],
+		options: Partial<StreamOptions> = {},
+	): Stream<Event['data']> {
 		const topic = options.skipScope ? topicName : Instance.get().getScopedName(topicName)
 
 		return {
-			publish: async (data) => await this.#client.publish(this.#columnName, topic, JSON.stringify(data), { persistent: true }),
+			publish: async (data) =>
+				await this.#client.publish(this.#columnName, topic, JSON.stringify(data), { persistent: true }),
 			subscribe: async (onMessage) => {
 				const subscribe = async () => {
 					await this.#client.addSetup(async (channel: ConfirmChannel) => {
 						const queueName = options.fanout
 							? Instance.get().getScopedName(`${Instance.get().id}-fanout-${Random.string(10)}`)
 							: topic
-						const { queue } = await channel.assertQueue(queueName, { durable: !options.fanout, exclusive: options.fanout })
+						const { queue } = await channel.assertQueue(queueName, {
+							durable: !options.fanout,
+							exclusive: options.fanout,
+						})
 						await channel.bindQueue(queue, this.#columnName, topic)
 						channel.consume(
 							queue,

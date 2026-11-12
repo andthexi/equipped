@@ -1,9 +1,9 @@
 import { v } from 'valleyed'
 
-import { InMemoryCacheStore } from './store'
-import { Instance } from '../../../instance'
-import { configurable } from '../../../utilities'
-import { Cache } from '../base'
+import { Instance } from '../../../instance/index.js'
+import { configurable } from '../../../utilities/index.js'
+import { Cache } from '../base.js'
+import { InMemoryCacheStore } from './store.js'
 
 export const inMemoryCacheConfigPipe = () => v.object({})
 
@@ -13,9 +13,13 @@ export class InMemoryCache extends configurable(inMemoryCacheConfigPipe, Cache) 
 
 	protected constructor(config: typeof InMemoryCache.Config) {
 		super(config)
-		Instance.on('start', async () => {
-			this.#interval = setInterval(() => this.#store.sweepExpired(), 5000)
-		}, { class: InMemoryCache })
+		Instance.on(
+			'start',
+			async () => {
+				this.#interval = setInterval(() => this.#store.sweepExpired(), 5000)
+			},
+			{ class: InMemoryCache },
+		)
 		Instance.on('close', async () => clearInterval(this.#interval), { class: InMemoryCache })
 	}
 
@@ -40,7 +44,9 @@ if (import.meta.vitest) {
 		vi.spyOn(Instance, 'on').mockImplementation((event, _cb, options) => {
 			hookCalls.push({ event, options })
 		})
-		vi.spyOn(Instance, 'get').mockReturnValue({ getScopedName: (_name: string, _sep: string) => `test:${_name}` } as any)
+		vi.spyOn(Instance, 'get').mockReturnValue({
+			getScopedName: (_name: string, _sep: string) => `test:${_name}`,
+		} as any)
 	})
 
 	afterEach(() => {

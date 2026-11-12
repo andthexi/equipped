@@ -1,6 +1,6 @@
 import type { Pipe, PipeInput, PipeOutput } from 'valleyed'
 
-import { EquippedError } from '../../errors'
+import { EquippedError } from '../../errors/index.js'
 
 export type EventContext = {
 	key: string
@@ -50,7 +50,7 @@ export class HandlerRegistry {
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { EquippedError } = await import('../../errors')
+	const { EquippedError } = await import('../../errors/index.js')
 
 	describe('HandlerRegistry', () => {
 		test('register and get a handler', () => {

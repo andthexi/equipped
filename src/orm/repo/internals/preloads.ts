@@ -1,9 +1,9 @@
-import { EquippedError } from '../../../errors'
-import type { OrmUse } from '../../adapters/base'
-import { FilterGroup } from '../../filter'
-import type { AnyPreloadDef, AnyRelDef, NestedPreloadDef } from '../../relations'
-import { ManyRelation, OneRelation } from '../../relations'
-import type { AnySchema } from '../../schema'
+import { EquippedError } from '../../../errors/index.js'
+import type { OrmUse } from '../../adapters/base.js'
+import { FilterGroup } from '../../filter.js'
+import type { AnyPreloadDef, AnyRelDef, NestedPreloadDef } from '../../relations.js'
+import { ManyRelation, OneRelation } from '../../relations.js'
+import type { AnySchema } from '../../schema.js'
 
 const MAX_PRELOAD_DEPTH = 5
 
@@ -150,17 +150,19 @@ async function resolvePreload(
 		return attachManyRelation(entities, name, refCol, grouped)
 	}
 
-	throw new Error(`Unknown relation kind: ${String(Reflect.get(def as object, 'kind'))}; expected OneRelation or ManyRelation`)
+	throw new Error(
+		`Unknown relation kind: ${String(Reflect.get(def as object, 'kind'))}; expected OneRelation or ManyRelation`,
+	)
 }
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { InMemoryAdapter } = await import('../../adapters/in-memory')
-	const { OrmValidationError } = await import('../../errors')
-	const { Relations } = await import('../../relations')
-	const { Repo } = await import('../repo')
-	const { Schema } = await import('../../schema')
+	const { InMemoryAdapter } = await import('../../adapters/in-memory/index.js')
+	const { OrmValidationError } = await import('../../errors/index.js')
+	const { Relations } = await import('../../relations.js')
+	const { Repo } = await import('../repo.js')
+	const { Schema } = await import('../../schema.js')
 
 	describe('repo preload resolution', () => {
 		let userCounter = 0
@@ -233,9 +235,7 @@ if (import.meta.vitest) {
 			.belongsTo('org', UserSchema.fields.orgId, OrgSchema)
 			.build()
 
-		const PostRels = Relations.from(PostSchema)
-			.belongsTo('author', PostSchema.fields.userId, UserSchema)
-			.build()
+		const PostRels = Relations.from(PostSchema).belongsTo('author', PostSchema.fields.userId, UserSchema).build()
 
 		const ARels = Relations.from(ASchema).hasMany('bs', BSchema.fields.aId).build()
 		const BRels = Relations.from(BSchema).hasMany('cs', CSchema.fields.bId).build()
@@ -246,7 +246,9 @@ if (import.meta.vitest) {
 
 		function makeRepo() {
 			const adapter = InMemoryAdapter.create({})
-			return Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			return Repo.from(adapter)
+				.resolve((s) => ({ table: s.name }))
+				.build()
 		}
 
 		async function expectPreloadQueryShapeError(read: Promise<unknown>, cause: RegExp) {
@@ -406,7 +408,9 @@ if (import.meta.vitest) {
 				}
 			})
 
-			const repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			const repo = Repo.from(adapter)
+				.resolve((s) => ({ table: s.name }))
+				.build()
 			const u1 = await repo.on(UserSchema).one().create({ email: 'a@test.com', name: 'A' })
 			const u2 = await repo.on(UserSchema).one().create({ email: 'b@test.com', name: 'B' })
 			const u3 = await repo.on(UserSchema).one().create({ email: 'c@test.com', name: 'C' })

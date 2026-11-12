@@ -1,12 +1,18 @@
 import { v, type Pipe, type PipeOutput } from 'valleyed'
 
-import type { FieldTypeName } from './adapter'
+import type { FieldTypeName } from './adapter.js'
 
 type ObjectLike = Record<string, unknown>
 
 type NestedKey<T> = T extends unknown ? (T extends ObjectLike ? keyof T & string : never) : never
 
-type NestedValue<T, K extends string> = T extends unknown ? (T extends ObjectLike ? (K extends keyof T ? T[K] : never) : never) : never
+type NestedValue<T, K extends string> = T extends unknown
+	? T extends ObjectLike
+		? K extends keyof T
+			? T[K]
+			: never
+		: never
+	: never
 
 type FieldTypeFor<T> = T extends unknown
 	? T extends Date

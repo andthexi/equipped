@@ -39,12 +39,12 @@ not aware of adapters.
 
 ```ts
 const UserSchema = Schema.from('users')
-  .pk('id', v.string(), () => crypto.randomUUID())
-  .field('email', v.string())
-  .field('age', v.number())
-  .field('createdAt', v.number(), { onCreate: () => Date.now() })
-  .field('updatedAt', v.number(), { onUpdate: () => Date.now() })
-  .build()
+	.pk('id', v.string(), () => crypto.randomUUID())
+	.field('email', v.string())
+	.field('age', v.number())
+	.field('createdAt', v.number(), { onCreate: () => Date.now() })
+	.field('updatedAt', v.number(), { onUpdate: () => Date.now() })
+	.build()
 ```
 
 Vocabulary:
@@ -64,7 +64,7 @@ A **Relations** is a typed description of how one schema connects to others.
 Relations are stored in a separate artifact from the schema and wire `hasMany`
 / `hasOne` / `belongsTo` descriptors keyed by name. The plural form is
 intentional: a single `Relations.from(...)` call declares multiple relations,
-so the artifact is *a Relations* (singular noun, plural form).
+so the artifact is _a Relations_ (singular noun, plural form).
 
 Relations are **not** part of the schema, **not** enforced by the database (no
 DDL), and **not** automatically bidirectional. A `User → posts` `hasMany` does
@@ -72,10 +72,10 @@ not imply `Post → user` `belongsTo`; both must be declared if both are wanted.
 
 ```ts
 const UserRels = Relations.from(UserSchema)
-  .hasMany('posts', PostSchema.fields.userId)
-  .belongsTo('org', UserSchema.fields.orgId, OrgSchema)
-  .hasOne('profile', ProfileSchema.fields.userId)
-  .build()
+	.hasMany('posts', PostSchema.fields.userId)
+	.belongsTo('org', UserSchema.fields.orgId, OrgSchema)
+	.hasOne('profile', ProfileSchema.fields.userId)
+	.build()
 ```
 
 Vocabulary:
@@ -113,32 +113,59 @@ Per-call schema-level config is declared separately as a required
 split).
 
 ```ts
-const mongoConnectionPipe = () => v.object({
-  uri: v.string(),
-  // ...other connection-level fields
-})
+const mongoConnectionPipe = () =>
+	v.object({
+		uri: v.string(),
+		// ...other connection-level fields
+	})
 
 export class MongoAdapter extends configurable(mongoConnectionPipe, OrmAdapter) {
-  readonly schemaConfigPipe = v.object({ db: v.string(), col: v.string() })
+	readonly schemaConfigPipe = v.object({ db: v.string(), col: v.string() })
 
-  readonly queryableOps = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'notIn', 'like', 'exists', 'notExists', 'contains', 'notContains'] as const
-  readonly updateOps = ['set', 'inc', 'mul', 'min', 'max', 'unset', 'push', 'pull', 'patch'] as const
-  readonly supportedFieldTypes = ['string', 'number', 'boolean', 'null', 'object', 'array', 'date'] as const
+	readonly queryableOps = [
+		'eq',
+		'ne',
+		'gt',
+		'gte',
+		'lt',
+		'lte',
+		'in',
+		'notIn',
+		'like',
+		'exists',
+		'notExists',
+		'contains',
+		'notContains',
+	] as const
+	readonly updateOps = ['set', 'inc', 'mul', 'min', 'max', 'unset', 'push', 'pull', 'patch'] as const
+	readonly supportedFieldTypes = ['string', 'number', 'boolean', 'null', 'object', 'array', 'date'] as const
 
-  #client: MongoClient
-  protected constructor(config: typeof MongoAdapter.Config, options?: MongoOptions) {
-    super(config)
-    this.#client = new MongoClient(config.uri, options)
-  }
+	#client: MongoClient
+	protected constructor(config: typeof MongoAdapter.Config, options?: MongoOptions) {
+		super(config)
+		this.#client = new MongoClient(config.uri, options)
+	}
 
-  async connect()    { await this.#client.connect() }
-  async disconnect() { await this.#client.close() }
+	async connect() {
+		await this.#client.connect()
+	}
+	async disconnect() {
+		await this.#client.close()
+	}
 
-  async findByPk(schema, schemaCfg, pk)        { /* ... */ }
-  async createMany(schema, schemaCfg, data)    { /* ... */ }
-  async findMany(schema, schemaCfg, filter, options?) { /* ... */ }
-  async session<T>(fn: () => Promise<T>)       { /* ... */ }
-  // ...optional methods the adapter chooses to implement
+	async findByPk(schema, schemaCfg, pk) {
+		/* ... */
+	}
+	async createMany(schema, schemaCfg, data) {
+		/* ... */
+	}
+	async findMany(schema, schemaCfg, filter, options?) {
+		/* ... */
+	}
+	async session<T>(fn: () => Promise<T>) {
+		/* ... */
+	}
+	// ...optional methods the adapter chooses to implement
 }
 
 const adapter = MongoAdapter.create({ uri: 'mongodb://...' })
@@ -204,13 +231,13 @@ Vocabulary:
   `Adapter` — is **behavioural** and uses the class-via-`configurable` form
   instead of a builder chain (see §2.2 carve-out and §1.3).
 - Each `.from(...)` takes only its **constructor-essential** input(s):
-  - `Schema.from(name)` — name positional
-  - `Relations.from(source)` — source schema positional
-  - `Repo.from(adapter)` — adapter positional
-  Everything else (fields, FK descriptors, resolver) goes into builder steps.
-  Adapters take the connection-config pipe as the first argument to
-  `configurable(connectionPipe, OrmAdapter)`; everything else (capability
-  declarations, methods, `schemaConfigPipe`) is class body.
+    - `Schema.from(name)` — name positional
+    - `Relations.from(source)` — source schema positional
+    - `Repo.from(adapter)` — adapter positional
+      Everything else (fields, FK descriptors, resolver) goes into builder steps.
+      Adapters take the connection-config pipe as the first argument to
+      `configurable(connectionPipe, OrmAdapter)`; everything else (capability
+      declarations, methods, `schemaConfigPipe`) is class body.
 - Pluralisation uses natural English plurals (`schemas`, `adapters`, `repos`).
   `Relations` is a singular noun in plural form; capitalise when ambiguous.
 - The collective term for "things produced by `.from(...).build()`" is
@@ -288,9 +315,9 @@ and rules of the pattern.
   Adapter classes — undeclared capability arrays default to `readonly []` on
   `OrmAdapter`; unimplemented methods stay undeclared.
 - **Build-gated materialisation rule.** The artifact instance only exists
-  after `.build()`. The builder is *not* the artifact; reading runtime methods
+  after `.build()`. The builder is _not_ the artifact; reading runtime methods
   off a non-built builder is a type error.
-- **Clone-on-step rule.** Every builder step returns a *new* builder
+- **Clone-on-step rule.** Every builder step returns a _new_ builder
   instance, not a mutated `this`. This applies uniformly across module-load
   artifact builders (`SchemaBuilder`, `RelationsBuilder`, `RepoBuilder`),
   filter sub-builders (`FilterGroup`), and per-call query builders
@@ -321,7 +348,7 @@ safety throughout the package.
 
 ### 2.4 Non-construction calls
 
-Builder-chain is only for *declarative artifact construction*. The following
+Builder-chain is only for _declarative artifact construction_. The following
 are **non-construction calls** and use direct function/method calls:
 
 - **Schema-bound entry** (schema-per-call): `repo.on(schema)` — returns a
@@ -358,11 +385,11 @@ level. `.build()` is gated as `build(this: { _acc: SatisfiedAcc }): X` — if
 the accumulator doesn't satisfy, `this` doesn't bind and TS errors at the
 `.build()` call site.
 
-| Artifact | `.build()` requires |
-|---|---|
-| `Schema` | `.pk(...)` was called (PK-less schemas have no meaning) |
-| `Relations` | nothing enforced — empty Relations is a valid no-op |
-| `Repo` | `.resolve(...)` was called (the only thing that produces a config) |
+| Artifact    | `.build()` requires                                                |
+| ----------- | ------------------------------------------------------------------ |
+| `Schema`    | `.pk(...)` was called (PK-less schemas have no meaning)            |
+| `Relations` | nothing enforced — empty Relations is a valid no-op                |
+| `Repo`      | `.resolve(...)` was called (the only thing that produces a config) |
 
 (Adapter is constructed via class-via-`configurable`, not a builder — see
 §1.3. The equivalent prerequisite for an Adapter class is "extends
@@ -382,17 +409,17 @@ The Adapter exposes exactly fourteen **optional methods** declared on the
 abstract `OrmAdapter` base. Each subclass implements the ones it supports and
 omits the rest:
 
-| Method-group label | Methods (each independently optional) |
-|---|---|
-| `lifecycle` | `connect`, `disconnect` |
-| `crud` | `findByPk`, `createMany`, `updateByPk`, `deleteByPk`, `raw` |
-| `queryable` | `findMany`, `count`, `iterateMany`, `updateMany`, `deleteMany`, `upsertOne` |
-| `transactional` | `session` |
+| Method-group label | Methods (each independently optional)                                       |
+| ------------------ | --------------------------------------------------------------------------- |
+| `lifecycle`        | `connect`, `disconnect`                                                     |
+| `crud`             | `findByPk`, `createMany`, `updateByPk`, `deleteByPk`, `raw`                 |
+| `queryable`        | `findMany`, `count`, `iterateMany`, `updateMany`, `deleteMany`, `upsertOne` |
+| `transactional`    | `session`                                                                   |
 
 The four group labels (`lifecycle`, `crud`, `queryable`, `transactional`)
 survive **only as documentation** — they are vocabulary for discussing related
-methods together. They are *not* runtime objects, *not* type-system bags, and
-*not* required to be implemented as a unit. The methods themselves are flat
+methods together. They are _not_ runtime objects, _not_ type-system bags, and
+_not_ required to be implemented as a unit. The methods themselves are flat
 on the class. An adapter that implements `findByPk` and `raw` and nothing else
 is a valid adapter (read-only PK-keyed access plus an escape hatch).
 
@@ -410,13 +437,13 @@ A **capability declaration** is a literal-typed `readonly` instance field on
 the Adapter that gates ops or field types. There are exactly four plus one
 required pipe:
 
-| Declaration | Canonical set | Gates |
-|---|---|---|
-| `queryableOps` | filter ops | which filter ops the adapter supports |
-| `updateOps` | update ops | which update ops `update*` and `upsertOne` accept |
-| `aggregateOps` | aggregate ops | which aggregator funcs `aggregate` accepts (§5.8) |
-| `supportedFieldTypes` | field types | which schemas can pair with the adapter |
-| `schemaConfigPipe` | (a valleyed pipe) | the per-call schema config's shape; validated at the Repo→Adapter boundary every query (§6.3) |
+| Declaration           | Canonical set     | Gates                                                                                         |
+| --------------------- | ----------------- | --------------------------------------------------------------------------------------------- |
+| `queryableOps`        | filter ops        | which filter ops the adapter supports                                                         |
+| `updateOps`           | update ops        | which update ops `update*` and `upsertOne` accept                                             |
+| `aggregateOps`        | aggregate ops     | which aggregator funcs `aggregate` accepts (§5.8)                                             |
+| `supportedFieldTypes` | field types       | which schemas can pair with the adapter                                                       |
+| `schemaConfigPipe`    | (a valleyed pipe) | the per-call schema config's shape; validated at the Repo→Adapter boundary every query (§6.3) |
 
 `queryableOps`, `updateOps`, `aggregateOps`, and `supportedFieldTypes` default
 to `readonly []` on `OrmAdapter`; subclasses override with `as const` literal
@@ -430,7 +457,7 @@ are gated on method-presence, not on `updateOps` membership (§5.1, §12.2).
 Each op-list declaration's values are drawn from a closed canonical set (§4).
 Adapters **subset** the canonical set; they cannot add new members.
 
-The Adapter's **connection config type** is *not* a capability declaration —
+The Adapter's **connection config type** is _not_ a capability declaration —
 it flows from the `connectionPipe` argument to `configurable(connectionPipe, OrmAdapter)`,
 exposed on each subclass as the phantom `static Config` type marker
 (`typeof MyAdapter.Config`) and as the `this.config` instance property
@@ -629,22 +656,22 @@ Repo-level methods (`session`, `resolve`).
 Each query-chain verb is a **gated verb** — its presence depends on the
 Adapter's declarations:
 
-| Chain verb | Gate |
-|---|---|
-| `repo.on(S).one().id(pk).find()` | `crud.findByPk` declared |
-| `repo.on(S).one().create(d)` / `repo.on(S).all().create(d[])` | `crud.createMany` declared |
-| `repo.on(S).one().id(pk).update(d)` | `crud.updateByPk` declared AND non-empty `updateOps` |
-| `repo.on(S).one().id(pk).delete()` | `crud.deleteByPk` declared |
-| `repo.on(S).raw(...args)` | `crud.raw` declared |
-| `repo.on(S).one().where(q).find()` / `.all().where(q).find()` | `queryable.findMany` declared |
-| `repo.on(S).all().<where?>.count()` | `queryable.count` declared |
-| `repo.on(S).all().<where?>.<orderBy?>.<limit?>.<page?>.iterate()` | `queryable.iterateMany` declared |
-| `repo.on(S).one().where(q).update(d)` / `.all().where(q).update(d)` | `queryable.updateMany` declared AND non-empty `updateOps` |
-| `repo.on(S).one().where(q).delete()` / `.all().where(q).delete()` | `queryable.deleteMany` declared |
-| `repo.on(S).one().where(q).upsert(d)` | `queryable.upsertOne` declared |
-| `repo.on(S).aggregate().<aggs>.<groupBy?>.<where?>.<having?>.run()` | `queryable.aggregate` declared AND non-empty `aggregateOps` |
-| `repo.on(S).all().<where?>.<orderBy?>.<limit?>.<page?>.paginate()` | `queryable.findMany` declared AND `queryable.count` declared |
-| `repo.session(fn)` | `transactional.session` declared |
+| Chain verb                                                          | Gate                                                         |
+| ------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `repo.on(S).one().id(pk).find()`                                    | `crud.findByPk` declared                                     |
+| `repo.on(S).one().create(d)` / `repo.on(S).all().create(d[])`       | `crud.createMany` declared                                   |
+| `repo.on(S).one().id(pk).update(d)`                                 | `crud.updateByPk` declared AND non-empty `updateOps`         |
+| `repo.on(S).one().id(pk).delete()`                                  | `crud.deleteByPk` declared                                   |
+| `repo.on(S).raw(...args)`                                           | `crud.raw` declared                                          |
+| `repo.on(S).one().where(q).find()` / `.all().where(q).find()`       | `queryable.findMany` declared                                |
+| `repo.on(S).all().<where?>.count()`                                 | `queryable.count` declared                                   |
+| `repo.on(S).all().<where?>.<orderBy?>.<limit?>.<page?>.iterate()`   | `queryable.iterateMany` declared                             |
+| `repo.on(S).one().where(q).update(d)` / `.all().where(q).update(d)` | `queryable.updateMany` declared AND non-empty `updateOps`    |
+| `repo.on(S).one().where(q).delete()` / `.all().where(q).delete()`   | `queryable.deleteMany` declared                              |
+| `repo.on(S).one().where(q).upsert(d)`                               | `queryable.upsertOne` declared                               |
+| `repo.on(S).aggregate().<aggs>.<groupBy?>.<where?>.<having?>.run()` | `queryable.aggregate` declared AND non-empty `aggregateOps`  |
+| `repo.on(S).all().<where?>.<orderBy?>.<limit?>.<page?>.paginate()`  | `queryable.findMany` declared AND `queryable.count` declared |
+| `repo.session(fn)`                                                  | `transactional.session` declared                             |
 
 There is no truly "always-on" verb; every verb is gated by something. Verbs
 whose gates aren't satisfied are narrowed-out (§3.3) — their type resolves to
@@ -657,7 +684,11 @@ through `repo.on(Schema)`, instead of being baked into a per-schema Repo:
 
 ```ts
 await repo.on(UserSchema).one().id('u1').find()
-await repo.on(UserSchema).one().where(q => q.eq(UserSchema.fields.email, 'a@b.com')).find()
+await repo
+	.on(UserSchema)
+	.one()
+	.where((q) => q.eq(UserSchema.fields.email, 'a@b.com'))
+	.find()
 await repo.on(UserSchema).one().create({ name: 'Alice', email: 'a@b.com' })
 await repo.on(UserSchema).one().where(q).update({ name: 'Alicia' })
 ```
@@ -716,12 +747,12 @@ the inferred shape and exposes a per-call `<T>` override on the result type:
 ```ts
 // Adapter-side: method signature declares args + result
 class PostgresAdapter extends configurable(pgConnectionPipe, OrmAdapter) {
-  readonly schemaConfigPipe = v.object({ table: v.string() })
-  // ...
-  async raw(schema, schemaCfg, command: string, params: unknown[]) {
-    const r = await this.#client.query(command, params)
-    return r.rows                                // adapter-default result: unknown[]
-  }
+	readonly schemaConfigPipe = v.object({ table: v.string() })
+	// ...
+	async raw(schema, schemaCfg, command: string, params: unknown[]) {
+		const r = await this.#client.query(command, params)
+		return r.rows // adapter-default result: unknown[]
+	}
 }
 
 // Call site: args spread, optional <T> override on result
@@ -750,7 +781,7 @@ See §8 for the full session vocabulary.
 ### 5.7 Required-row contract (`.required()`)
 
 The **required-row contract** is the user-opt-in tightening of §13 principle
-#6 (*always-throw-never-silently-drop*) for `OneBuilder`'s nullable verbs. A
+#6 (_always-throw-never-silently-drop_) for `OneBuilder`'s nullable verbs. A
 chain **marked required** via `.required()` promises that the eventual
 `find()` / `update()` / `delete()` will produce a row; if none does, the
 framework throws `OrmNotFoundError` instead of returning `null`.
@@ -759,10 +790,12 @@ framework throws `OrmNotFoundError` instead of returning `null`.
 const user = await repo.on(UserSchema).one().id('u-abc').required().find()
 // user: User                            — non-null; throws if no row matched
 
-await repo.on(UserSchema).one()
-  .where(q => q.eq(UserSchema.fields.email, 'a@b.com'))
-  .required('user must exist')
-  .update({ name: 'Alice' })             // throws if no row matched
+await repo
+	.on(UserSchema)
+	.one()
+	.where((q) => q.eq(UserSchema.fields.email, 'a@b.com'))
+	.required('user must exist')
+	.update({ name: 'Alice' }) // throws if no row matched
 ```
 
 `.required(message?: string)` is a **once-per-chain** modifier on
@@ -770,8 +803,8 @@ await repo.on(UserSchema).one()
 `.preload()`. It flips a typestate parameter `Req` on the builder so the
 return types of `find` / `update` / `delete` narrow from `T | null` to `T`.
 `create` and `upsert` ignore it (their return types are unconditionally
-non-null; `.required()` before them is a runtime no-op — see the *required-row
-no-op rule* below).
+non-null; `.required()` before them is a runtime no-op — see the _required-row
+no-op rule_ below).
 
 The optional `message` argument replaces the framework-generated default in
 the thrown error's `message` field. The default is generated from `schema` +
@@ -787,9 +820,9 @@ The executors (`runOneRead`, `runOneUpdate`, `runOneDelete`) keep their
 
 ```ts
 class OrmNotFoundError extends EquippedError {
-  schema: string                                    // schema.name
-  operation: 'findOne' | 'updateOne' | 'deleteOne'  // sibling-consistent with OrmValidationError (§7.5)
-  where: FilterGroup                                // the live FilterGroup that produced no match
+	schema: string // schema.name
+	operation: 'findOne' | 'updateOne' | 'deleteOne' // sibling-consistent with OrmValidationError (§7.5)
+	where: FilterGroup // the live FilterGroup that produced no match
 }
 ```
 
@@ -818,21 +851,25 @@ in `.run()`:
 
 ```ts
 // Single-bucket aggregation (no groupBy → returns one object).
-const totals = await repo.on(OrderSchema).aggregate()
-  .count('orders')
-  .sum(OrderSchema.fields.total, 'revenue')
-  .where(q => q.eq(OrderSchema.fields.year, 2026))
-  .run()
+const totals = await repo
+	.on(OrderSchema)
+	.aggregate()
+	.count('orders')
+	.sum(OrderSchema.fields.total, 'revenue')
+	.where((q) => q.eq(OrderSchema.fields.year, 2026))
+	.run()
 // totals: { orders: number, revenue: number }
 
 // Grouped aggregation (groupBy → returns an array of group rows).
-const byRegion = await repo.on(OrderSchema).aggregate()
-  .count('orders')
-  .sum(OrderSchema.fields.total, 'revenue')
-  .groupBy(OrderSchema.fields.region, OrderSchema.fields.year)
-  .where(q => q.gte(OrderSchema.fields.year, 2024))
-  .having(q => q.gt('revenue', 1000))
-  .run()
+const byRegion = await repo
+	.on(OrderSchema)
+	.aggregate()
+	.count('orders')
+	.sum(OrderSchema.fields.total, 'revenue')
+	.groupBy(OrderSchema.fields.region, OrderSchema.fields.year)
+	.where((q) => q.gte(OrderSchema.fields.year, 2024))
+	.having((q) => q.gt('revenue', 1000))
+	.run()
 // byRegion: Array<{ orders: number, revenue: number, region: string, year: number }>
 ```
 
@@ -996,9 +1033,9 @@ query result in the ORM.
 
 ```ts
 export type Paginated<T> = {
-  pages: { current: number; start: number; last: number; previous: number | null; next: number | null }
-  docs: { limit: number; total: number; count: number }
-  items: T[]
+	pages: { current: number; start: number; last: number; previous: number | null; next: number | null }
+	docs: { limit: number; total: number; count: number }
+	items: T[]
 }
 ```
 
@@ -1007,16 +1044,18 @@ because pagination inputs live as builder steps (`.page(...)`, `.limit(...)`),
 not as a terminal payload object.
 
 ```ts
-const page = await repo.on(UserSchema).all()
-  .where(q => q.eq(UserSchema.fields.active, true))
-  .orderBy('createdAt', 'desc') // deterministic ordering keeps pages stable
-  .page(2)
-  .limit(25)
-  .paginate()
+const page = await repo
+	.on(UserSchema)
+	.all()
+	.where((q) => q.eq(UserSchema.fields.active, true))
+	.orderBy('createdAt', 'desc') // deterministic ordering keeps pages stable
+	.page(2)
+	.limit(25)
+	.paginate()
 
 page.items // selected/preloaded documents for page 2
 page.pages // { current, start, last, previous, next }
-page.docs  // { limit, total, count }
+page.docs // { limit, total, count }
 ```
 
 The **last-page floor rule**: for bounded pages, `pages.last` is
@@ -1062,7 +1101,7 @@ context for change-feeds / CDC-style realtime subscription semantics.
 
 ```ts
 for await (const doc of repo.on(UserSchema).all().iterate({ batchSize: 500 })) {
-  // doc has the same selected/preloaded shape as an item from .find()
+	// doc has the same selected/preloaded shape as an item from .find()
 }
 ```
 
@@ -1143,11 +1182,11 @@ const adapter = PostgresAdapter.create({ host, port, user, password })
 //      ^^^^^^^ connection config validated here, exposed as adapter.config
 
 const repo = Repo.from(adapter)
-  .resolve((schema) => ({ table: schema.name }))   // schema-config; typed by adapter.schemaConfigPipe
-  .build()
+	.resolve((schema) => ({ table: schema.name })) // schema-config; typed by adapter.schemaConfigPipe
+	.build()
 ```
 
-The base resolver is the only thing that *produces* a schema config from a
+The base resolver is the only thing that _produces_ a schema config from a
 schema. Without `.resolve(...)`, `.build()` is unavailable (§2.6).
 
 ### 6.2 Runtime override: `repo.resolve(transform, fn)`
@@ -1163,10 +1202,10 @@ up the transform automatically. The stack is popped on `fn`'s settlement
 
 ```ts
 await repo.resolve(
-  (cfg, schema) => ({ ...cfg, table: `t_${tenantId}_${cfg.table}` }),
-  async () => {
-    await repo.on(UserSchema).all().find()       // sees transformed config
-  },
+	(cfg, schema) => ({ ...cfg, table: `t_${tenantId}_${cfg.table}` }),
+	async () => {
+		await repo.on(UserSchema).all().find() // sees transformed config
+	},
 )
 ```
 
@@ -1226,22 +1265,22 @@ chain inside the handler picks up the transform automatically.
 
 ```ts
 const repo = Repo.from(PgAdapter)
-  .resolve((s) => ({ table: s.name }))
-  .build()
+	.resolve((s) => ({ table: s.name }))
+	.build()
 
 // Middleware: wrap each request in repo.resolve
 app.use(async (req, _res, next) => {
-  const tenantId = req.header('x-tenant')!
-  await repo.resolve(
-    (cfg) => ({ ...cfg, table: `t_${tenantId}_${cfg.table}` }),
-    async () => next(),
-  )
+	const tenantId = req.header('x-tenant')!
+	await repo.resolve(
+		(cfg) => ({ ...cfg, table: `t_${tenantId}_${cfg.table}` }),
+		async () => next(),
+	)
 })
 
 // Handler — uses the module-imported `repo` directly
 async function getUser(req, res) {
-  const u = await repo.on(UserSchema).one().id(req.params.id).find()
-  // tenant transform applied automatically via the active repo.resolve scope
+	const u = await repo.on(UserSchema).one().id(req.params.id).find()
+	// tenant transform applied automatically via the active repo.resolve scope
 }
 ```
 
@@ -1365,18 +1404,37 @@ classification:
 
 ```ts
 class OrmValidationError extends EquippedError {
-  kind: 'validation' | 'conflicting-ops' | 'empty-group' | 'undeclared-op' | 'upsert-filter-incompatible' | 'aggregate' | 'changes' | 'query-shape'
-  schema: string
-  operation: 'createOne' | 'createMany' | 'findOne' | 'findMany' | 'paginate' | 'iterate' | 'updateOne' | 'updateMany' | 'updateByPk' | 'upsertOne' | 'aggregate'
-  failures: Array<{
-    opIndex?: number
-    rowIndex?: number
-    field?: string                                      // validation/query-shape: offending schema field
-    alias?: string                                      // aggregate-only: offending alias / group-key name
-    option?: 'limit' | 'offset' | 'page' | 'batchSize'   // query-shape-only: offending query option
-    preload?: string                                    // query-shape-only: offending preload path or relation name
-    cause: PipeError | string
-  }>
+	kind:
+		| 'validation'
+		| 'conflicting-ops'
+		| 'empty-group'
+		| 'undeclared-op'
+		| 'upsert-filter-incompatible'
+		| 'aggregate'
+		| 'changes'
+		| 'query-shape'
+	schema: string
+	operation:
+		| 'createOne'
+		| 'createMany'
+		| 'findOne'
+		| 'findMany'
+		| 'paginate'
+		| 'iterate'
+		| 'updateOne'
+		| 'updateMany'
+		| 'updateByPk'
+		| 'upsertOne'
+		| 'aggregate'
+	failures: Array<{
+		opIndex?: number
+		rowIndex?: number
+		field?: string // validation/query-shape: offending schema field
+		alias?: string // aggregate-only: offending alias / group-key name
+		option?: 'limit' | 'offset' | 'page' | 'batchSize' // query-shape-only: offending query option
+		preload?: string // query-shape-only: offending preload path or relation name
+		cause: PipeError | string
+	}>
 }
 ```
 
@@ -1523,10 +1581,10 @@ parent schema at the type level with zero runtime cost:
 
 ```ts
 class Field<T = unknown, Name extends string = string, S extends AnySchema = AnySchema> {
-  declare readonly __valueType?: T
-  declare readonly __schema?: S      // phantom; type-only
-  readonly name: Name
-  readonly path: readonly string[]
+	declare readonly __valueType?: T
+	declare readonly __schema?: S // phantom; type-only
+	readonly name: Name
+	readonly path: readonly string[]
 }
 ```
 
@@ -1546,15 +1604,12 @@ The source variable is a const in the outer lexical scope, so FK refs that
 point at the source (`belongsTo`'s FK) reference it directly:
 
 ```ts
-const UserSchema = Schema.from('users')
-  .pk('id', v.string())
-  .field('orgId', v.string())
-  .build()
+const UserSchema = Schema.from('users').pk('id', v.string()).field('orgId', v.string()).build()
 
 const UserRels = Relations.from(UserSchema)
-  .hasMany('posts', PostSchema.fields.userId)
-  .belongsTo('org', UserSchema.fields.orgId, OrgSchema)
-  .build()
+	.hasMany('posts', PostSchema.fields.userId)
+	.belongsTo('org', UserSchema.fields.orgId, OrgSchema)
+	.build()
 ```
 
 There is no "source binding" alias — the source is the same variable users
@@ -1598,9 +1653,7 @@ A **self-referential relation** is a relation to the same schema as the source
 schema as both source and target:
 
 ```ts
-const UserRels = Relations.from(UserSchema)
-  .belongsTo('mgr', UserSchema.fields.managerId, UserSchema)
-  .build()
+const UserRels = Relations.from(UserSchema).belongsTo('mgr', UserSchema.fields.managerId, UserSchema).build()
 ```
 
 ### 9.6 Schema relations-agnosticism rule
@@ -1619,19 +1672,17 @@ declarations would force in JS without macros.
 
 ```ts
 const PostTagSchema = Schema.from('post_tags')
-  .pk('id', v.string(), () => 'pt-id')
-  .field('postId', v.string())
-  .field('tagId', v.string())
-  .build()
+	.pk('id', v.string(), () => 'pt-id')
+	.field('postId', v.string())
+	.field('tagId', v.string())
+	.build()
 
-const PostRels = Relations.from(PostSchema)
-  .hasMany('postTags', PostTagSchema.fields.postId)
-  .build()
+const PostRels = Relations.from(PostSchema).hasMany('postTags', PostTagSchema.fields.postId).build()
 
 const PostTagRels = Relations.from(PostTagSchema)
-  .belongsTo('post', PostTagSchema.fields.postId, PostSchema)
-  .belongsTo('tag', PostTagSchema.fields.tagId, TagSchema)
-  .build()
+	.belongsTo('post', PostTagSchema.fields.postId, PostSchema)
+	.belongsTo('tag', PostTagSchema.fields.tagId, TagSchema)
+	.build()
 ```
 
 Users access tags from a post via a **two-step preload** (`post.postTags[].tag`).
@@ -1673,15 +1724,49 @@ update op at the type level. Each branch of the union is an **op variant**:
 discriminant — a `kind: 'set' | 'inc' | ...` field — that names the op.
 
 ```ts
-interface SetOp<S>   { kind: 'set';   values: Partial<SchemaInput<S>> }
-interface IncOp<S>   { kind: 'inc';   field: NumericFieldOf<S>; value: number }
-interface MulOp<S>   { kind: 'mul';   field: NumericFieldOf<S>; value: number }
-interface MinOp<S>   { kind: 'min';   field: ComparableFieldOf<S>; value: unknown }
-interface MaxOp<S>   { kind: 'max';   field: ComparableFieldOf<S>; value: unknown }
-interface UnsetOp<S> { kind: 'unset'; field: OptionalFieldOf<S> }
-interface PushOp<S>  { kind: 'push';  field: ArrayFieldOf<S>; value: unknown | unknown[] }
-interface PullOp<S>  { kind: 'pull';  field: ArrayFieldOf<S>; value: unknown | unknown[] }
-interface PatchOp<S> { kind: 'patch'; field: ObjectFieldOf<S>; value: Partial<unknown> }
+interface SetOp<S> {
+	kind: 'set'
+	values: Partial<SchemaInput<S>>
+}
+interface IncOp<S> {
+	kind: 'inc'
+	field: NumericFieldOf<S>
+	value: number
+}
+interface MulOp<S> {
+	kind: 'mul'
+	field: NumericFieldOf<S>
+	value: number
+}
+interface MinOp<S> {
+	kind: 'min'
+	field: ComparableFieldOf<S>
+	value: unknown
+}
+interface MaxOp<S> {
+	kind: 'max'
+	field: ComparableFieldOf<S>
+	value: unknown
+}
+interface UnsetOp<S> {
+	kind: 'unset'
+	field: OptionalFieldOf<S>
+}
+interface PushOp<S> {
+	kind: 'push'
+	field: ArrayFieldOf<S>
+	value: unknown | unknown[]
+}
+interface PullOp<S> {
+	kind: 'pull'
+	field: ArrayFieldOf<S>
+	value: unknown | unknown[]
+}
+interface PatchOp<S> {
+	kind: 'patch'
+	field: ObjectFieldOf<S>
+	value: Partial<unknown>
+}
 ```
 
 `UpdateOp<S, A>` resolves a variant to the variant type if `A['updateOps']`
@@ -1709,13 +1794,13 @@ mechanic as narrowed-out methods (§3.3), at the helper layer.
 Each op variant constrains which fields it accepts via field-category type
 helpers:
 
-| Helper | Accepted fields | Used by |
-|---|---|---|
-| `NumericFieldOf<S>` | numeric fields | `IncOp`, `MulOp` |
-| `ComparableFieldOf<S>` | comparable fields | `MinOp`, `MaxOp` |
-| `OptionalFieldOf<S>` | optional fields | `UnsetOp` |
-| `ArrayFieldOf<S>` | array fields | `PushOp`, `PullOp` |
-| `ObjectFieldOf<S>` | object fields | `PatchOp` |
+| Helper                 | Accepted fields   | Used by            |
+| ---------------------- | ----------------- | ------------------ |
+| `NumericFieldOf<S>`    | numeric fields    | `IncOp`, `MulOp`   |
+| `ComparableFieldOf<S>` | comparable fields | `MinOp`, `MaxOp`   |
+| `OptionalFieldOf<S>`   | optional fields   | `UnsetOp`          |
+| `ArrayFieldOf<S>`      | array fields      | `PushOp`, `PullOp` |
+| `ObjectFieldOf<S>`     | object fields     | `PatchOp`          |
 
 The **field-category constraint rule** locks this asymmetry: each op-variant's
 field arg is constrained to fields of a specific category.
@@ -1834,14 +1919,14 @@ filter arg. The **filter normalisation contract** has six **normalisation
 invariants** — three enforced and three inverted (the package guarantees it
 does NOT do them):
 
-| Invariant | Name | Enforced or inverted |
-|---|---|---|
-| A | **field-existence invariant** | enforced (every `Field<T>`-resolved name must exist in the schema; unknown names rejected at boundary) |
-| B | **op-closure invariant** | enforced for free (filter ops are an enum) |
-| C | **no-runtime-value-coercion invariant** | inverted (the package does not run pipes on filter values; type-only contract) |
-| D | **no-tree-flattening invariant** | inverted (the adapter receives the tree shape verbatim) |
-| E | **empty-combinator rejection invariant** | enforced at builder time (preempted before reaching the boundary) |
-| F | **logical-name invariant** | enforced (`Filter.field` is the schema-declared field name; physical mapping is adapter responsibility) |
+| Invariant | Name                                     | Enforced or inverted                                                                                    |
+| --------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| A         | **field-existence invariant**            | enforced (every `Field<T>`-resolved name must exist in the schema; unknown names rejected at boundary)  |
+| B         | **op-closure invariant**                 | enforced for free (filter ops are an enum)                                                              |
+| C         | **no-runtime-value-coercion invariant**  | inverted (the package does not run pipes on filter values; type-only contract)                          |
+| D         | **no-tree-flattening invariant**         | inverted (the adapter receives the tree shape verbatim)                                                 |
+| E         | **empty-combinator rejection invariant** | enforced at builder time (preempted before reaching the boundary)                                       |
+| F         | **logical-name invariant**               | enforced (`Filter.field` is the schema-declared field name; physical mapping is adapter responsibility) |
 
 ### 11.7 No-FilterGroup-raw rule
 
@@ -1866,13 +1951,14 @@ on the adapter, reached via the schema-bound chain.
 ### 12.1 API shape
 
 ```ts
-await repo.on(UserSchema)
-  .one()
-  .where(q => q.eq(UserSchema.fields.email, 'a@b.com'))
-  .upsert({
-    create: { name: 'Alice', email: 'a@b.com' },
-    ops: [set({ lastSeen: Date.now() }), inc(UserSchema.fields.loginCount, 1)],
-  })
+await repo
+	.on(UserSchema)
+	.one()
+	.where((q) => q.eq(UserSchema.fields.email, 'a@b.com'))
+	.upsert({
+		create: { name: 'Alice', email: 'a@b.com' },
+		ops: [set({ lastSeen: Date.now() }), inc(UserSchema.fields.loginCount, 1)],
+	})
 ```
 
 Three argument roles:
@@ -1948,12 +2034,12 @@ their upsert-compatible filter shapes in the adapter's README.
 Cross-adapter compatibility table (informational; adapter implementations
 must match):
 
-| Adapter | Upsert-compatible filter |
-|---|---|
-| MongoDB | Any filter (native `findOneAndUpdate` with `upsert: true`) |
+| Adapter    | Upsert-compatible filter                                                           |
+| ---------- | ---------------------------------------------------------------------------------- |
+| MongoDB    | Any filter (native `findOneAndUpdate` with `upsert: true`)                         |
 | PostgreSQL | Single `eq` on a UNIQUE-indexed column (compiles to `ON CONFLICT (col) DO UPDATE`) |
-| SQLite | Same as PG |
-| Firebase | Single `eq` on the PK field (compiles to `setDoc(ref, ..., { merge: true })`) |
+| SQLite     | Same as PG                                                                         |
+| Firebase   | Single `eq` on the PK field (compiles to `setDoc(ref, ..., { merge: true })`)      |
 
 ### 12.5 Bulk upsert and other exclusions
 
@@ -1987,19 +2073,19 @@ of this document, or is a fundamental non-goal. Layer-local rules stay in
 their layer-section. The **spans-three-sections rule** is the admission
 criterion: a rule earns a place here if it crosses three or more sections.
 
-| # | Principle | Statement |
-|---|---|---|
-| 1 | **Builder-chain rule** | Static-factory builder chains (`X.from(args).step()...build()`) are the canonical shape for all artifact construction; direct calls for invocation/operations. (§2.2) |
-| 2 | **No-emulation rule** | The framework never emulates a missing op or method client-side. Adapter-specific power lives in the adapter's `raw` method only. (§3.4) |
-| 3 | **Closed-set rule** | Adapters subset the canonical sets (filter ops, update ops, field types, relation kinds); they cannot extend them. Extension requires a package version bump. (§4.4) |
-| 4 | **Type-system-is-the-contract rule** | Capability mismatches are compile errors wherever feasible, not runtime throws. The TypeScript surface is the load-bearing contract. |
-| 5 | **Validate-once rule** | Validation runs exactly once, at the Repo-entry boundary; adapters receive validated input and never re-validate. (§7.1) |
-| 6 | **Always-throw-never-silently-drop rule** | Empty filter groups, missing fields, unknown ops, conflicting ops fail loudly. No silent short-circuits, no "match-all" / "match-none" fallbacks at boundaries. |
-| 7 | **No-runtime-value-coercion rule** | Filter values are a TS-only contract. The framework does not run pipes on filter values. (§11.6 invariant C) |
-| 8 | **Adapter-owned tx propagation rule** | Tx-context propagation lives entirely inside the adapter, not in the framework. (§8.2) |
-| 9 | **Schema relations-agnosticism rule** | Schemas contain no relational information. All relational concerns live in the Relations artifact. (§9.6) |
-| 10 | **Single-Repo rule** | A Repo handles all schemas it can compatibility-narrow against. No registry, no per-Repo derivation, no per-schema typed Repos. (§6.7) |
-| 11 | **Forward-only migrations rule** | The `Migrator` runs migrations forward only. There is no `down()`, no auto-inverse, no reversibility metadata in the `Change` algebra. Mistakes are corrected by writing additional forward migrations or by manual recovery. (§16) |
+| #   | Principle                                 | Statement                                                                                                                                                                                                                           |
+| --- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Builder-chain rule**                    | Static-factory builder chains (`X.from(args).step()...build()`) are the canonical shape for all artifact construction; direct calls for invocation/operations. (§2.2)                                                               |
+| 2   | **No-emulation rule**                     | The framework never emulates a missing op or method client-side. Adapter-specific power lives in the adapter's `raw` method only. (§3.4)                                                                                            |
+| 3   | **Closed-set rule**                       | Adapters subset the canonical sets (filter ops, update ops, field types, relation kinds); they cannot extend them. Extension requires a package version bump. (§4.4)                                                                |
+| 4   | **Type-system-is-the-contract rule**      | Capability mismatches are compile errors wherever feasible, not runtime throws. The TypeScript surface is the load-bearing contract.                                                                                                |
+| 5   | **Validate-once rule**                    | Validation runs exactly once, at the Repo-entry boundary; adapters receive validated input and never re-validate. (§7.1)                                                                                                            |
+| 6   | **Always-throw-never-silently-drop rule** | Empty filter groups, missing fields, unknown ops, conflicting ops fail loudly. No silent short-circuits, no "match-all" / "match-none" fallbacks at boundaries.                                                                     |
+| 7   | **No-runtime-value-coercion rule**        | Filter values are a TS-only contract. The framework does not run pipes on filter values. (§11.6 invariant C)                                                                                                                        |
+| 8   | **Adapter-owned tx propagation rule**     | Tx-context propagation lives entirely inside the adapter, not in the framework. (§8.2)                                                                                                                                              |
+| 9   | **Schema relations-agnosticism rule**     | Schemas contain no relational information. All relational concerns live in the Relations artifact. (§9.6)                                                                                                                           |
+| 10  | **Single-Repo rule**                      | A Repo handles all schemas it can compatibility-narrow against. No registry, no per-Repo derivation, no per-schema typed Repos. (§6.7)                                                                                              |
+| 11  | **Forward-only migrations rule**          | The `Migrator` runs migrations forward only. There is no `down()`, no auto-inverse, no reversibility metadata in the `Change` algebra. Mistakes are corrected by writing additional forward migrations or by manual recovery. (§16) |
 
 ---
 
@@ -2014,25 +2100,25 @@ in-tree user need surfaces with no acceptable workaround through `raw`.
 Speculative additions (e.g. "someone might want bulk upsert someday") are
 rejected. The bar for promotion is concrete, not speculative.
 
-| # | Out-of-scope item | Statement | Escape |
-|---|---|---|---|
-| 1 | **Composite foreign keys** | Multi-column FKs not supported. Single FK only. | Surrogate UUIDs + composite UNIQUE indexes; `raw` for genuine cases. |
-| 2 | **Composite primary keys** | Multi-column PKs not supported. Single PK only. | Same as composite FKs. |
-| 3 | **`'binary'` field type** | Binary blobs (Uint8Array / Buffer) not in the canonical field-type set. | Encode as base64 string; or `raw`. |
-| 4 | **`'bigint'` field type** | Arbitrary-precision integers not in the canonical field-type set. | Encode as string; or `raw`. |
-| 5 | **Bulk upsert** | `upsertMany` not supported. Single-document upsert only. | `raw` (Mongo `bulkWrite`, PG bulk `ON CONFLICT`). |
-| 6 | **Adapter-typed extensions** | Adapter-contributed typed namespaces on the Repo (e.g. `repo.pg.fts`) not supported. | Adapter's `raw` method. |
-| 7 | **Migrations / DDL** | Schema migration, table creation, DDL operations out of scope. | User-managed (dedicated migration tools); `raw` for ad-hoc DDL. |
-| 8 | **Aggregates** | `count` / `sum` / `avg` / `groupBy` out of scope. | `raw`. |
-| 9 | **Change-feeds / CDC** | Mongo change streams, Firebase realtime listeners, Debezium-style CDC, and realtime subscriptions remain out of scope. Bounded row iteration is in scope via `AllBuilder.iterate()` (§5.10). | `raw` for change-feeds / CDC. |
-| 10 | **Server-side joins** | Joined queries (`findManyJoined`, PG `JOIN`, Mongo `$lookup`) out of scope. Preloads run package-side via `findMany`. | `raw`. |
-| 11 | **Per-field adapter config** | Per-field adapter-specific config (PG types, Mongo index hints) out of scope. | None — accept the constraint or use `raw`. |
-| 12 | **Schema-side adapter binding** | Schemas are fully adapter-agnostic; binding to an adapter happens at Repo construction. No `Schema.boundTo(Adapter)`. | Adapter binding is a Repo concern; use multiple Repos for schemas needing different adapters. |
-| 13 | **Two-phase commit / distributed tx / sagas** | XA, 2PC, saga primitives out of scope. Single-DB transactions only. | None. |
-| 14 | **Session options** | `session(fn, options)` overload not supported (covers isolation, retry, deadlock, nesting). | None for retry/deadlock; `raw('BEGIN ISOLATION LEVEL ...')` for isolation. |
-| 15 | **Query-level isolation** | No `isolation` arg on `session()`. Each adapter uses its DB's default. | `raw('BEGIN ISOLATION LEVEL ...')` or adapter-specific session config. |
-| 16 | **Migration rollback (`down()`)** | The migrations runtime is forward-only by design (§16). No auto-inverse, no `from:` payloads, no reversibility metadata. | Write a new forward fix-it migration; for local dev, manually delete the tracker row from the adapter's storage. |
-| 17 | **Migration codegen long-tail** | The §16.11 codegen ships in v1 but is intentionally narrow: no auto-rename detection, no auto-FK derivation from `Relations`, no file emission, no long-tail Change variants (CHECK constraints, partial indexes, GIN/GIST/TTL/text), no historical-snapshot drift detection. | Post-edit the codegen's returned `Change[]` to use `renameField`/`renameTable`; hand-author FK Changes when Relations change; serialize the returned `Migration<A>` to a file in user code; use `execute` for long-tail features. |
+| #   | Out-of-scope item                             | Statement                                                                                                                                                                                                                                                                     | Escape                                                                                                                                                                                                                            |
+| --- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Composite foreign keys**                    | Multi-column FKs not supported. Single FK only.                                                                                                                                                                                                                               | Surrogate UUIDs + composite UNIQUE indexes; `raw` for genuine cases.                                                                                                                                                              |
+| 2   | **Composite primary keys**                    | Multi-column PKs not supported. Single PK only.                                                                                                                                                                                                                               | Same as composite FKs.                                                                                                                                                                                                            |
+| 3   | **`'binary'` field type**                     | Binary blobs (Uint8Array / Buffer) not in the canonical field-type set.                                                                                                                                                                                                       | Encode as base64 string; or `raw`.                                                                                                                                                                                                |
+| 4   | **`'bigint'` field type**                     | Arbitrary-precision integers not in the canonical field-type set.                                                                                                                                                                                                             | Encode as string; or `raw`.                                                                                                                                                                                                       |
+| 5   | **Bulk upsert**                               | `upsertMany` not supported. Single-document upsert only.                                                                                                                                                                                                                      | `raw` (Mongo `bulkWrite`, PG bulk `ON CONFLICT`).                                                                                                                                                                                 |
+| 6   | **Adapter-typed extensions**                  | Adapter-contributed typed namespaces on the Repo (e.g. `repo.pg.fts`) not supported.                                                                                                                                                                                          | Adapter's `raw` method.                                                                                                                                                                                                           |
+| 7   | **Migrations / DDL**                          | Schema migration, table creation, DDL operations out of scope.                                                                                                                                                                                                                | User-managed (dedicated migration tools); `raw` for ad-hoc DDL.                                                                                                                                                                   |
+| 8   | **Aggregates**                                | `count` / `sum` / `avg` / `groupBy` out of scope.                                                                                                                                                                                                                             | `raw`.                                                                                                                                                                                                                            |
+| 9   | **Change-feeds / CDC**                        | Mongo change streams, Firebase realtime listeners, Debezium-style CDC, and realtime subscriptions remain out of scope. Bounded row iteration is in scope via `AllBuilder.iterate()` (§5.10).                                                                                  | `raw` for change-feeds / CDC.                                                                                                                                                                                                     |
+| 10  | **Server-side joins**                         | Joined queries (`findManyJoined`, PG `JOIN`, Mongo `$lookup`) out of scope. Preloads run package-side via `findMany`.                                                                                                                                                         | `raw`.                                                                                                                                                                                                                            |
+| 11  | **Per-field adapter config**                  | Per-field adapter-specific config (PG types, Mongo index hints) out of scope.                                                                                                                                                                                                 | None — accept the constraint or use `raw`.                                                                                                                                                                                        |
+| 12  | **Schema-side adapter binding**               | Schemas are fully adapter-agnostic; binding to an adapter happens at Repo construction. No `Schema.boundTo(Adapter)`.                                                                                                                                                         | Adapter binding is a Repo concern; use multiple Repos for schemas needing different adapters.                                                                                                                                     |
+| 13  | **Two-phase commit / distributed tx / sagas** | XA, 2PC, saga primitives out of scope. Single-DB transactions only.                                                                                                                                                                                                           | None.                                                                                                                                                                                                                             |
+| 14  | **Session options**                           | `session(fn, options)` overload not supported (covers isolation, retry, deadlock, nesting).                                                                                                                                                                                   | None for retry/deadlock; `raw('BEGIN ISOLATION LEVEL ...')` for isolation.                                                                                                                                                        |
+| 15  | **Query-level isolation**                     | No `isolation` arg on `session()`. Each adapter uses its DB's default.                                                                                                                                                                                                        | `raw('BEGIN ISOLATION LEVEL ...')` or adapter-specific session config.                                                                                                                                                            |
+| 16  | **Migration rollback (`down()`)**             | The migrations runtime is forward-only by design (§16). No auto-inverse, no `from:` payloads, no reversibility metadata.                                                                                                                                                      | Write a new forward fix-it migration; for local dev, manually delete the tracker row from the adapter's storage.                                                                                                                  |
+| 17  | **Migration codegen long-tail**               | The §16.11 codegen ships in v1 but is intentionally narrow: no auto-rename detection, no auto-FK derivation from `Relations`, no file emission, no long-tail Change variants (CHECK constraints, partial indexes, GIN/GIST/TTL/text), no historical-snapshot drift detection. | Post-edit the codegen's returned `Change[]` to use `renameField`/`renameTable`; hand-author FK Changes when Relations change; serialize the returned `Migration<A>` to a file in user code; use `execute` for long-tail features. |
 
 ---
 
@@ -2062,12 +2148,12 @@ The library owns a fixed `EventLogSchema` exported from
 
 ```ts
 const EventLogSchema = Schema.from('event_log')
-  .pk('key', v.string())                                // time-sortable id
-  .field('name', v.string())                            // handler name
-  .field('ts', v.number())                              // ms timestamp
-  .field('body', v.object({}).passthrough())            // validated payload
-  .field('by', v.optional(v.string()))                  // who fired (nullable)
-  .build()
+	.pk('key', v.string()) // time-sortable id
+	.field('name', v.string()) // handler name
+	.field('ts', v.number()) // ms timestamp
+	.field('body', v.object({}).passthrough()) // validated payload
+	.field('by', v.optional(v.string())) // who fired (nullable)
+	.build()
 ```
 
 Users wire `EventLogSchema` into their `Repo`'s resolver alongside their own
@@ -2082,13 +2168,16 @@ handler:
 
 ```ts
 const fireUserSignup = log.handler('user.signup', {
-  pipe: v.object({ email: v.string(), name: v.string() }),
-  handle: async (payload, evCtx) => {
-    await repo.on(UserSchema).one().create({
-      ...payload,
-      createdAt: evCtx.at.getTime(),    // see §15.6 replay determinism
-    })
-  },
+	pipe: v.object({ email: v.string(), name: v.string() }),
+	handle: async (payload, evCtx) => {
+		await repo
+			.on(UserSchema)
+			.one()
+			.create({
+				...payload,
+				createdAt: evCtx.at.getTime(), // see §15.6 replay determinism
+			})
+	},
 })
 
 await fireUserSignup({ email: 'a@b.com', name: 'Alice' }, { by: 'admin-42' })
@@ -2113,13 +2202,13 @@ The `EventContext` is the second arg passed to `handle`:
 
 ```ts
 type EventContext = {
-  key: string                  // the event row's PK
-  name: string                 // the handler name
-  ts: number                   // ms timestamp the row was persisted with
-  body: unknown                // the validated payload (same as handle's first arg)
-  by: string | null            // who fired
-  at: Date                     // ts as a Date — convenience
-  firstRun: boolean            // true on initial fire; false during replay/rerun
+	key: string // the event row's PK
+	name: string // the handler name
+	ts: number // ms timestamp the row was persisted with
+	body: unknown // the validated payload (same as handle's first arg)
+	by: string | null // who fired
+	at: Date // ts as a Date — convenience
+	firstRun: boolean // true on initial fire; false during replay/rerun
 }
 ```
 
@@ -2150,8 +2239,8 @@ failed handlers.
 **Replay-determinism rule.** Field generators that produce non-deterministic
 values (`onCreate: () => Date.now()`, `onCreate: () => crypto.randomUUID()`)
 will produce different values on first-run vs. replay. Rows persisted from
-inside an EventLog handler that rely on such generators will *diverge across
-replay* — `createdAt` will differ, PKs will differ, downstream lookups will
+inside an EventLog handler that rely on such generators will _diverge across
+replay_ — `createdAt` will differ, PKs will differ, downstream lookups will
 break.
 
 The library does **not** introduce a `GeneratorContext`, a `repo.with()`
@@ -2193,9 +2282,9 @@ throws an `OrmReplayError` (sibling of `OrmValidationError`,
 
 ```ts
 class OrmReplayError extends EquippedError {
-  key: string                   // the offending event's key
-  name: string                  // the handler name
-  cause: unknown                // the original throw
+	key: string // the offending event's key
+	name: string // the handler name
+	cause: unknown // the original throw
 }
 ```
 
@@ -2245,16 +2334,16 @@ scope; codegen ("B") is deferred — see `docs/orm/TODO.md`. See ADR
 
 ### 16.1 Migration unit
 
-A **migration** is a plain typed object — *not* a builder-chain artifact.
+A **migration** is a plain typed object — _not_ a builder-chain artifact.
 §1.5 precedent (no 5th declarative artifact for things that are morally
 typed dicts of fields) applies; the once-per-step uniqueness guard buys
 nothing here.
 
 ```ts
 type Migration<A extends OrmAdapter> = {
-  id: string                                       // unique, lex-sortable
-  changes: ReadonlyArray<ChangeFor<A>>
-  tx?: boolean                                     // default true
+	id: string // unique, lex-sortable
+	changes: ReadonlyArray<ChangeFor<A>>
+	tx?: boolean // default true
 }
 ```
 
@@ -2263,12 +2352,12 @@ Vocabulary:
 - The **migration id** is a non-empty string the user picks. Lex order is
   execution order. Convention is timestamp-prefix (`20260509120000-add-users`)
   or counter (`0001-add-users`); the framework enforces neither — only
-  *unique within a Migrator's `.migrations(...)` array*.
+  _unique within a Migrator's `.migrations(...)` array_.
 - The **changes array** is the migration's body. Empty arrays are allowed
   (no-op baseline migrations).
 - The **tx flag** opts out of the per-migration session wrap — needed for
   ops that can't run inside a tx (PG `CREATE INDEX CONCURRENTLY`, `ALTER
-  TYPE ADD VALUE`, large data backfills). Default `true`.
+TYPE ADD VALUE`, large data backfills). Default `true`.
 
 ### 16.2 Change algebra (the canonical change-variant set)
 
@@ -2278,25 +2367,30 @@ A **change** is one entry in a migration's `changes` array. The
 
 ```ts
 type Change<A extends OrmAdapter> =
-  | { kind: 'createTable'; name: string; pk: { name; type: A['supportedFieldTypes'][number] }; fields: FieldSpec<A>[] }
-  | { kind: 'dropTable'; name: string }
-  | { kind: 'addField'; table: string; field: FieldSpec<A> }
-  | { kind: 'dropField'; table: string; name: string }
-  | { kind: 'modifyField'; table: string; name: string; to: FieldSpec<A> }
-  | { kind: 'renameTable'; from: string; to: string }
-  | { kind: 'renameField'; table: string; from: string; to: string }
-  | { kind: 'addIndex'; table: string; on: ReadonlyArray<string>; unique?: boolean; name?: string }
-  | { kind: 'dropIndex'; name: string }
-  | { kind: 'addForeignKey'; table; on: string; references: { table; column }; onDelete?; onUpdate?; name? }
-  | { kind: 'dropForeignKey'; table: string; name: string }
-  | { kind: 'execute'; up: (repo: Repo) => Promise<void> }
+	| {
+			kind: 'createTable'
+			name: string
+			pk: { name; type: A['supportedFieldTypes'][number] }
+			fields: FieldSpec<A>[]
+	  }
+	| { kind: 'dropTable'; name: string }
+	| { kind: 'addField'; table: string; field: FieldSpec<A> }
+	| { kind: 'dropField'; table: string; name: string }
+	| { kind: 'modifyField'; table: string; name: string; to: FieldSpec<A> }
+	| { kind: 'renameTable'; from: string; to: string }
+	| { kind: 'renameField'; table: string; from: string; to: string }
+	| { kind: 'addIndex'; table: string; on: ReadonlyArray<string>; unique?: boolean; name?: string }
+	| { kind: 'dropIndex'; name: string }
+	| { kind: 'addForeignKey'; table; on: string; references: { table; column }; onDelete?; onUpdate?; name? }
+	| { kind: 'dropForeignKey'; table: string; name: string }
+	| { kind: 'execute'; up: (repo: Repo) => Promise<void> }
 
 type FieldSpec<A extends OrmAdapter> = {
-  name: string
-  type: A['supportedFieldTypes'][number]            // §4.3 canonical set, narrowed per adapter
-  nullable?: boolean                                // default false
-  default?: string | number | boolean | null        // DB-side literal only
-  unique?: boolean
+	name: string
+	type: A['supportedFieldTypes'][number] // §4.3 canonical set, narrowed per adapter
+	nullable?: boolean // default false
+	default?: string | number | boolean | null // DB-side literal only
+	unique?: boolean
 }
 ```
 
@@ -2339,6 +2433,7 @@ const migrator = Migrator.from(repo)
 ```
 
 `.build()` prerequisites (per §2.6):
+
 - `.migrations(...)` was called (empty array is allowed).
 
 Migration registration is **explicit-array-only**. There is no filesystem
@@ -2348,7 +2443,7 @@ without payoff — there's no per-migration return value to import).
 
 The **`withoutLock` opt-out rule**: the builder step is a compile error
 unless the adapter doesn't declare `acquireMigrationLock`. Calling it
-when the adapter *does* declare locking is a type-system rejection —
+when the adapter _does_ declare locking is a type-system rejection —
 locking is the cluster-safety primitive and silently disabling it would
 violate §13 #6 always-throw-never-silently-drop.
 
@@ -2358,11 +2453,11 @@ The adapter declares two flat capability groups (§3.1):
 
 **Migration storage methods** (verb-first prefix):
 
-| Method | Required? | Purpose |
-|---|---|---|
-| `loadMigrations()` | yes (for any migrations) | returns applied `[{ id, appliedAt }]` |
-| `recordMigration(id, appliedAt)` | yes | marks one migration as applied |
-| `acquireMigrationLock<T>(fn)` | optional | wraps `fn` in cluster-safe lock; signature mirrors `session(fn)` (§8.1) |
+| Method                           | Required?                | Purpose                                                                 |
+| -------------------------------- | ------------------------ | ----------------------------------------------------------------------- |
+| `loadMigrations()`               | yes (for any migrations) | returns applied `[{ id, appliedAt }]`                                   |
+| `recordMigration(id, appliedAt)` | yes                      | marks one migration as applied                                          |
+| `acquireMigrationLock<T>(fn)`    | optional                 | wraps `fn` in cluster-safe lock; signature mirrors `session(fn)` (§8.1) |
 
 There is no `forgetMigration` — forward-only, no automatic un-record.
 Local-dev recovery is manual (delete the tracker row directly).
@@ -2371,35 +2466,35 @@ Local-dev recovery is manual (delete the tracker row directly).
 
 ```ts
 class PgAdapter extends configurable(pgConnPipe, OrmAdapter) {
-  // ... existing methods
+	// ... existing methods
 
-  // migration storage
-  async loadMigrations(): Promise<{ id: string; appliedAt: number }[]>
-  async recordMigration(id: string, appliedAt: number): Promise<void>
-  async acquireMigrationLock<T>(fn: () => Promise<T>): Promise<T>
+	// migration storage
+	async loadMigrations(): Promise<{ id: string; appliedAt: number }[]>
+	async recordMigration(id: string, appliedAt: number): Promise<void>
+	async acquireMigrationLock<T>(fn: () => Promise<T>): Promise<T>
 
-  // declarative variant renderers (full SQL set: 11 methods)
-  async applyCreateTable(change: CreateTableChange): Promise<void>
-  async applyDropTable(change: DropTableChange): Promise<void>
-  async applyAddField(change: AddFieldChange): Promise<void>
-  async applyDropField(change: DropFieldChange): Promise<void>
-  async applyModifyField(change: ModifyFieldChange): Promise<void>
-  async applyRenameTable(change: RenameTableChange): Promise<void>
-  async applyRenameField(change: RenameFieldChange): Promise<void>
-  async applyAddIndex(change: AddIndexChange): Promise<void>
-  async applyDropIndex(change: DropIndexChange): Promise<void>
-  async applyAddForeignKey(change: AddForeignKeyChange): Promise<void>
-  async applyDropForeignKey(change: DropForeignKeyChange): Promise<void>
+	// declarative variant renderers (full SQL set: 11 methods)
+	async applyCreateTable(change: CreateTableChange): Promise<void>
+	async applyDropTable(change: DropTableChange): Promise<void>
+	async applyAddField(change: AddFieldChange): Promise<void>
+	async applyDropField(change: DropFieldChange): Promise<void>
+	async applyModifyField(change: ModifyFieldChange): Promise<void>
+	async applyRenameTable(change: RenameTableChange): Promise<void>
+	async applyRenameField(change: RenameFieldChange): Promise<void>
+	async applyAddIndex(change: AddIndexChange): Promise<void>
+	async applyDropIndex(change: DropIndexChange): Promise<void>
+	async applyAddForeignKey(change: AddForeignKeyChange): Promise<void>
+	async applyDropForeignKey(change: DropForeignKeyChange): Promise<void>
 }
 
 class MongoAdapter extends configurable(mongoConnPipe, OrmAdapter) {
-  // mongo subset
-  async loadMigrations(): Promise<{ id; appliedAt }[]>
-  async recordMigration(id, appliedAt): Promise<void>
-  // no acquireMigrationLock — Mongo session has no advisory-lock equivalent
-  async applyAddIndex(change): Promise<void>
-  async applyDropIndex(change): Promise<void>
-  // no applyCreateTable etc — Mongo is schemaless
+	// mongo subset
+	async loadMigrations(): Promise<{ id; appliedAt }[]>
+	async recordMigration(id, appliedAt): Promise<void>
+	// no acquireMigrationLock — Mongo session has no advisory-lock equivalent
+	async applyAddIndex(change): Promise<void>
+	async applyDropIndex(change): Promise<void>
+	// no applyCreateTable etc — Mongo is schemaless
 }
 ```
 
@@ -2455,6 +2550,7 @@ lex by `id`. Pending migrations have `applied: false` and no `appliedAt`;
 applied ones have `applied: true` and the recorded timestamp.
 
 The **id-targeting rules**:
+
 - `up({ to: id })` where `id` is unknown to the user's array → throw
   `OrmMigrationError({ phase: 'load', cause: 'unknown id' })` before
   lock acquired.
@@ -2469,16 +2565,14 @@ The runtime applies one **cluster-safe lock** for the entire run plus
 
 ```ts
 await adapter.acquireMigrationLock(async () => {
-  for (const m of pending) {
-    const wrap = (m.tx !== false && hasSession)
-      ? (fn) => repo.session(fn)
-      : (fn) => fn()
+	for (const m of pending) {
+		const wrap = m.tx !== false && hasSession ? (fn) => repo.session(fn) : (fn) => fn()
 
-    await wrap(async () => {
-      for (const c of m.changes) await applyChange(adapter, repo, c)
-      await adapter.recordMigration(m.id, Date.now())
-    })
-  }
+		await wrap(async () => {
+			for (const c of m.changes) await applyChange(adapter, repo, c)
+			await adapter.recordMigration(m.id, Date.now())
+		})
+	}
 })
 ```
 
@@ -2508,9 +2602,11 @@ should make them idempotent (which they often must be anyway — `CREATE
 INDEX CONCURRENTLY`, `ALTER TYPE ADD VALUE`).
 
 The **atomic-across-migrations escape** (mirrors §15.7 atomic-replay):
+
 ```ts
 await repo.session(() => migrator.up())
 ```
+
 Wraps the entire run in one outer tx (per §8.4 adapter-defines-nesting).
 Default behaviour stays per-migration; this is opt-in for callers who
 need all-or-nothing.
@@ -2528,13 +2624,14 @@ the same point.
 
 ```ts
 class OrmMigrationError extends EquippedError {
-  id: string                                                       // failed migration's id
-  phase: 'lock' | 'load' | 'session' | 'user' | 'record'           // where it threw
-  cause: unknown                                                   // original throw
+	id: string // failed migration's id
+	phase: 'lock' | 'load' | 'session' | 'user' | 'record' // where it threw
+	cause: unknown // original throw
 }
 ```
 
 `phase` discriminates failure location:
+
 - `'lock'` — `acquireMigrationLock` threw (cluster contention, network)
 - `'load'` — `loadMigrations` threw, OR an orphan id was detected, OR
   `up({ to })` named an unknown id
@@ -2563,17 +2660,17 @@ the **validate-once rule** (§7.1) applies to migrations too. The
 **`assertNormalisedChanges` function** walks every Change in every
 Migration and enforces:
 
-| # | Invariant | Enforced or inverted |
-|---|---|---|
-| A | **id-non-empty invariant** | enforced (every Migration has non-empty `id` string) |
-| B | **id-uniqueness invariant** | enforced (no two Migrations share an `id`) |
-| C | **field-type-supported invariant** | enforced (every `FieldSpec.type` ∈ `adapter.supportedFieldTypes`) — defense-in-depth for the compile-time §13 #4 guard |
-| D | **field-name-uniqueness invariant** | enforced (within a single `createTable.fields[]` no duplicate `name`; `pk.name` not in `fields[]`) |
-| E | **logical-name-non-empty invariant** | enforced (table/column/index names non-empty) |
-| F | **non-empty-on invariant** | enforced (`addIndex.on` and `addForeignKey.on` non-empty) |
-| G | **adapter-supports-variant invariant** | enforced (adapter has the corresponding `apply*` method) — defense-in-depth for the compile-time structural narrowing |
-| H | **changes-non-empty invariant** | inverted (a Migration with `changes: []` is allowed — no-op baseline migration) |
-| I | **collect-all rule** | enforced (per §7.5) — accumulate all failures, throw single `OrmValidationError` with `kind: 'changes'` |
+| #   | Invariant                              | Enforced or inverted                                                                                                   |
+| --- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| A   | **id-non-empty invariant**             | enforced (every Migration has non-empty `id` string)                                                                   |
+| B   | **id-uniqueness invariant**            | enforced (no two Migrations share an `id`)                                                                             |
+| C   | **field-type-supported invariant**     | enforced (every `FieldSpec.type` ∈ `adapter.supportedFieldTypes`) — defense-in-depth for the compile-time §13 #4 guard |
+| D   | **field-name-uniqueness invariant**    | enforced (within a single `createTable.fields[]` no duplicate `name`; `pk.name` not in `fields[]`)                     |
+| E   | **logical-name-non-empty invariant**   | enforced (table/column/index names non-empty)                                                                          |
+| F   | **non-empty-on invariant**             | enforced (`addIndex.on` and `addForeignKey.on` non-empty)                                                              |
+| G   | **adapter-supports-variant invariant** | enforced (adapter has the corresponding `apply*` method) — defense-in-depth for the compile-time structural narrowing  |
+| H   | **changes-non-empty invariant**        | inverted (a Migration with `changes: []` is allowed — no-op baseline migration)                                        |
+| I   | **collect-all rule**                   | enforced (per §7.5) — accumulate all failures, throw single `OrmValidationError` with `kind: 'changes'`                |
 
 Add `'changes'` to `OrmValidationError.kind` (§7.5). The failure entry
 shape extends with `migrationId` and `changeIndex`:
@@ -2641,6 +2738,7 @@ class OrmValidationError extends EquippedError {
   the next `.up()` may fail loud (`apply*` errors) but doesn't
   proactively detect drift. Drift detection is a B (codegen) concern
   — see `docs/orm/TODO.md`.
+
 ### 16.11 Migration codegen ("B" in the C-hybrid scope)
 
 The codegen subsystem produces a `ReadonlyArray<ChangeFor<A>>` from a
@@ -2666,13 +2764,10 @@ type error at the `.from(...)` call. Symmetric with §5.3
 `SchemaCompatible<A, S>`:
 
 ```ts
-type IntrospectableAdapter<A extends OrmAdapter> =
-  A extends { introspect(): Promise<DiscoveredSchema[]> } ? A : never
+type IntrospectableAdapter<A extends OrmAdapter> = A extends { introspect(): Promise<DiscoveredSchema[]> } ? A : never
 
 class MigrationCodegen {
-  static from<A extends OrmAdapter>(
-    repo: Repo<IntrospectableAdapter<A>>,
-  ): MigrationCodegenBuilder<A>
+	static from<A extends OrmAdapter>(repo: Repo<IntrospectableAdapter<A>>): MigrationCodegenBuilder<A>
 }
 ```
 
@@ -2690,10 +2785,13 @@ DB already matches target. The user wraps the result with their own
 
 ```ts
 const changes = await codegen.diff()
-if (!changes) { console.log('no changes'); return }
+if (!changes) {
+	console.log('no changes')
+	return
+}
 const migration: Migration<typeof adapter> = {
-  id: '20260509-add-nickname',                   // user-supplied
-  changes,
+	id: '20260509-add-nickname', // user-supplied
+	changes,
 }
 // User serializes `migration` to a file, holds in memory, etc.
 ```
@@ -2729,7 +2827,7 @@ no-file-emission decision (§16.13).
   (`gen_random_uuid()`) all stay in `execute` escape territory — same
   closed-set rule (§4.4) the runtime obeys.
 - **No drift detection beyond the natural diff.** v1 codegen produces a
-  diff *current → target*; if the DB has drifted from a prior migration
+  diff _current → target_; if the DB has drifted from a prior migration
   history, the diff reflects current state, not the drift. User reviews
   the emitted Changes and accepts/rejects. Drift detection that
   compares historical `from:` snapshots against the live DB is
@@ -2743,33 +2841,33 @@ Introspection returns one **DiscoveredSchema** per top-level container
 
 ```ts
 type DiscoveredField = {
-  name: string
-  type: FieldType                                // §4.3 canonical set
-  nullable: boolean
-  default?: string | number | boolean | null     // primitive only
-  unique?: boolean
+	name: string
+	type: FieldType // §4.3 canonical set
+	nullable: boolean
+	default?: string | number | boolean | null // primitive only
+	unique?: boolean
 }
 
 type DiscoveredIndex = {
-  name: string                                   // adapter-derived if originally auto-named
-  on: ReadonlyArray<string>
-  unique: boolean
+	name: string // adapter-derived if originally auto-named
+	on: ReadonlyArray<string>
+	unique: boolean
 }
 
 type DiscoveredForeignKey = {
-  name: string
-  on: string                                     // single column FK only — composite §14 #1
-  references: { table: string; column: string }
-  onDelete?: 'cascade' | 'restrict' | 'setNull' | 'noAction'
-  onUpdate?: 'cascade' | 'restrict' | 'setNull' | 'noAction'
+	name: string
+	on: string // single column FK only — composite §14 #1
+	references: { table: string; column: string }
+	onDelete?: 'cascade' | 'restrict' | 'setNull' | 'noAction'
+	onUpdate?: 'cascade' | 'restrict' | 'setNull' | 'noAction'
 }
 
 type DiscoveredSchema = {
-  name: string
-  pk?: { name: string; type: FieldType }         // absent for Mongo, etc.
-  fields: ReadonlyArray<DiscoveredField>          // empty for Mongo
-  indexes: ReadonlyArray<DiscoveredIndex>
-  foreignKeys: ReadonlyArray<DiscoveredForeignKey>  // empty for Mongo
+	name: string
+	pk?: { name: string; type: FieldType } // absent for Mongo, etc.
+	fields: ReadonlyArray<DiscoveredField> // empty for Mongo
+	indexes: ReadonlyArray<DiscoveredIndex>
+	foreignKeys: ReadonlyArray<DiscoveredForeignKey> // empty for Mongo
 }
 ```
 
@@ -2817,9 +2915,9 @@ Changes that fail at apply time. §13 #6 always-throw-never-silently-drop.
 
 ```ts
 class OrmIntrospectionError extends EquippedError {
-  adapter: string
-  table: string                                  // the offending table/collection name
-  cause: unknown                                 // unrecognized DB type, or driver error
+	adapter: string
+	table: string // the offending table/collection name
+	cause: unknown // unrecognized DB type, or driver error
 }
 ```
 
@@ -2833,9 +2931,9 @@ inputs always produce the same `Change[]` output:
 
 ```ts
 function diffSchemas<A extends OrmAdapter>(
-  adapter: A,
-  target: ReadonlyArray<AnySchema>,
-  current: ReadonlyArray<DiscoveredSchema>,
+	adapter: A,
+	target: ReadonlyArray<AnySchema>,
+	current: ReadonlyArray<DiscoveredSchema>,
 ): ReadonlyArray<ChangeFor<A>>
 ```
 

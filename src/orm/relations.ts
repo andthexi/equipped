@@ -1,5 +1,5 @@
-import type { AnyField, Field } from './fields'
-import type { AnySchema, SchemaOutput } from './schema'
+import type { AnyField, Field } from './fields.js'
+import type { AnySchema, SchemaOutput } from './schema.js'
 
 type SchemaPkValueType<S extends AnySchema> = NonNullable<S['pkField']['__valueType']>
 type FkPkMatch<S extends AnySchema, FK extends AnyField> =
@@ -39,7 +39,11 @@ export class OneRelation<
 export type AnyRelDef = ManyRelation<string, Record<string, any>, any> | OneRelation<string, Record<string, any>, any>
 
 export type ResolveRelDef<D extends AnyRelDef> =
-	D extends OneRelation<any, infer TOut, any> ? TOut | null : D extends ManyRelation<any, infer TOut, any> ? TOut[] : never
+	D extends OneRelation<any, infer TOut, any>
+		? TOut | null
+		: D extends ManyRelation<any, infer TOut, any>
+			? TOut[]
+			: never
 
 export interface NestedPreloadDef<D extends AnyRelDef = AnyRelDef> {
 	def: D
@@ -55,7 +59,11 @@ type NodeName<N extends AnyPreloadDef> = N extends AnyRelDef
 		? D['name']
 		: never
 
-type ResolveRelDefWithNested<D extends AnyRelDef, P extends readonly AnyPreloadDef[], Depth extends readonly unknown[]> = Depth extends []
+type ResolveRelDefWithNested<
+	D extends AnyRelDef,
+	P extends readonly AnyPreloadDef[],
+	Depth extends readonly unknown[],
+> = Depth extends []
 	? ResolveRelDef<D>
 	: D extends OneRelation<any, infer TOut, any>
 		? (TOut & PreloadedMap<P, Shift<Depth>>) | null
@@ -72,7 +80,10 @@ type NodeValue<N extends AnyPreloadDef, Depth extends readonly unknown[]> =
 				? ResolveRelDefWithNested<D, P, Depth>
 				: never
 
-export type PreloadedMap<P extends readonly AnyPreloadDef[], Depth extends readonly unknown[] = [1, 2, 3, 4, 5]> = Depth extends []
+export type PreloadedMap<
+	P extends readonly AnyPreloadDef[],
+	Depth extends readonly unknown[] = [1, 2, 3, 4, 5],
+> = Depth extends []
 	? Record<never, never>
 	: {
 			[N in P[number] as NodeName<N>]: NodeValue<N, Depth>
@@ -101,7 +112,10 @@ class RelationsBuilder<S extends AnySchema, R extends Record<string, AnyRelDef> 
 		}
 	> {
 		const target = (fk as any).__schema as AnySchema
-		const nextDefs = { ...this.#defs, [name]: new ManyRelation(name, this.#source, target, fk as any, this.#source.pkField) }
+		const nextDefs = {
+			...this.#defs,
+			[name]: new ManyRelation(name, this.#source, target, fk as any, this.#source.pkField),
+		}
 		return new RelationsBuilder(this.#source, nextDefs) as any
 	}
 
@@ -119,7 +133,10 @@ class RelationsBuilder<S extends AnySchema, R extends Record<string, AnyRelDef> 
 		}
 	> {
 		const target = (fk as any).__schema as AnySchema
-		const nextDefs = { ...this.#defs, [name]: new OneRelation(name, this.#source, target, fk as any, 'target', this.#source.pkField) }
+		const nextDefs = {
+			...this.#defs,
+			[name]: new OneRelation(name, this.#source, target, fk as any, 'target', this.#source.pkField),
+		}
 		return new RelationsBuilder(this.#source, nextDefs) as any
 	}
 
@@ -139,7 +156,10 @@ class RelationsBuilder<S extends AnySchema, R extends Record<string, AnyRelDef> 
 		}
 	> {
 		const ref = references ?? target.pkField
-		const nextDefs = { ...this.#defs, [name]: new OneRelation(name, this.#source, target, fk as any, 'source', ref as any) }
+		const nextDefs = {
+			...this.#defs,
+			[name]: new OneRelation(name, this.#source, target, fk as any, 'source', ref as any),
+		}
 		return new RelationsBuilder(this.#source, nextDefs) as any
 	}
 
@@ -157,7 +177,7 @@ export class Relations {
 if (import.meta.vitest) {
 	const { describe, test, expect, expectTypeOf } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { Schema } = await import('./schema')
+	const { Schema } = await import('./schema.js')
 
 	describe('Relations.from()', () => {
 		const UserSchema = Schema.from('users')
@@ -196,9 +216,7 @@ if (import.meta.vitest) {
 		})
 
 		test('source references use outer-scope const (no src param)', () => {
-			const rels = Relations.from(UserSchema)
-				.belongsTo('org', UserSchema.fields.orgId, OrgSchema)
-				.build()
+			const rels = Relations.from(UserSchema).belongsTo('org', UserSchema.fields.orgId, OrgSchema).build()
 
 			expect(rels.org.foreignKey).toBe(UserSchema.fields.orgId)
 			expect(rels.org.target).toBe(OrgSchema)
@@ -279,9 +297,7 @@ if (import.meta.vitest) {
 			.hasMany('postTags', PostTagSchema.fields.postId)
 			.build()
 
-		const TagRels = Relations.from(TagSchema)
-			.hasMany('postTags', PostTagSchema.fields.tagId)
-			.build()
+		const TagRels = Relations.from(TagSchema).hasMany('postTags', PostTagSchema.fields.tagId).build()
 
 		const PostTagRels = Relations.from(PostTagSchema)
 			.belongsTo('post', PostTagSchema.fields.postId, PostSchema)
@@ -372,7 +388,9 @@ if (import.meta.vitest) {
 
 	describe('type-level: Relations.from uniqueness guard', () => {
 		test('duplicate relation name is a TS error', () => {
-			const S = Schema.from('test').pk('id', v.string(), () => 'x').build()
+			const S = Schema.from('test')
+				.pk('id', v.string(), () => 'x')
+				.build()
 			const T = Schema.from('targets')
 				.pk('id', v.string(), () => 'x')
 				.field('sId', v.string())
@@ -399,7 +417,9 @@ if (import.meta.vitest) {
 		})
 
 		test('matching FK-PK types compile correctly', () => {
-			const S = Schema.from('source').pk('id', v.string(), () => 'x').build()
+			const S = Schema.from('source')
+				.pk('id', v.string(), () => 'x')
+				.build()
 			const T = Schema.from('target')
 				.pk('id', v.string(), () => 'x')
 				.field('sourceId', v.string())
@@ -411,7 +431,9 @@ if (import.meta.vitest) {
 
 	describe('type-level: Field-only-FK rule', () => {
 		test('raw string FK is a TS error for hasMany', () => {
-			const S = Schema.from('s').pk('id', v.string(), () => 'x').build()
+			const S = Schema.from('s')
+				.pk('id', v.string(), () => 'x')
+				.build()
 			// @ts-expect-error — raw string not allowed, must be a Field instance
 			Relations.from(S).hasMany('items', 'someKey')
 		})
@@ -421,7 +443,9 @@ if (import.meta.vitest) {
 				.pk('id', v.string(), () => 'x')
 				.field('ref', v.string())
 				.build()
-			const T = Schema.from('t').pk('id', v.string(), () => 'x').build()
+			const T = Schema.from('t')
+				.pk('id', v.string(), () => 'x')
+				.build()
 			// @ts-expect-error — raw string not allowed, must be a Field instance
 			Relations.from(S).belongsTo('parent', 'ref', T)
 		})

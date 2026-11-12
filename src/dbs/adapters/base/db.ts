@@ -1,6 +1,6 @@
-import * as core from './core'
-import type { DbConfig } from './types'
-import { Instance } from '../../../instance'
+import { Instance } from '../../../instance/index.js'
+import type * as core from './core.js'
+import type { DbConfig } from './types.js'
 
 export type TableOptions = { skipAudit?: boolean }
 

@@ -1,9 +1,9 @@
-import type { AggregateOpName } from '../../adapter'
-import { OrmValidationError } from '../../errors'
-import { Filter, FilterGroup, type FilterChild } from '../../filter'
-import type { AggregateSpec } from '../../orm-adapter'
-import type { QueryOptions } from '../../query-options'
-import { IncOp, MaxOp, MinOp, MulOp, PatchOp, PullOp, PushOp, UnsetOp } from '../../updates'
+import type { AggregateOpName } from '../../adapter.js'
+import { OrmValidationError } from '../../errors/index.js'
+import { Filter, FilterGroup, type FilterChild } from '../../filter.js'
+import type { AggregateSpec } from '../../orm-adapter.js'
+import type { QueryOptions } from '../../query-options.js'
+import { IncOp, MaxOp, MinOp, MulOp, PatchOp, PullOp, PushOp, UnsetOp } from '../../updates.js'
 
 function mapField(field: string, primaryKey: string): string {
 	if (field === 'id' && primaryKey !== 'id') return primaryKey
@@ -248,7 +248,9 @@ export function buildSelectQuery(
 	const { whereClause, params, nextParamIndex } = compilePgFilter(group, primaryKey)
 	let i = nextParamIndex
 
-	const orderParts = (options?.orderBy ?? []).map((o) => `"${mapField(o.field, primaryKey)}" ${o.direction.toUpperCase()}`)
+	const orderParts = (options?.orderBy ?? []).map(
+		(o) => `"${mapField(o.field, primaryKey)}" ${o.direction.toUpperCase()}`,
+	)
 	const orderClause = orderParts.length > 0 ? `ORDER BY ${orderParts.join(', ')}` : ''
 
 	let limitClause = ''
@@ -261,15 +263,22 @@ export function buildSelectQuery(
 		params.push(options.offset)
 		offsetClause = `OFFSET $${i++}`
 	}
-	const selectClause = options?.select?.length ? options.select.map((f) => `"${mapField(f, primaryKey)}"`).join(', ') : '*'
+	const selectClause = options?.select?.length
+		? options.select.map((f) => `"${mapField(f, primaryKey)}"`).join(', ')
+		: '*'
 
-	const sql = `SELECT ${selectClause} FROM "${tableName}" ${whereClause} ${orderClause} ${limitClause} ${offsetClause}`
-		.trim()
-		.replace(/\s+/g, ' ')
+	const sql =
+		`SELECT ${selectClause} FROM "${tableName}" ${whereClause} ${orderClause} ${limitClause} ${offsetClause}`
+			.trim()
+			.replace(/\s+/g, ' ')
 	return { sql, params }
 }
 
-export function buildCountQuery(group: FilterGroup, tableName: string, primaryKey: string): { sql: string; params: unknown[] } {
+export function buildCountQuery(
+	group: FilterGroup,
+	tableName: string,
+	primaryKey: string,
+): { sql: string; params: unknown[] } {
 	const { whereClause, params } = compilePgFilter(group, primaryKey)
 	const sql = `SELECT COUNT(*) as count FROM "${tableName}" ${whereClause}`.trim().replace(/\s+/g, ' ')
 	return { sql, params }
@@ -293,7 +302,9 @@ export function buildUpdateQuery(
 	const { setParts, params: setParams, nextParamIndex } = buildSetParts(data, 1)
 	const { whereClause, params: whereParams } = compilePgFilter(group, primaryKey, nextParamIndex)
 	const params = [...setParams, ...whereParams]
-	const sql = `UPDATE "${tableName}" SET ${setParts.join(', ')} ${whereClause} RETURNING *`.trim().replace(/\s+/g, ' ')
+	const sql = `UPDATE "${tableName}" SET ${setParts.join(', ')} ${whereClause} RETURNING *`
+		.trim()
+		.replace(/\s+/g, ' ')
 	return { sql, params }
 }
 
@@ -305,14 +316,19 @@ export function buildPkUpdateQuery(
 ): { sql: string; params: unknown[] } {
 	const { setParts, params: setParams, nextParamIndex } = buildSetParts(data, 1)
 	setParams.push(pk)
-	const sql = `UPDATE "${tableName}" SET ${setParts.join(', ')} WHERE "${primaryKey}" = $${nextParamIndex} RETURNING *`.replace(
-		/\s+/g,
-		' ',
-	)
+	const sql =
+		`UPDATE "${tableName}" SET ${setParts.join(', ')} WHERE "${primaryKey}" = $${nextParamIndex} RETURNING *`.replace(
+			/\s+/g,
+			' ',
+		)
 	return { sql, params: setParams }
 }
 
-export function buildDeleteQuery(group: FilterGroup, tableName: string, primaryKey: string): { sql: string; params: unknown[] } {
+export function buildDeleteQuery(
+	group: FilterGroup,
+	tableName: string,
+	primaryKey: string,
+): { sql: string; params: unknown[] } {
 	const { whereClause, params } = compilePgFilter(group, primaryKey)
 	const sql = `DELETE FROM "${tableName}" ${whereClause} RETURNING *`.trim().replace(/\s+/g, ' ')
 	return { sql, params }
@@ -455,11 +471,12 @@ export function buildAggregateQuery(
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
-	const { Field } = await import('../../fields')
-	const { FilterGroup } = await import('../../filter')
-	const { OrderBy } = await import('../../query-options')
-	const { IncOp, MulOp, MinOp, MaxOp, UnsetOp, PushOp, PullOp, PatchOp, SetOp, flattenOps } = await import('../../updates')
-	const { OrmValidationError } = await import('../../errors')
+	const { Field } = await import('../../fields.js')
+	const { FilterGroup } = await import('../../filter.js')
+	const { OrderBy } = await import('../../query-options.js')
+	const { IncOp, MulOp, MinOp, MaxOp, UnsetOp, PushOp, PullOp, PatchOp, SetOp, flattenOps } =
+		await import('../../updates.js')
+	const { OrmValidationError } = await import('../../errors/index.js')
 
 	describe('compilePgFilter', () => {
 		test('empty filter group compiles to empty WHERE clause', () => {
@@ -494,10 +511,18 @@ if (import.meta.vitest) {
 		})
 
 		test('gt, gte, lt, lte compile to >, >=, <, <=', () => {
-			expect(buildSelectQuery(FilterGroup.create().gt('age', 10), undefined, 't', 'id').sql).toContain('"age" > $1')
-			expect(buildSelectQuery(FilterGroup.create().gte('age', 20), undefined, 't', 'id').sql).toContain('"age" >= $1')
-			expect(buildSelectQuery(FilterGroup.create().lt('age', 30), undefined, 't', 'id').sql).toContain('"age" < $1')
-			expect(buildSelectQuery(FilterGroup.create().lte('age', 40), undefined, 't', 'id').sql).toContain('"age" <= $1')
+			expect(buildSelectQuery(FilterGroup.create().gt('age', 10), undefined, 't', 'id').sql).toContain(
+				'"age" > $1',
+			)
+			expect(buildSelectQuery(FilterGroup.create().gte('age', 20), undefined, 't', 'id').sql).toContain(
+				'"age" >= $1',
+			)
+			expect(buildSelectQuery(FilterGroup.create().lt('age', 30), undefined, 't', 'id').sql).toContain(
+				'"age" < $1',
+			)
+			expect(buildSelectQuery(FilterGroup.create().lte('age', 40), undefined, 't', 'id').sql).toContain(
+				'"age" <= $1',
+			)
 		})
 
 		test('in compiles to = ANY($N)', () => {
@@ -581,7 +606,12 @@ if (import.meta.vitest) {
 
 		test('nested eq compiles to a JSONB text path expression', () => {
 			const typeField = new Field<string>('def', ['def', 'type'], 'string')
-			const { sql, params } = buildSelectQuery(FilterGroup.create().eq(typeField, 'depends-on'), undefined, 'links', 'id')
+			const { sql, params } = buildSelectQuery(
+				FilterGroup.create().eq(typeField, 'depends-on'),
+				undefined,
+				'links',
+				'id',
+			)
 
 			expect(sql).toContain('"def" #>>')
 			expect(sql).toContain("'{type}'")
@@ -608,7 +638,9 @@ if (import.meta.vitest) {
 				expect(sql).not.toContain('"def.type"')
 				expect(sql).not.toContain('"meta.count"')
 			}
-			expect(buildSelectQuery(FilterGroup.create().gt(countField, 3), undefined, 'items', 'id').sql).toContain('::numeric')
+			expect(buildSelectQuery(FilterGroup.create().gt(countField, 3), undefined, 'items', 'id').sql).toContain(
+				'::numeric',
+			)
 		})
 
 		test('nested existence and containment ops compile against JSONB paths', () => {
@@ -616,9 +648,19 @@ if (import.meta.vitest) {
 			const tagsField = new Field<string>('meta', ['meta', 'tags'], 'array')
 
 			const existsSql = buildSelectQuery(FilterGroup.create().exists(roleField), undefined, 'items', 'id').sql
-			const notExistsSql = buildSelectQuery(FilterGroup.create().notExists(roleField), undefined, 'items', 'id').sql
+			const notExistsSql = buildSelectQuery(
+				FilterGroup.create().notExists(roleField),
+				undefined,
+				'items',
+				'id',
+			).sql
 			const contains = buildSelectQuery(FilterGroup.create().contains(tagsField, ['a']), undefined, 'items', 'id')
-			const notContains = buildSelectQuery(FilterGroup.create().notContains(tagsField, ['a']), undefined, 'items', 'id')
+			const notContains = buildSelectQuery(
+				FilterGroup.create().notContains(tagsField, ['a']),
+				undefined,
+				'items',
+				'id',
+			)
 
 			expect(existsSql).toContain('"meta" #>')
 			expect(existsSql).toContain('IS NOT NULL')
@@ -747,7 +789,13 @@ if (import.meta.vitest) {
 	describe('buildUpsertQuery', () => {
 		test('produces INSERT ON CONFLICT with SET parts from data', () => {
 			const data = flattenOps([new SetOp({ name: 'Updated' })])
-			const { sql, params } = buildUpsertQuery('users', 'email', 'id', { id: 'u1', email: 'a@b.com', name: 'Alice' }, data)
+			const { sql, params } = buildUpsertQuery(
+				'users',
+				'email',
+				'id',
+				{ id: 'u1', email: 'a@b.com', name: 'Alice' },
+				data,
+			)
 			expect(sql).toContain('INSERT INTO "users"')
 			expect(sql).toContain('ON CONFLICT ("email") DO UPDATE SET')
 			expect(sql).toContain('"name" = $4')

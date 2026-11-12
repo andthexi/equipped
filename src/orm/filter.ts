@@ -1,9 +1,9 @@
-import type { FieldTypeName, FilterOpName } from './adapter'
-import { EquippedError } from '../errors'
-import { OrmValidationError, type OrmValidationFailure } from './errors'
-import { Field, toFieldName, type AnyField } from './fields'
-import type { AggregateSpec } from './orm-adapter'
-import type { AnySchema } from './schema'
+import { EquippedError } from '../errors/index.js'
+import type { FieldTypeName, FilterOpName } from './adapter.js'
+import { OrmValidationError, type OrmValidationFailure } from './errors/index.js'
+import { Field, toFieldName, type AnyField } from './fields.js'
+import type { AggregateSpec } from './orm-adapter.js'
+import type { AnySchema } from './schema.js'
 
 export class Filter {
 	readonly field: string
@@ -97,13 +97,19 @@ export class FilterGroup {
 
 	and(facFns: FilterFactory[]): FilterGroup {
 		if (facFns.length === 0) throw new EquippedError('and() requires at least one filter factory', { op: 'and' })
-		const group = new FilterGroup('and', facFns.map((fn) => fn(FilterGroup.create())))
+		const group = new FilterGroup(
+			'and',
+			facFns.map((fn) => fn(FilterGroup.create())),
+		)
 		return this.#withChild(group)
 	}
 
 	or(facFns: FilterFactory[]): FilterGroup {
 		if (facFns.length === 0) throw new EquippedError('or() requires at least one filter factory', { op: 'or' })
-		const group = new FilterGroup('or', facFns.map((fn) => fn(FilterGroup.create())))
+		const group = new FilterGroup(
+			'or',
+			facFns.map((fn) => fn(FilterGroup.create())),
+		)
 		return this.#withChild(group)
 	}
 
@@ -122,7 +128,6 @@ export class FilterGroup {
 	}
 }
 
-
 export type GatedFilterGroup<DeclaredOps extends readonly FilterOpName[]> = {
 	[K in FilterOpName]: K extends DeclaredOps[number] ? FilterGroup[K] : never
 } & Pick<FilterGroup, 'and' | 'or' | 'clone' | 'children' | 'op'>
@@ -131,7 +136,11 @@ export type GatedFilterFactory<DeclaredOps extends readonly FilterOpName[]> = (
 	q: GatedFilterGroup<DeclaredOps>,
 ) => GatedFilterGroup<DeclaredOps>
 
-export function assertNormalisedAggregate(schema: AnySchema, adapter: { aggregateOps: readonly string[] }, spec: AggregateSpec): void {
+export function assertNormalisedAggregate(
+	schema: AnySchema,
+	adapter: { aggregateOps: readonly string[] },
+	spec: AggregateSpec,
+): void {
 	const failures: OrmValidationFailure[] = []
 
 	if (spec.aggregates.length === 0) {
@@ -176,7 +185,10 @@ export function assertNormalisedAggregate(schema: AnySchema, adapter: { aggregat
 		function walkHaving(node: FilterChild): void {
 			if (node instanceof Filter) {
 				if (!validHavingFields.has(node.field)) {
-					havingErrors.push({ field: node.field, cause: `Unknown having field "${node.field}" — must be an aggregator alias or groupBy field` })
+					havingErrors.push({
+						field: node.field,
+						cause: `Unknown having field "${node.field}" — must be an aggregator alias or groupBy field`,
+					})
 				}
 			} else if (node instanceof FilterGroup) {
 				for (const child of node.children) walkHaving(child)
@@ -225,7 +237,7 @@ export function assertNormalisedFilter(schema: AnySchema, group: FilterGroup): v
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { Schema } = await import('./schema')
+	const { Schema } = await import('./schema.js')
 
 	const UserSchema = Schema.from('users')
 		.pk('id', v.string(), () => 'u1')
@@ -302,9 +314,7 @@ if (import.meta.vitest) {
 			})
 
 			test('contains/notContains produce correct ops', () => {
-				const g = FilterGroup.create()
-					.contains('tags', ['a'])
-					.notContains('tags', ['b'])
+				const g = FilterGroup.create().contains('tags', ['a']).notContains('tags', ['b'])
 				expect((g.children[0] as Filter).op).toBe('contains')
 				expect((g.children[1] as Filter).op).toBe('notContains')
 			})
@@ -326,9 +336,19 @@ if (import.meta.vitest) {
 					.notContains('f', [1])
 				const ops = g.children.map((c) => (c as Filter).op)
 				expect(ops).toEqual([
-					'eq', 'ne', 'gt', 'gte', 'lt', 'lte',
-					'in', 'notIn', 'like', 'exists', 'notExists',
-					'contains', 'notContains',
+					'eq',
+					'ne',
+					'gt',
+					'gte',
+					'lt',
+					'lte',
+					'in',
+					'notIn',
+					'like',
+					'exists',
+					'notExists',
+					'contains',
+					'notContains',
 				])
 			})
 		})
@@ -358,10 +378,7 @@ if (import.meta.vitest) {
 
 		describe('structural combinators', () => {
 			test('and() creates a nested and-group', () => {
-				const g = FilterGroup.create().and([
-					(q) => q.eq('age', 10),
-					(q) => q.eq('name', 'Alice'),
-				])
+				const g = FilterGroup.create().and([(q) => q.eq('age', 10), (q) => q.eq('name', 'Alice')])
 				expect(g.children).toHaveLength(1)
 				const nested = g.children[0] as FilterGroup
 				expect(nested.op).toBe('and')
@@ -369,10 +386,7 @@ if (import.meta.vitest) {
 			})
 
 			test('or() creates a nested or-group', () => {
-				const g = FilterGroup.create().or([
-					(q) => q.eq('name', 'Alice'),
-					(q) => q.eq('name', 'Bob'),
-				])
+				const g = FilterGroup.create().or([(q) => q.eq('name', 'Alice'), (q) => q.eq('name', 'Bob')])
 				const nested = g.children[0] as FilterGroup
 				expect(nested.op).toBe('or')
 			})

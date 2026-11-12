@@ -13,7 +13,9 @@ export function registerHook(hooks: HookRecord[], record: HookRecord): void {
 		if (!hooks.some((h) => h.class === dep)) {
 			const depName = dep.name || 'unknown'
 			const ownerName = record.class?.name || 'anonymous'
-			throw new Error(`Missing dependency: ${ownerName} declares after: [${depName}], but ${depName} is not registered`)
+			throw new Error(
+				`Missing dependency: ${ownerName} declares after: [${depName}], but ${depName} is not registered`,
+			)
 		}
 	}
 

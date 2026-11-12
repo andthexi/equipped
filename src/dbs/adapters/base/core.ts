@@ -1,8 +1,8 @@
 import type { Filter, UpdateFilter } from 'mongodb'
 import type { ConditionalObjectKeys, DeepPartial, DistributiveOmit } from 'valleyed'
 
-import type { DbChange } from './changes'
-import type { QueryParams, QueryParamsBase, QueryResults } from '../../pipes'
+import type { QueryParams, QueryParamsBase, QueryResults } from '../../pipes.js'
+import type { DbChange } from './changes.js'
 
 export type IdType = { _id: string } | { id: string }
 export type Entity = { toJSON: () => Record<string, unknown> }
@@ -27,8 +27,15 @@ type FindOneOptions<T, S extends Select<T> | undefined = undefined> = {
 	select?: S
 }
 
-export type Table<Id extends IdType, T extends Model<Id>, E extends Entity, Extras extends Record<string, unknown> = {}> = {
-	query: <const S extends Select<T> | undefined = undefined>(query: QueryParams<T, S>) => Promise<QueryResults<SelectEntity<E, S>>>
+export type Table<
+	Id extends IdType,
+	T extends Model<Id>,
+	E extends Entity,
+	Extras extends Record<string, unknown> = {},
+> = {
+	query: <const S extends Select<T> | undefined = undefined>(
+		query: QueryParams<T, S>,
+	) => Promise<QueryResults<SelectEntity<E, S>>>
 	findMany: <const S extends Select<T> | undefined = undefined>(
 		filter: Filter<T>,
 		options?: FindManyOptions<T, S>,
@@ -42,7 +49,10 @@ export type Table<Id extends IdType, T extends Model<Id>, E extends Entity, Extr
 		options?: FindOneOptions<T, S>,
 	) => Promise<SelectEntity<E, S> | null>
 	insertOne: (values: CreateInput<T>, options?: { makeId?: () => string; getTime?: () => Date }) => Promise<E>
-	insertMany: (values: CreateInput<T>[], options?: { makeId?: (i: number) => string; getTime?: () => Date }) => Promise<E[]>
+	insertMany: (
+		values: CreateInput<T>[],
+		options?: { makeId?: (i: number) => string; getTime?: () => Date },
+	) => Promise<E[]>
 	updateMany: (filter: Filter<T>, values: UpdateInput<T>, options?: { getTime?: () => Date }) => Promise<E[]>
 	updateOne: (filter: Filter<T>, values: UpdateInput<T>, options?: { getTime?: () => Date }) => Promise<E | null>
 	updateById: (id: ModelId<T>, values: UpdateInput<T>, options?: { getTime?: () => Date }) => Promise<E | null>
@@ -63,7 +73,9 @@ export type Table<Id extends IdType, T extends Model<Id>, E extends Entity, Extr
 export type { Filter }
 
 type AllKeys<T> = T extends any ? keyof T : never
-export type EntityInput<T extends Model<any>> = ConditionalObjectKeys<DistributiveOmit<T, AllKeys<IdType> | keyof Model<IdType>>>
+export type EntityInput<T extends Model<any>> = ConditionalObjectKeys<
+	DistributiveOmit<T, AllKeys<IdType> | keyof Model<IdType>>
+>
 
 export type CreateInput<T extends Model<any>> = EntityInput<T>
 // TODO: Updatefilter no type safe
@@ -73,8 +85,7 @@ export type BulkWriteOperation<T extends Model<any>> =
 	| { op: 'insert'; value: CreateInput<T>; makeId?: (i: number) => string }
 	| { op: 'update'; filter: Filter<T>; value: UpdateInput<T> }
 	| ({ op: 'upsert'; filter: Filter<T>; makeId?: (i: number) => string } & (
-			| { insert: CreateInput<T> }
-			| { insert: Partial<CreateInput<T>>; update: UpdateInput<T> }
+			{ insert: CreateInput<T> } | { insert: Partial<CreateInput<T>>; update: UpdateInput<T> }
 	  ))
 	| { op: 'delete'; filter: Filter<T> }
 

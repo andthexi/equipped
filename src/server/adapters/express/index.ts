@@ -9,11 +9,12 @@ import { rateLimit } from 'express-rate-limit'
 import helmet from 'helmet'
 import { pinoHttp } from 'pino-http'
 
-import { Instance } from '../../../instance'
-import { configurable, getMediaDuration } from '../../../utilities'
-import { Request, Response } from '../../requests'
-import { StatusCodes, type IncomingFile, type MethodsEnum } from '../../types'
-import { type RawResponder, Server, serverConfigPipe } from '../base'
+import { Instance } from '../../../instance/index.js'
+import { configurable, getMediaDuration } from '../../../utilities/index.js'
+import type { Response } from '../../requests.js'
+import { Request } from '../../requests.js'
+import { StatusCodes, type IncomingFile, type MethodsEnum } from '../../types.js'
+import { type RawResponder, Server, serverConfigPipe } from '../base.js'
 
 export class ExpressServer extends configurable(serverConfigPipe, Server) {
 	#app: express.Express
@@ -147,7 +148,8 @@ if (import.meta.vitest) {
 	const testInstanceState = globalThis as typeof globalThis & { __equippedTestInstanceAliased?: boolean }
 
 	function ensureTestInstance() {
-		const instance = Instance.maybeGet() ?? Instance.create({ app: { name: 'equipped-test' }, log: { level: 'silent' } })
+		const instance =
+			Instance.maybeGet() ?? Instance.create({ app: { name: 'equipped-test' }, log: { level: 'silent' } })
 		if (!testInstanceState.__equippedTestInstanceAliased) {
 			instance.alias('equipped-test')
 			testInstanceState.__equippedTestInstanceAliased = true

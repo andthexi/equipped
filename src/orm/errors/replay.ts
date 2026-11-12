@@ -1,11 +1,15 @@
-import { EquippedError } from '../../errors'
+import { EquippedError } from '../../errors/index.js'
 
 export class OrmReplayError extends EquippedError {
 	readonly key: string
 	readonly eventName: string
 
 	constructor(opts: { key: string; name: string; cause: unknown }) {
-		super(`EventLog replay failed on event ${opts.name} (key=${opts.key})`, { key: opts.key, name: opts.name }, opts.cause)
+		super(
+			`EventLog replay failed on event ${opts.name} (key=${opts.key})`,
+			{ key: opts.key, name: opts.name },
+			opts.cause,
+		)
 		this.key = opts.key
 		this.eventName = opts.name
 	}
@@ -13,9 +17,9 @@ export class OrmReplayError extends EquippedError {
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
-	const { EquippedError } = await import('../../errors')
-	const { OrmValidationError } = await import('./validation')
-	const { OrmNotFoundError } = await import('./not-found')
+	const { EquippedError } = await import('../../errors/index.js')
+	const { OrmValidationError } = await import('./validation.js')
+	const { OrmNotFoundError } = await import('./not-found.js')
 
 	describe('OrmReplayError', () => {
 		test('stores key, eventName, and cause on the instance', () => {

@@ -1,4 +1,4 @@
-import type { CronTypes, DelayedJobs, RepeatableJobs } from '../../types'
+import type { CronTypes, DelayedJobs, RepeatableJobs } from '../../types/index.js'
 
 export enum JobNames {
 	CronJob = 'CronJob',
@@ -12,7 +12,11 @@ export type RepeatableJobEvent = RepeatableJobs[keyof RepeatableJobs]
 export type DelayedJobCallback = (data: DelayedJobEvent) => Promise<void> | void
 export type CronJobCallback = (name: CronTypes[keyof CronTypes]) => Promise<void> | void
 export type RepeatableJobCallback = (data: RepeatableJobEvent) => Promise<void> | void
-export type JobCallbacks = { onDelayed?: DelayedJobCallback; onCron?: CronJobCallback; onRepeatable?: RepeatableJobCallback }
+export type JobCallbacks = {
+	onDelayed?: DelayedJobCallback
+	onCron?: CronJobCallback
+	onRepeatable?: RepeatableJobCallback
+}
 
 export abstract class Job {
 	#crons: { name: Cron; cron: string }[] = []

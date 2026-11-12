@@ -1,7 +1,7 @@
 import { v } from 'valleyed'
 
-import { Instance } from '../../instance'
-import { Schema } from '../schema'
+import { Instance } from '../../instance/index.js'
+import { Schema } from '../schema.js'
 
 export const EventLogSchema = Schema.from('event_log')
 	.pk('key', v.string(), () => Instance.createId())

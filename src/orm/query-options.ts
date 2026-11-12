@@ -1,4 +1,4 @@
-import { toFieldName, type AnyField } from './fields'
+import { toFieldName, type AnyField } from './fields.js'
 
 export class OrderBy {
 	readonly field: string

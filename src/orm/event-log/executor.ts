@@ -1,10 +1,10 @@
 import { v } from 'valleyed'
 
-import { Instance } from '../../instance'
-import { OrmValidationError } from '../errors'
-import type { EventContext, HandlerDef } from './registry'
-import { EventLogSchema } from './schema'
-import type { Repo } from '../repo/repo'
+import { Instance } from '../../instance/index.js'
+import { OrmValidationError } from '../errors/index.js'
+import type { Repo } from '../repo/repo.js'
+import type { EventContext, HandlerDef } from './registry.js'
+import { EventLogSchema } from './schema.js'
 
 export async function fire<R>(
 	repo: Repo<any>,
@@ -15,9 +15,7 @@ export async function fire<R>(
 ): Promise<R> {
 	const validated = v.validate(def.pipe, payload)
 	if (!validated.valid) {
-		throw new OrmValidationError('validation', 'event_log', 'fire', [
-			{ cause: validated.error },
-		])
+		throw new OrmValidationError('validation', 'event_log', 'fire', [{ cause: validated.error }])
 	}
 
 	return repo.session(async () => {
@@ -44,18 +42,18 @@ export async function fire<R>(
 			firstRun: true,
 		}
 
-		return await def.handle(validated.value, evCtx) as R
+		return (await def.handle(validated.value, evCtx)) as R
 	})
 }
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { InMemoryAdapter } = await import('../adapters/in-memory')
-	const { Repo } = await import('../repo/repo')
-	const { OrmValidationError } = await import('../errors')
-	type EventContext = import('./registry').EventContext
-	const { EventLogSchema } = await import('./schema')
+	const { InMemoryAdapter } = await import('../adapters/in-memory/index.js')
+	const { Repo } = await import('../repo/repo.js')
+	const { OrmValidationError } = await import('../errors/index.js')
+	type EventContext = import('./registry.js').EventContext
+	const { EventLogSchema } = await import('./schema.js')
 
 	function makeRepo() {
 		const adapter = InMemoryAdapter.create({})

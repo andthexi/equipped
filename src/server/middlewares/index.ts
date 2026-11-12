@@ -1,1 +1,1 @@
-export * from './requireAuthUser'
+export * from './requireAuthUser.js'

@@ -1,5 +1,5 @@
-import type { AnyMigration } from './types'
-import { OrmMigrationError } from '../errors/migration'
+import { OrmMigrationError } from '../errors/migration.js'
+import type { AnyMigration } from './types.js'
 
 export type PendingOpts = { to?: string; steps?: number }
 
@@ -54,7 +54,7 @@ export function computePending(
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
-	const { OrmMigrationError } = await import('../errors/migration')
+	const { OrmMigrationError } = await import('../errors/migration.js')
 
 	describe('computePending', () => {
 		test('returns all as pending when none applied', () => {
@@ -81,7 +81,10 @@ if (import.meta.vitest) {
 
 		test('throws on orphan migrations', () => {
 			const declared = [{ id: '0001', changes: [] }]
-			const applied = [{ id: '0001', appliedAt: 1 }, { id: 'ghost', appliedAt: 2 }]
+			const applied = [
+				{ id: '0001', appliedAt: 1 },
+				{ id: 'ghost', appliedAt: 2 },
+			]
 			expect(() => computePending(declared, applied)).toThrow(OrmMigrationError)
 			try {
 				computePending(declared, applied)
@@ -125,7 +128,10 @@ if (import.meta.vitest) {
 				{ id: '0002', changes: [] },
 				{ id: '0003', changes: [] },
 			]
-			const applied = [{ id: '0001', appliedAt: 1 }, { id: '0002', appliedAt: 2 }]
+			const applied = [
+				{ id: '0001', appliedAt: 1 },
+				{ id: '0002', appliedAt: 2 },
+			]
 			const result = computePending(declared, applied, { to: '0002' })
 			expect(result.pending).toEqual([])
 		})

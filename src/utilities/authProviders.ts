@@ -2,7 +2,7 @@ import axios from 'axios'
 import jwt from 'jsonwebtoken'
 import jwksClient from 'jwks-rsa'
 
-import { EquippedError } from '../errors'
+import { EquippedError } from '../errors/index.js'
 
 export const signinWithGoogle = async (idToken: string) => {
 	const authUrl = `https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`

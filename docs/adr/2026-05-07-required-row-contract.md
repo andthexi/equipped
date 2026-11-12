@@ -2,7 +2,7 @@
 
 `OneBuilder`'s nullable verbs (`find`, `update`, `delete`) silently return
 `T | null` when the query produces no row. This violates the spirit of the
-*always-throw-never-silently-drop* principle (§13 #6) for user-meaningful
+_always-throw-never-silently-drop_ principle (§13 #6) for user-meaningful
 "no match" cases, but tightening the default would be a breaking change.
 The decision: introduce a **`.required()` modifier** on `OneBuilder` that
 opts the chain into a **required-row contract** — return types narrow from
@@ -34,7 +34,7 @@ to `src/orm/errors/` (one file per class, barrel-exported via
   or require a separate mechanism for writes anyway.
 - **Change `update` / `delete` defaults to throw on no-match (Prisma-style
   always-throw-on-write).** The cleanest fix to the underlying silent-drop
-  concern. Rejected for *this* PR: it's a breaking change to existing
+  concern. Rejected for _this_ PR: it's a breaking change to existing
   callers and a much larger decision than adding an opt-in modifier — left
   for a future ADR if/when the in-tree need surfaces. The required-row
   contract is purely additive and reversible; the default change is not.
@@ -46,7 +46,7 @@ to `src/orm/errors/` (one file per class, barrel-exported via
   (grammatical class of `.where()` / `.select()`) and avoids the clash.
 - **Reuse `OrmValidationError` with a new `kind: 'not-found'`.** Smaller
   surface (one error class instead of two). Rejected: `OrmValidationError`
-  is documented as the *Repo-entry boundary* error class (§7.5), and its
+  is documented as the _Repo-entry boundary_ error class (§7.5), and its
   carrier shape (`failures: [{ opIndex, rowIndex, field, cause }]`) is
   meaningless for a not-found case. Conflating boundary-input failures
   with post-adapter result failures dilutes both. Every comparable ORM
@@ -68,7 +68,7 @@ to `src/orm/errors/` (one file per class, barrel-exported via
   codebase's existing `where`-naming convention (`OneBuilder._where`,
   executor state `where`, user-facing `.where(...)` verb).
 - **`AllBuilder.required()` counterpart.** "Throw on empty array".
-  Rejected for this PR: scoped out by the *required-row scope rule* —
+  Rejected for this PR: scoped out by the _required-row scope rule_ —
   empty arrays are a different domain (no inherent silent-drop; the empty
-  array is a *real* answer, unlike `null`-on-no-match for OneBuilder).
+  array is a _real_ answer, unlike `null`-on-no-match for OneBuilder).
   Can be revisited if a concrete need surfaces.
