@@ -41,9 +41,7 @@ export class MigrationCodegen<A extends OrmAdapterLike<any>> {
 			const identity = this.#adapter.physicalTargetIdentity(config)
 			const existing = identities.get(identity)
 			if (existing)
-				throw new Error(
-					`Codegen targets '${existing}' and '${schema.name}' resolve to the same physical target`,
-				)
+				throw new Error(`Codegen targets '${existing}' and '${schema.name}' share the same physical target`)
 			identities.set(identity, schema.name)
 			const discovered = await this.#adapter.introspectTarget(config)
 			if (discovered) current.push({ ...discovered, name: schema.name })
@@ -74,7 +72,7 @@ export class MigrationCodegen<A extends OrmAdapterLike<any>> {
 }
 
 if (import.meta.vitest) {
-	const { describe, test, expect, expectTypeOf } = import.meta.vitest
+	const { describe, test, expect, expectTypeOf, vi } = import.meta.vitest
 	const { v } = await import('valleyed')
 	const { InMemoryAdapter } = await import('../adapters/in-memory/index.js')
 	const { Schema } = await import('../schema.js')
@@ -100,6 +98,15 @@ if (import.meta.vitest) {
 	}
 
 	describe('MigrationCodegen', () => {
+		test('an empty managed target is a no-op without introspection', async () => {
+			const { adapter, repo } = makeEnv()
+			const introspectTarget = vi.spyOn(adapter, 'introspectTarget')
+			const codegen = MigrationCodegen.from(repo, adapter).target([]).build()
+
+			expect(await codegen.diff()).toBeNull()
+			expect(introspectTarget).not.toHaveBeenCalled()
+		})
+
 		test('diff() returns createTable changes for fresh DB', async () => {
 			const { adapter, repo } = makeEnv()
 			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema]).build()
@@ -170,11 +177,60 @@ if (import.meta.vitest) {
 			])
 		})
 
+		test('diff uses the supplied Repo active scope and validates its resolved config', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: `base_${name}` }))
+				.build()
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'tenant_base_users',
+				pk: { name: 'id', type: 'string' },
+				fields: [
+					{ name: 'email', type: 'string' },
+					{ name: 'age', type: 'number' },
+				],
+			})
+			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema]).build()
+
+			expect(
+				await repo.resolve(
+					(config) => ({ table: `tenant_${config.table}` }),
+					() => codegen.diff(),
+				),
+			).toBeNull()
+			await expect(
+				repo.resolve(
+					() => ({ table: 42 as any }),
+					() => codegen.diff(),
+				),
+			).rejects.toThrow()
+		})
+
+		test('generated logical changes apply once through mapped Repo resolution', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: `mapped_${name}` }))
+				.build()
+			const changes = await MigrationCodegen.from(repo, adapter).target([UserSchema]).build().diff()
+			expect(changes?.[0]).toMatchObject({ kind: 'createTable', name: 'users' })
+
+			const { Migrator } = await import('./migrator.js')
+			await Migrator.from(repo, adapter)
+				.migrations([{ id: 'generated-create', changes: changes! }])
+				.build()
+				.up()
+
+			expect(adapter.tables.has('mapped_users')).toBe(true)
+			expect(adapter.tables.has('mapped_mapped_users')).toBe(false)
+			expect(await MigrationCodegen.from(repo, adapter).target([UserSchema]).build().diff()).toBeNull()
+		})
+
 		test('diff rejects logical schemas resolving to one physical target', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const repo = new Repo({ adapter, resolve: () => ({ table: 'shared' }) })
 			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema, PostSchema]).build()
-			await expect(codegen.diff()).rejects.toThrow('same physical target')
+			await expect(codegen.diff()).rejects.toThrow(/'users'.*'posts'.*same physical target/)
 		})
 
 		test('discover() returns raw introspection descriptors', async () => {
