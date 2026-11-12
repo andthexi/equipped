@@ -73,3 +73,12 @@ migration tracker or advisory lock: all routes still share the adapter's
 `equipped_migrations` history and lock. Independent per-route ledgers and locking
 remain deferred to [issue #150](https://github.com/andthexi/equipped/issues/150);
 this release does not implement them.
+
+## Live PostgreSQL verification
+
+The upgrade suite now runs against a configured isolated database by setting
+`PG_TEST_URL`. It exercises identity, mapped base and scoped table routing,
+PostgreSQL namespaces, migration-time Repo writes, independently resolved rename
+and foreign-key endpoints, owning-table index changes, and targeted codegen
+round trips. Fixtures use unique owned schemas and migration ids; teardown checks
+that pre-existing public tables remain untouched.
