@@ -165,7 +165,7 @@ if (import.meta.vitest) {
 
 	function makeEnv() {
 		const adapter = InMemoryAdapter.create({})
-		const repo = new Repo({ adapter, resolve: (s) => ({ table: s.name }) })
+		const repo = new Repo({ adapter, resolve: (name) => ({ table: name }) })
 		return { adapter, repo }
 	}
 
@@ -211,6 +211,36 @@ if (import.meta.vitest) {
 			const row = await repo.on(UserSchema).one().id('seed-1').find()
 			expect(row).not.toBeNull()
 			expect(row!.email).toBe('test@example.com')
+		})
+
+		test('declarative changes and execute share the active resolved target', async () => {
+			const { adapter, repo } = makeEnv()
+			const migration: Migration<typeof adapter> = {
+				id: '0001-scoped-users',
+				changes: [
+					{
+						kind: 'createTable',
+						name: 'users',
+						pk: { name: 'id', type: 'string' },
+						fields: [{ name: 'email', type: 'string' }],
+					},
+					{
+						kind: 'execute',
+						up: async (r) => {
+							await r.on(UserSchema).one().create({ id: 'scoped-1', email: 'scope@example.com' })
+						},
+					},
+				],
+			}
+			const migrator = Migrator.from(repo, adapter).migrations([migration]).build()
+			const scope = (config: { table: string }) => ({ ...config, table: `tenant_${config.table}` })
+
+			await repo.resolve(scope, () => migrator.up())
+
+			expect((await adapter.introspect()).map(({ name }) => name)).toContain('tenant_users')
+			expect(await repo.resolve(scope, () => repo.on(UserSchema).one().id('scoped-1').find())).toMatchObject({
+				email: 'scope@example.com',
+			})
 		})
 
 		test('duplicate id throws OrmValidationError at build()', () => {
@@ -482,7 +512,7 @@ if (import.meta.vitest) {
 			await adapter.applyAddIndex({ kind: 'addIndex', table: 'users', on: ['email'], name: 'users_email_idx' })
 			const m: Migration<typeof adapter> = {
 				id: '0001-drop-idx',
-				changes: [{ kind: 'dropIndex', name: 'users_email_idx' }],
+				changes: [{ kind: 'dropIndex', table: 'users', name: 'users_email_idx' }],
 			}
 			const migrator = Migrator.from(repo, adapter).migrations([m]).build()
 			await migrator.up()
@@ -572,7 +602,7 @@ if (import.meta.vitest) {
 					changes: [
 						{ kind: 'dropField', table: 'users', name: 'age' },
 						{ kind: 'dropForeignKey', table: 'posts', name: 'posts_authorId_fk' },
-						{ kind: 'dropIndex', name: 'users_email_idx' },
+						{ kind: 'dropIndex', table: 'users', name: 'users_email_idx' },
 						{ kind: 'dropTable', name: 'articles' },
 					],
 				},
@@ -768,7 +798,7 @@ if (import.meta.vitest) {
 				}
 			}
 			const nlAdapter = new (NoLockAdapter as any)() as NoLockAdapter
-			const nlRepo = new Repo({ adapter: nlAdapter, resolve: (s) => ({ table: s.name }) })
+			const nlRepo = new Repo({ adapter: nlAdapter, resolve: (name) => ({ table: name }) })
 			const step = Migrator.from(nlRepo, nlAdapter).migrations([])
 			expectTypeOf(step).toHaveProperty('build')
 			expectTypeOf(step).toHaveProperty('withoutLock')

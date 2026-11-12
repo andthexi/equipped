@@ -370,12 +370,12 @@ A Repo wraps an adapter and provides the schema-per-call surface. One Repo handl
 import { Repo } from 'equipped/orm'
 
 const repo = Repo.from(adapter)
-	.resolve((schema) => ({ table: schema.name }))
+	.resolve((name) => ({ table: name }))
 	.build()
 ```
 
 - **`Repo.from(adapter)`** — starts the builder, binding the adapter.
-- **`.resolve(fn)`** — maps schema → adapter config. Called once.
+- **`.resolve(fn)`** — maps a Schema's logical-name string → adapter config on each operation. The callback receives a string, not a Schema object.
 
 ### Repository API
 
@@ -560,7 +560,7 @@ import { type ConfigTransform, Repo } from 'equipped/orm'
 type MyConfig = { table: string; tenantPrefix?: string }
 
 const repo = Repo.from(adapter)
-	.resolve((schema) => ({ table: schema.name }))
+	.resolve((name) => ({ table: name }))
 	.build()
 
 // Per-request scope entry

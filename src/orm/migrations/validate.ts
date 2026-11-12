@@ -112,6 +112,7 @@ function validateChange(
 			break
 		}
 		case 'dropIndex': {
+			if (isEmpty(change.table)) fail(ctx, 'table', 'table name must be non-empty')
 			if (isEmpty(change.name)) fail(ctx, 'name', 'index name must be non-empty')
 			break
 		}
@@ -407,12 +408,19 @@ if (import.meta.vitest) {
 		})
 
 		test('invariant E: throws on empty dropIndex name', () => {
-			const migrations = [{ id: '0001', changes: [{ kind: 'dropIndex' as const, name: '' }] }]
+			const migrations = [{ id: '0001', changes: [{ kind: 'dropIndex' as const, table: 'users', name: '' }] }]
 			try {
 				assertNormalisedChanges(fullAdapter, migrations)
 			} catch (err: any) {
 				expect(err.failures.some((f: any) => f.cause.includes('index name must be non-empty'))).toBe(true)
 			}
+		})
+
+		test('invariant E: throws on empty dropIndex table ownership', () => {
+			const migrations = [
+				{ id: '0001', changes: [{ kind: 'dropIndex' as const, table: '', name: 'users_email_idx' }] },
+			]
+			expect(() => assertNormalisedChanges(fullAdapter, migrations)).toThrow(OrmValidationError)
 		})
 
 		test('invariant E: throws on empty dropForeignKey table/name', () => {

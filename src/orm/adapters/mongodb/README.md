@@ -11,7 +11,7 @@ import { Repo } from 'equipped/orm'
 const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 
 const repo = Repo.from(adapter)
-	.resolve((schema) => ({ db: 'myapp', col: schema.name }))
+	.resolve((name) => ({ db: 'myapp', col: name }))
 	.build()
 
 // MongoClient is exposed as a readonly field for change streams, aggregations, etc.
@@ -40,7 +40,7 @@ Migration records are stored in `equipped_migrations` (default database from the
 | Kind        | Method                                                          |
 | ----------- | --------------------------------------------------------------- |
 | `addIndex`  | `applyAddIndex` — `createIndex({ field: 1 }, { unique, name })` |
-| `dropIndex` | `applyDropIndex` — scans collections to find and drop by name   |
+| `dropIndex` | `applyDropIndex` — drops by name from the resolved collection   |
 | `execute`   | User callback receives the `Repo`                               |
 
 ### No lock support
@@ -57,7 +57,7 @@ const migrator = Migrator.from(repo, adapter).migrations(migrations).withoutLock
 
 ### Introspection
 
-`introspect()` returns `DiscoveredSchema[]` with `fields: []`, `pk: undefined`, `foreignKeys: []` per the Mongo-introspection rule. Only indexes are discovered (the implicit `_id_` index is skipped). The tracker collection is excluded from results.
+`introspectTarget({ db, col })` inspects only the resolved database and collection, returning `null` when it is absent. `physicalTargetIdentity({ db, col })` includes both names so collections in different databases remain distinct. `introspect()` remains the broad diagnostic discovery surface and returns `DiscoveredSchema[]` with `fields: []`, `pk: undefined`, `foreignKeys: []` per the Mongo-introspection rule. Only indexes are discovered (the implicit `_id_` index is skipped). The tracker collection is excluded from broad results.
 
 ## Session nesting behaviour
 

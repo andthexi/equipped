@@ -199,7 +199,7 @@ fn)` (§6).
 
 ```ts
 const repo = Repo.from(PostgresAdapter)
-  .resolve((schema) => ({ table: schema.name }))
+  .resolve((name) => ({ table: name }))
   .build()
 
 await repo.on(UserSchema).one().id('u1').find()
@@ -1155,7 +1155,7 @@ session-owned client.
 ## 6. Configuration resolution
 
 The Repo holds two pieces of config-machinery: a **base resolver** that maps
-a schema to a config (build-time, required), and a **runtime override stack**
+a schema's logical name to a config (build-time, required), and a **runtime override stack**
 that lets callers temporarily transform the base config (call-time, optional).
 
 ### 6.1 Two-tier config and the base resolver
@@ -1175,14 +1175,16 @@ Adapter configuration splits into two tiers:
 The **base resolver** is the function passed to `Repo.from(adapter).resolve(...)`
 at build time. It produces a **base schema config** per schema. The
 resolver's return type is constrained to `PipeInput<typeof adapter.schemaConfigPipe>`
-— the framework enforces `(schema: AnySchema) => SchemaConfigInput`.
+— the framework enforces `(name: string) => SchemaConfigInput`. This is a
+breaking callback contract: resolvers receive the logical name, not a Schema
+object, and there is no legacy Schema fallback.
 
 ```ts
 const adapter = PostgresAdapter.create({ host, port, user, password })
 //      ^^^^^^^ connection config validated here, exposed as adapter.config
 
 const repo = Repo.from(adapter)
-	.resolve((schema) => ({ table: schema.name })) // schema-config; typed by adapter.schemaConfigPipe
+	.resolve((name) => ({ table: name })) // schema-config; typed by adapter.schemaConfigPipe
 	.build()
 ```
 
@@ -1191,7 +1193,7 @@ schema. Without `.resolve(...)`, `.build()` is unavailable (§2.6).
 
 ### 6.2 Runtime override: `repo.resolve(transform, fn)`
 
-A `ConfigTransform<C>` is a function `(cfg: C, schema: AnySchema) => C` that
+A `ConfigTransform<C>` is a function `(cfg: C, name: string) => C` that
 transforms a base config per query.
 
 `repo.resolve(transform, fn)` is the **runtime override mechanism**. It pushes
@@ -1202,7 +1204,7 @@ up the transform automatically. The stack is popped on `fn`'s settlement
 
 ```ts
 await repo.resolve(
-	(cfg, schema) => ({ ...cfg, table: `t_${tenantId}_${cfg.table}` }),
+	(cfg, name) => ({ ...cfg, table: `t_${tenantId}_${name}` }),
 	async () => {
 		await repo.on(UserSchema).all().find() // sees transformed config
 	},
@@ -1224,7 +1226,7 @@ The **config resolution pipeline** is the per-query process that produces the
 **effective schema config** — the schema-level config actually handed to the
 adapter method:
 
-1. **Base resolve.** `.resolve(...)` runs against the schema → base schema config.
+1. **Base resolve.** `.resolve(...)` runs against the schema's logical name → base schema config.
 2. **Stack apply.** Every transform currently active on the runtime stack
    (pushed via `repo.resolve(transform, fn)`) is applied in push order on top
    of the base.
@@ -1265,7 +1267,7 @@ chain inside the handler picks up the transform automatically.
 
 ```ts
 const repo = Repo.from(PgAdapter)
-	.resolve((s) => ({ table: s.name }))
+	.resolve((name) => ({ table: name }))
 	.build()
 
 // Middleware: wrap each request in repo.resolve
@@ -2108,7 +2110,7 @@ rejected. The bar for promotion is concrete, not speculative.
 | 4   | **`'bigint'` field type**                     | Arbitrary-precision integers not in the canonical field-type set.                                                                                                                                                                                                             | Encode as string; or `raw`.                                                                                                                                                                                                       |
 | 5   | **Bulk upsert**                               | `upsertMany` not supported. Single-document upsert only.                                                                                                                                                                                                                      | `raw` (Mongo `bulkWrite`, PG bulk `ON CONFLICT`).                                                                                                                                                                                 |
 | 6   | **Adapter-typed extensions**                  | Adapter-contributed typed namespaces on the Repo (e.g. `repo.pg.fts`) not supported.                                                                                                                                                                                          | Adapter's `raw` method.                                                                                                                                                                                                           |
-| 7   | **Migrations / DDL**                          | Schema migration, table creation, DDL operations out of scope.                                                                                                                                                                                                                | User-managed (dedicated migration tools); `raw` for ad-hoc DDL.                                                                                                                                                                   |
+| 7   | **Migration long-tail DDL**                   | The §16 migration runtime owns the canonical Change algebra, but views, triggers, sequences, CHECK constraints, composite keys, and adapter-specific DDL remain out of scope.                                                                                                 | Use a migration `execute` Change with adapter-native SQL/driver calls.                                                                                                                                                            |
 | 8   | **Aggregates**                                | `count` / `sum` / `avg` / `groupBy` out of scope.                                                                                                                                                                                                                             | `raw`.                                                                                                                                                                                                                            |
 | 9   | **Change-feeds / CDC**                        | Mongo change streams, Firebase realtime listeners, Debezium-style CDC, and realtime subscriptions remain out of scope. Bounded row iteration is in scope via `AllBuilder.iterate()` (§5.10).                                                                                  | `raw` for change-feeds / CDC.                                                                                                                                                                                                     |
 | 10  | **Server-side joins**                         | Joined queries (`findManyJoined`, PG `JOIN`, Mongo `$lookup`) out of scope. Preloads run package-side via `findMany`.                                                                                                                                                         | `raw`.                                                                                                                                                                                                                            |
@@ -2328,9 +2330,10 @@ runner for evolving the underlying database. A migration is a typed
 description of a set of `Change`s; the `Migrator` walks pending migrations
 in order, holds a cluster-safe lock, wraps each in a tx (where the adapter
 supports one), and records each as applied via the adapter's storage
-capability. There is no `down()`. The runtime is **A** in the C-hybrid
-scope; codegen ("B") is deferred — see `docs/orm/TODO.md`. See ADR
-`2026-05-09-migrations-runtime.md` for the decision tree.
+capability. There is no `down()`. The runtime is **A** and codegen is **B** in
+the C-hybrid scope; both ship in v1. See ADRs
+`2026-05-09-migrations-runtime.md` and `2026-05-09-migrations-codegen.md` for
+the decision tree.
 
 ### 16.1 Migration unit
 
@@ -2380,7 +2383,7 @@ type Change<A extends OrmAdapter> =
 	| { kind: 'renameTable'; from: string; to: string }
 	| { kind: 'renameField'; table: string; from: string; to: string }
 	| { kind: 'addIndex'; table: string; on: ReadonlyArray<string>; unique?: boolean; name?: string }
-	| { kind: 'dropIndex'; name: string }
+	| { kind: 'dropIndex'; table: string; name: string }
 	| { kind: 'addForeignKey'; table; on: string; references: { table; column }; onDelete?; onUpdate?; name? }
 	| { kind: 'dropForeignKey'; table: string; name: string }
 	| { kind: 'execute'; up: (repo: Repo) => Promise<void> }
@@ -2404,6 +2407,20 @@ Vocabulary:
 - A **logical name** in `Change` (`table`, `field.name`, `on[*]`,
   `references.column`) is the schema-declared name. Adapter does
   physical mapping (same convention as §11.4 filter logical names).
+- Table and field declarative changes receive the historical `Change` payload
+  unchanged plus the Repo's validated effective schema config for the logical
+  table name. Resolution occurs when `.up()` runs, inside the active
+  `repo.resolve(...)` scope. `renameTable` resolves `from` and `to`
+  independently; adapters reject unsupported cross-namespace renames before
+  issuing the rename and do not provision namespaces.
+- Index and foreign-key changes resolve their owning logical table the same way;
+  `addForeignKey` resolves its referenced table independently. `dropIndex`
+  requires `table` so adapters never search unrelated tables or collections by
+  index name. Column names and explicit index/constraint names remain literal;
+  generated names use the resolved physical owner.
+- **Upgrade note:** existing `dropIndex` changes must add the owning logical
+  `table`. A name-only drop is no longer accepted at either the TypeScript or
+  runtime validation boundary.
 - **Long-tail features** — partial indexes, functional indexes, GIN/GIST,
   TTL, text indexes, CHECK constraints, triggers, views, sequences,
   composite PKs/FKs — are explicitly out of the canonical algebra. They
@@ -2426,7 +2443,7 @@ The **Migrator** is constructed via the builder-chain rule (§2.2). It is
 the only verb-bearing entity in this subsystem.
 
 ```ts
-const migrator = Migrator.from(repo)
+const migrator = Migrator.from(repo, adapter)
   .migrations([m1, m2, m3])                        // explicit array; lex-sorted by id; dupes throw
   .withoutLock?()                                  // optional opt-out; only allowed when adapter lacks acquireMigrationLock
   .build()
@@ -2474,17 +2491,17 @@ class PgAdapter extends configurable(pgConnPipe, OrmAdapter) {
 	async acquireMigrationLock<T>(fn: () => Promise<T>): Promise<T>
 
 	// declarative variant renderers (full SQL set: 11 methods)
-	async applyCreateTable(change: CreateTableChange): Promise<void>
-	async applyDropTable(change: DropTableChange): Promise<void>
-	async applyAddField(change: AddFieldChange): Promise<void>
-	async applyDropField(change: DropFieldChange): Promise<void>
-	async applyModifyField(change: ModifyFieldChange): Promise<void>
-	async applyRenameTable(change: RenameTableChange): Promise<void>
-	async applyRenameField(change: RenameFieldChange): Promise<void>
-	async applyAddIndex(change: AddIndexChange): Promise<void>
-	async applyDropIndex(change: DropIndexChange): Promise<void>
-	async applyAddForeignKey(change: AddForeignKeyChange): Promise<void>
-	async applyDropForeignKey(change: DropForeignKeyChange): Promise<void>
+	async applyCreateTable(change: CreateTableChange, target: SchemaConfig): Promise<void>
+	async applyDropTable(change: DropTableChange, target: SchemaConfig): Promise<void>
+	async applyAddField(change: AddFieldChange, target: SchemaConfig): Promise<void>
+	async applyDropField(change: DropFieldChange, target: SchemaConfig): Promise<void>
+	async applyModifyField(change: ModifyFieldChange, target: SchemaConfig): Promise<void>
+	async applyRenameTable(change: RenameTableChange, from: SchemaConfig, to: SchemaConfig): Promise<void>
+	async applyRenameField(change: RenameFieldChange, target: SchemaConfig): Promise<void>
+	async applyAddIndex(change: AddIndexChange, target: SchemaConfig): Promise<void>
+	async applyDropIndex(change: DropIndexChange, target: SchemaConfig): Promise<void>
+	async applyAddForeignKey(change: AddForeignKeyChange, owner: SchemaConfig, referenced: SchemaConfig): Promise<void>
+	async applyDropForeignKey(change: DropForeignKeyChange, target: SchemaConfig): Promise<void>
 }
 
 class MongoAdapter extends configurable(mongoConnPipe, OrmAdapter) {
@@ -2655,7 +2672,7 @@ tracker row from the adapter's storage.
 
 ### 16.8 Validation flow
 
-Validation runs once at `Migrator.from(repo).migrations(arr).build()` —
+Validation runs once at `Migrator.from(repo, adapter).migrations(arr).build()` —
 the **validate-once rule** (§7.1) applies to migrations too. The
 **`assertNormalisedChanges` function** walks every Change in every
 Migration and enforces:
@@ -2690,11 +2707,11 @@ class OrmValidationError extends EquippedError {
 ### 16.9 Cross-cutting interactions
 
 - **`repo.resolve(transform, fn)` wrapping `migrator.up()`.** The config
-  transform applies to every query inside `up()` — including `apply*`
-  method calls if the adapter routes through `this.config`. Tenant-aware
-  migrations ARE expressible via `repo.resolve` wrap, but at the
-  conceptual level `Change.name` is a literal DB name; tenant prefixing
-  belongs to the resolver, not the algebra.
+  transform applies to every query and every declarative `apply*` call inside
+  `up()`. The Migrator resolves each Change's logical table name through the
+  Repo at execution time and passes the validated effective config to the
+  adapter. Tenant-aware migrations are expressible via the scope, while the
+  historical Change payload stays resolver-independent.
 - **`repo.session(...)` wrapping `migrator.up()`** — see §16.6
   atomic-across-migrations escape.
 - **EventLog interactions** — none. Migrations and the EventLog (§15) are
@@ -2732,26 +2749,27 @@ class OrmValidationError extends EquippedError {
   Adapter-owned tracker tables keep recovery adapter-specific by
   construction. Users who need to remove a tracker row do so directly
   via the adapter's documented storage shape.
-- **No drift detection.** The runtime trusts user-supplied `Change`
+- **No runtime drift detection.** The runtime trusts user-supplied `Change`
   payloads. If the live DB diverges from the migration sequence
   (manual edits, restores from backup, partially-rolled-back changes),
   the next `.up()` may fail loud (`apply*` errors) but doesn't
-  proactively detect drift. Drift detection is a B (codegen) concern
-  — see `docs/orm/TODO.md`.
+  proactively detect drift. Codegen reports the natural current-to-target diff,
+  but does not compare the live database with historical migration snapshots
+  (§16.13).
 
 ### 16.11 Migration codegen ("B" in the C-hybrid scope)
 
 The codegen subsystem produces a `ReadonlyArray<ChangeFor<A>>` from a
-diff between the user's declared Schemas (the **target state**) and the
-live DB (the **current state** recovered via the adapter's
-`introspect()` capability). It is the second half of the C-hybrid scope
+diff between the user's explicitly managed Schemas (the **target state**) and
+their corresponding live targets (the **current state** recovered via the
+adapter's targeted introspection capability). It is the second half of the C-hybrid scope
 (§16.1's runtime is the first); both ship in v1.
 
 The **MigrationCodegen artifact** is constructed via the builder-chain
 rule (§2.2):
 
 ```ts
-const codegen = MigrationCodegen.from(repo)
+const codegen = MigrationCodegen.from(repo, adapter)
   .target([UserSchema, PostSchema, …])           // declared schemas = desired state
   .build()
 ```
@@ -2759,15 +2777,27 @@ const codegen = MigrationCodegen.from(repo)
 `.build()` prerequisite (per §2.6): `.target(...)` was called.
 
 The **codegen capability gate** narrows `MigrationCodegen.from(repo)` at
-the type level — adapter without `introspect?()` declared resolves to a
+the type level — an adapter must declare `introspectTarget(config)`,
+`physicalTargetIdentity(config)`, and broad diagnostic `introspect()`. An adapter
+without all three resolves to a
 type error at the `.from(...)` call. Symmetric with §5.3
-`SchemaCompatible<A, S>`:
+`SchemaCompatible<A, S>` (the adapter argument is also required so codegen can
+perform targeted introspection):
 
 ```ts
-type IntrospectableAdapter<A extends OrmAdapter> = A extends { introspect(): Promise<DiscoveredSchema[]> } ? A : never
+type IntrospectableAdapter<A extends OrmAdapter> = A extends {
+	introspectTarget(config: unknown): Promise<DiscoveredSchema | null>
+	physicalTargetIdentity(config: unknown): string
+	introspect(): Promise<DiscoveredSchema[]>
+}
+	? A
+	: never
 
 class MigrationCodegen {
-	static from<A extends OrmAdapter>(repo: Repo<IntrospectableAdapter<A>>): MigrationCodegenBuilder<A>
+	static from<A extends OrmAdapter>(
+		repo: Repo<IntrospectableAdapter<A>>,
+		adapter: IntrospectableAdapter<A>,
+	): MigrationCodegenBuilder<A>
 }
 ```
 
@@ -2795,6 +2825,22 @@ const migration: Migration<typeof adapter> = {
 }
 // User serializes `migration` to a file, holds in memory, etc.
 ```
+
+At diff time, each target's logical schema name is resolved through the supplied
+Repo's base resolver, active `repo.resolve(...)` transform stack, and schema-config
+pipe. This happens when `diff()` is called, not when codegen is built. Targeted
+introspection receives that validated effective config. The resulting Changes
+still contain logical table names and copied field payloads; they do not retain
+live Schema objects or resolved physical names. Migrator resolves those logical
+names once when applying a Change, so mapped and namespace-aware targets are not
+double mapped.
+
+The target array is an ownership boundary, not a complete database inventory.
+Only supplied logical schemas are compared. Omitted physical tables are left
+untouched and never cause `dropTable`, `dropIndex`, or `dropForeignKey` cleanup;
+an empty target array is a no-op. Whole-table removal is therefore explicit:
+author a `dropTable` Change (and any prerequisite cleanup Changes) in a Migration.
+Removing a Schema from `.target(...)` does not request deletion.
 
 The **no-auto-id rule**: codegen does not generate an `id`.
 Id-conventions (timestamp prefix vs counter vs slug) are user-domain.
@@ -2836,8 +2882,8 @@ no-file-emission decision (§16.13).
 
 ### 16.14 DiscoveredSchema and adapter introspection
 
-Introspection returns one **DiscoveredSchema** per top-level container
-(table for SQL, collection for Mongo) the adapter finds in the live DB:
+Broad diagnostic introspection returns one **DiscoveredSchema** per top-level
+container (table for SQL, collection for Mongo) the adapter finds in the live DB:
 
 ```ts
 type DiscoveredField = {
@@ -2877,6 +2923,14 @@ empty arrays for `fields`/`foreignKeys` and absent `pk` are honest
 about Mongo's schemaless storage. Per-adapter descriptor types were
 rejected — they'd double the surface for marginal precision since
 `DiscoveredIndex` is identical across adapters.
+
+Codegen does not use broad discovery as a fallback. For every managed Schema it
+resolves the effective Repo config, checks the adapter's canonical
+`physicalTargetIdentity(config)`, and calls `introspectTarget(config)` only for
+that location. Two logical names with the same canonical physical identity are
+ambiguous ownership and fail explicitly with both names; codegen never attempts
+to invert a resolver or guess which logical name owns a discovered table.
+`discover()` remains the explicit broad diagnostic API.
 
 The **Mongo-introspection rule** (referenced from §16.13): the Mongo
 adapter's `introspect()` returns descriptors with `fields: []`,
@@ -2940,10 +2994,13 @@ function diffSchemas<A extends OrmAdapter>(
 Reads `adapter` only to know which `Change` kinds are supported (per
 §16.4 structural narrowing). No DB calls.
 
-The **name-based-matching rule**: tables/columns/indexes/FKs match by
-literal name only. Anything in `target` but not `current` → "add"
-Change; anything in `current` but not `target` → "drop" Change; same
-name with differing payload → "modify" or surfaces as
+The **managed name-based-matching rule**: supplied tables and their
+columns/indexes/FKs match by literal logical name only. Anything in `target` but
+not `current` → "add" Change. A field in a matched managed table that is in
+`current` but not its target Schema → "drop" Change. A current table with no
+corresponding supplied target is outside the ownership boundary and ignored;
+the exported diff function does not infer whole-table deletion from omission.
+The same name with differing payload → "modify" or surfaces as
 `drop` + `add` (e.g. index-shape change). Renames are NOT auto-detected
 (per §16.13).
 

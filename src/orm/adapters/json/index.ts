@@ -336,48 +336,59 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 		return this.#withFileLock(fn)
 	}
 
-	async applyCreateTable(change: CreateTableChange<any>): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyCreateTable(change))
+	async applyCreateTable(change: CreateTableChange<any>, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyCreateTable(change, target))
 	}
 
-	async applyDropTable(change: DropTableChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropTable(change))
+	async applyDropTable(change: DropTableChange, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropTable(change, target))
 	}
 
-	async applyAddField(change: AddFieldChange<any>): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddField(change))
+	async applyAddField(change: AddFieldChange<any>, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddField(change, target))
 	}
 
-	async applyDropField(change: DropFieldChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropField(change))
+	async applyDropField(change: DropFieldChange, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropField(change, target))
 	}
 
-	async applyModifyField(change: ModifyFieldChange<any>): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyModifyField(change))
+	async applyModifyField(change: ModifyFieldChange<any>, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyModifyField(change, target))
 	}
 
-	async applyRenameTable(change: RenameTableChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyRenameTable(change))
+	async applyRenameTable(change: RenameTableChange, from?: unknown, to?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyRenameTable(change, from, to))
 	}
 
-	async applyRenameField(change: RenameFieldChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyRenameField(change))
+	async applyRenameField(change: RenameFieldChange, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyRenameField(change, target))
 	}
 
-	async applyAddIndex(change: AddIndexChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddIndex(change))
+	async applyAddIndex(change: AddIndexChange, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddIndex(change, target))
 	}
 
-	async applyDropIndex(change: DropIndexChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropIndex(change))
+	async applyDropIndex(change: DropIndexChange, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropIndex(change, target))
 	}
 
-	async applyAddForeignKey(change: AddForeignKeyChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddForeignKey(change))
+	async applyAddForeignKey(change: AddForeignKeyChange, target?: unknown, referencedTarget?: unknown): Promise<void> {
+		return this.#withCurrentFile(
+			true,
+			async () => await this.#inMemory.applyAddForeignKey(change, target, referencedTarget),
+		)
 	}
 
-	async applyDropForeignKey(change: DropForeignKeyChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropForeignKey(change))
+	async applyDropForeignKey(change: DropForeignKeyChange, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropForeignKey(change, target))
+	}
+
+	physicalTargetIdentity(config: JsonAdapterConfig): string {
+		return this.#inMemory.physicalTargetIdentity(config)
+	}
+
+	async introspectTarget(config: JsonAdapterConfig): Promise<DiscoveredSchema | null> {
+		return this.#withCurrentFile(false, async () => await this.#inMemory.introspectTarget(config))
 	}
 
 	async introspect(): Promise<DiscoveredSchema[]> {
@@ -451,6 +462,23 @@ if (import.meta.vitest) {
 	})
 
 	describe('json adapter — surface parity with in-memory', () => {
+		test('targeted introspection reads one resolved table while broad discovery remains available', async () => {
+			const adapter = JsonAdapter.create({ filePath })
+			await adapter.connect()
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
+
+			expect((await adapter.introspectTarget({ table: 'users' }))?.name).toBe('users')
+			expect(await adapter.introspectTarget({ table: 'missing' })).toBeNull()
+			expect(adapter.physicalTargetIdentity({ table: 'users' })).toBe('users')
+			expect(await adapter.introspect()).toHaveLength(1)
+			await adapter.disconnect()
+		})
+
 		test('CRUD: create, find, update, delete round-trip', async () => {
 			const schema = Schema.from('users')
 				.pk('id', v.string(), () => 'u')
@@ -1078,7 +1106,7 @@ if (import.meta.vitest) {
 			await a2.connect()
 			const schemas = await a2.introspect()
 			expect(schemas[0].indexes).toEqual([{ name: 'users_email_idx', on: ['email'], unique: true }])
-			await a2.applyDropIndex({ kind: 'dropIndex', name: 'users_email_idx' })
+			await a2.applyDropIndex({ kind: 'dropIndex', table: 'users', name: 'users_email_idx' })
 			await a2.disconnect()
 
 			const a3 = JsonAdapter.create({ filePath })
@@ -1204,7 +1232,7 @@ if (import.meta.vitest) {
 
 		function makeEnv() {
 			const adapter = JsonAdapter.create({ filePath })
-			const repo = new Repo({ adapter, resolve: (s) => ({ table: s.name }) })
+			const repo = new Repo({ adapter, resolve: (name) => ({ table: name }) })
 			return { adapter, repo }
 		}
 
@@ -1259,7 +1287,7 @@ if (import.meta.vitest) {
 					changes: [
 						{ kind: 'dropField', table: 'users', name: 'age' },
 						{ kind: 'dropForeignKey', table: 'posts', name: 'posts_authorId_fk' },
-						{ kind: 'dropIndex', name: 'users_email_idx' },
+						{ kind: 'dropIndex', table: 'users', name: 'users_email_idx' },
 						{ kind: 'dropTable', name: 'articles' },
 					],
 				},
@@ -1335,12 +1363,12 @@ if (import.meta.vitest) {
 
 			const adapter1 = JsonAdapter.create({ filePath })
 			await adapter1.connect()
-			const repo1 = new Repo({ adapter: adapter1, resolve: (s) => ({ table: s.name }) })
+			const repo1 = new Repo({ adapter: adapter1, resolve: (name) => ({ table: name }) })
 			const migrator1 = Migrator.from(repo1, adapter1).migrations(migrations).build()
 
 			const adapter2 = JsonAdapter.create({ filePath })
 			await adapter2.connect()
-			const repo2 = new Repo({ adapter: adapter2, resolve: (s) => ({ table: s.name }) })
+			const repo2 = new Repo({ adapter: adapter2, resolve: (name) => ({ table: name }) })
 			const migrator2 = Migrator.from(repo2, adapter2).migrations(migrations).build()
 
 			const p1 = migrator1.up()

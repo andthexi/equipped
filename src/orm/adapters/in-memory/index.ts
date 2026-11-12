@@ -531,91 +531,103 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		this.migrations.set(id, { id, appliedAt })
 	}
 
-	async applyCreateTable(change: CreateTableChange<any>): Promise<void> {
+	async applyCreateTable(change: CreateTableChange<any>, target?: unknown): Promise<void> {
+		const name = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.name
 		const fields = new Map<string, AnyFieldSpec>()
 		for (const f of change.fields) {
 			fields.set(f.name, { ...f })
 		}
-		this.tables.set(change.name, { pk: { name: change.pk.name, type: change.pk.type }, fields })
+		this.tables.set(name, { pk: { name: change.pk.name, type: change.pk.type }, fields })
 	}
 
-	async applyDropTable(change: DropTableChange): Promise<void> {
+	async applyDropTable(change: DropTableChange, target?: unknown): Promise<void> {
+		const targetName = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.name
 		for (const foreignKey of this.foreignKeys.values()) {
-			if (foreignKey.table !== change.name && foreignKey.references.table === change.name) {
+			if (foreignKey.table !== targetName && foreignKey.references.table === targetName) {
 				throw new OrmValidationError('changes', change.name, 'dropTable', [
 					{ cause: 'table is referenced by a foreign key' },
 				])
 			}
 		}
-		this.stores.delete(change.name)
-		this.tables.delete(change.name)
+		this.stores.delete(targetName)
+		this.tables.delete(targetName)
 		for (const [name, index] of this.indexes) {
-			if (index.table === change.name) this.indexes.delete(name)
+			if (index.table === targetName) this.indexes.delete(name)
 		}
 		for (const [name, foreignKey] of this.foreignKeys) {
-			if (foreignKey.table === change.name) this.foreignKeys.delete(name)
+			if (foreignKey.table === targetName) this.foreignKeys.delete(name)
 		}
 	}
 
-	async applyAddField(change: AddFieldChange<any>): Promise<void> {
-		const table = this.tables.get(change.table)
+	async applyAddField(change: AddFieldChange<any>, target?: unknown): Promise<void> {
+		const table = this.tables.get(
+			target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table,
+		)
 		if (table) {
 			table.fields.set(change.field.name, { ...change.field })
 		}
 	}
 
-	async applyDropField(change: DropFieldChange): Promise<void> {
-		const table = this.tables.get(change.table)
+	async applyDropField(change: DropFieldChange, target?: unknown): Promise<void> {
+		const table = this.tables.get(
+			target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table,
+		)
 		if (table) {
 			table.fields.delete(change.name)
 		}
 	}
 
-	async applyModifyField(change: ModifyFieldChange<any>): Promise<void> {
-		const table = this.tables.get(change.table)
+	async applyModifyField(change: ModifyFieldChange<any>, target?: unknown): Promise<void> {
+		const table = this.tables.get(
+			target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table,
+		)
 		if (table) {
 			table.fields.delete(change.name)
 			table.fields.set(change.to.name, { ...change.to })
 		}
 	}
 
-	async applyRenameTable(change: RenameTableChange): Promise<void> {
-		const table = this.tables.get(change.from)
-		const store = this.stores.get(change.from)
+	async applyRenameTable(change: RenameTableChange, fromTarget?: unknown, toTarget?: unknown): Promise<void> {
+		const from = fromTarget ? resolveConfigName({} as AnySchema, fromTarget as InMemoryRepoConfig) : change.from
+		const to = toTarget ? resolveConfigName({} as AnySchema, toTarget as InMemoryRepoConfig) : change.to
+		const table = this.tables.get(from)
+		const store = this.stores.get(from)
 		if (!table && !store) return
-		if (change.from === change.to) return
-		if (this.tables.has(change.to) || this.stores.has(change.to)) {
+		if (from === to) return
+		if (this.tables.has(to) || this.stores.has(to)) {
 			throw new OrmValidationError('changes', change.from, 'renameTable', [
 				{ cause: `destination table '${change.to}' already exists` },
 			])
 		}
 		if (store) {
-			this.stores.delete(change.from)
-			this.stores.set(change.to, store)
+			this.stores.delete(from)
+			this.stores.set(to, store)
 		}
 		if (table) {
-			this.tables.delete(change.from)
-			this.tables.set(change.to, table)
+			this.tables.delete(from)
+			this.tables.set(to, table)
 		}
 		for (const [name, index] of this.indexes) {
-			if (index.table === change.from) this.indexes.set(name, { ...index, table: change.to })
+			if (index.table === from) this.indexes.set(name, { ...index, table: to })
 		}
 		for (const [name, foreignKey] of this.foreignKeys) {
-			if (foreignKey.table === change.from || foreignKey.references.table === change.from) {
+			if (foreignKey.table === from || foreignKey.references.table === from) {
 				this.foreignKeys.set(name, {
 					...foreignKey,
-					table: foreignKey.table === change.from ? change.to : foreignKey.table,
+					table: foreignKey.table === from ? to : foreignKey.table,
 					references:
-						foreignKey.references.table === change.from
-							? { ...foreignKey.references, table: change.to }
+						foreignKey.references.table === from
+							? { ...foreignKey.references, table: to }
 							: foreignKey.references,
 				})
 			}
 		}
 	}
 
-	async applyRenameField(change: RenameFieldChange): Promise<void> {
-		const table = this.tables.get(change.table)
+	async applyRenameField(change: RenameFieldChange, target?: unknown): Promise<void> {
+		const table = this.tables.get(
+			target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table,
+		)
 		if (table) {
 			const field = table.fields.get(change.from)
 			if (field) {
@@ -625,61 +637,81 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		}
 	}
 
-	async applyAddIndex(change: AddIndexChange): Promise<void> {
-		const indexName = change.name ?? `${change.table}_${change.on.join('_')}_idx`
-		this.indexes.set(indexName, { table: change.table, on: change.on, unique: change.unique ?? false })
+	async applyAddIndex(change: AddIndexChange, target?: unknown): Promise<void> {
+		const table = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table
+		const indexName = change.name ?? `${table}_${change.on.join('_')}_idx`
+		this.indexes.set(indexName, { table, on: change.on, unique: change.unique ?? false })
 	}
 
-	async applyDropIndex(change: DropIndexChange): Promise<void> {
-		this.indexes.delete(change.name)
+	async applyDropIndex(change: DropIndexChange, target?: unknown): Promise<void> {
+		const table = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table
+		if (this.indexes.get(change.name)?.table === table) this.indexes.delete(change.name)
 	}
 
-	async applyAddForeignKey(change: AddForeignKeyChange): Promise<void> {
-		const fkName = change.name ?? `${change.table}_${change.on}_fk`
+	async applyAddForeignKey(change: AddForeignKeyChange, target?: unknown, referencedTarget?: unknown): Promise<void> {
+		const table = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table
+		const referencedTable = referencedTarget
+			? resolveConfigName({} as AnySchema, referencedTarget as InMemoryRepoConfig)
+			: change.references.table
+		const fkName = change.name ?? `${table}_${change.on}_fk`
 		this.foreignKeys.set(fkName, {
-			table: change.table,
+			table,
 			on: change.on,
-			references: { table: change.references.table, column: change.references.column },
+			references: { table: referencedTable, column: change.references.column },
 			onDelete: change.onDelete as ForeignKeyAction | undefined,
 			onUpdate: change.onUpdate as ForeignKeyAction | undefined,
 		})
 	}
 
-	async applyDropForeignKey(change: DropForeignKeyChange): Promise<void> {
-		this.foreignKeys.delete(change.name)
+	async applyDropForeignKey(change: DropForeignKeyChange, target?: unknown): Promise<void> {
+		const table = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table
+		if (this.foreignKeys.get(change.name)?.table === table) this.foreignKeys.delete(change.name)
+	}
+
+	physicalTargetIdentity(config: InMemoryRepoConfig): string {
+		return resolveConfigName({} as AnySchema, config)
+	}
+
+	async introspectTarget(config: InMemoryRepoConfig): Promise<DiscoveredSchema | null> {
+		const name = this.physicalTargetIdentity(config)
+		if (!this.tables.has(name) && !this.stores.has(name)) return null
+
+		const meta = this.tables.get(name)
+		const fields = [...(meta?.fields.values() ?? [])].map((f) => ({
+			name: f.name,
+			type: f.type as FieldTypeName,
+			nullable: f.nullable ?? false,
+			...(f.default !== undefined ? { default: f.default } : {}),
+			...(f.unique ? { unique: true } : {}),
+		}))
+		const indexes = [...this.indexes.entries()]
+			.filter(([, idx]) => idx.table === name)
+			.map(([indexName, index]) => ({ name: indexName, on: index.on, unique: index.unique }))
+		const foreignKeys = [...this.foreignKeys.entries()]
+			.filter(([, foreignKey]) => foreignKey.table === name)
+			.map(([foreignKeyName, foreignKey]) => ({
+				name: foreignKeyName,
+				on: foreignKey.on,
+				references: { ...foreignKey.references },
+				...(foreignKey.onDelete ? { onDelete: foreignKey.onDelete } : {}),
+				...(foreignKey.onUpdate ? { onUpdate: foreignKey.onUpdate } : {}),
+			}))
+
+		return {
+			name,
+			pk: meta ? { name: meta.pk.name, type: meta.pk.type as FieldTypeName } : undefined,
+			fields,
+			indexes,
+			foreignKeys,
+		}
 	}
 
 	async introspect(): Promise<DiscoveredSchema[]> {
 		const schemas: DiscoveredSchema[] = []
 		const names = new Set([...this.tables.keys(), ...this.stores.keys()])
 		for (const name of names) {
-			const meta = this.tables.get(name)
-			const fields = [...(meta?.fields.values() ?? [])].map((f) => ({
-				name: f.name,
-				type: f.type as FieldTypeName,
-				nullable: f.nullable ?? false,
-				...(f.default !== undefined ? { default: f.default } : {}),
-				...(f.unique ? { unique: true } : {}),
-			}))
-			const indexes = [...this.indexes.entries()]
-				.filter(([, idx]) => idx.table === name)
-				.map(([idxName, idx]) => ({ name: idxName, on: idx.on, unique: idx.unique }))
-			const foreignKeys = [...this.foreignKeys.entries()]
-				.filter(([, fk]) => fk.table === name)
-				.map(([fkName, fk]) => ({
-					name: fkName,
-					on: fk.on,
-					references: { table: fk.references.table, column: fk.references.column },
-					...(fk.onDelete ? { onDelete: fk.onDelete } : {}),
-					...(fk.onUpdate ? { onUpdate: fk.onUpdate } : {}),
-				}))
-			schemas.push({
-				name,
-				pk: meta ? { name: meta.pk.name, type: meta.pk.type as FieldTypeName } : undefined,
-				fields,
-				indexes,
-				foreignKeys,
-			})
+			const schema = await this.introspectTarget({ table: name })
+			if (schema) schemas.push(schema)
 		}
 		return schemas
 	}
@@ -722,6 +754,27 @@ if (import.meta.vitest) {
 	const { v } = await import('valleyed')
 
 	describe('in-memory adapter', () => {
+		test('targeted introspection uses the resolved physical table and reports absence', async () => {
+			const adapter = InMemoryAdapter.create({})
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'tenant_users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
+
+			expect(await adapter.introspectTarget({ table: 'users', prefix: 'tenant_' })).toEqual({
+				name: 'tenant_users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+				indexes: [],
+				foreignKeys: [],
+			})
+			expect(await adapter.introspectTarget({ table: 'missing', prefix: 'tenant_' })).toBeNull()
+			expect(adapter.physicalTargetIdentity({ table: 'users', prefix: 'tenant_' })).toBe('tenant_users')
+			expect(adapter.physicalTargetIdentity({ table: 'tenant_users' })).toBe('tenant_users')
+		})
+
 		test('introspect discovers lazily written stores without inventing schema metadata', async () => {
 			const schema = Schema.from('users')
 				.pk('id', v.string(), () => 'u')

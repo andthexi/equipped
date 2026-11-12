@@ -36,6 +36,7 @@ import {
 	buildUpdateQuery,
 	buildUpsertQuery,
 	extractUpsertConflictColumn,
+	quoteQualifiedIdentifier,
 } from './query.js'
 
 export type PostgresqlRepoConfig = {
@@ -166,7 +167,10 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		try {
 			const tableName = this.#resolveTableName(c)
 			const pkName = schema.pkField.name
-			const result = await this.#getClient().query(`SELECT * FROM "${tableName}" WHERE "${pkName}" = $1`, [pk])
+			const result = await this.#getClient().query(
+				`SELECT * FROM ${quoteQualifiedIdentifier(tableName)} WHERE "${pkName}" = $1`,
+				[pk],
+			)
 			return result.rows[0] ?? null
 		} catch (error) {
 			throw new EquippedError(
@@ -205,9 +209,10 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			const pkName = schema.pkField.name
 			const data = flattenOps(ops)
 			if (Object.keys(data).length === 0) {
-				const result = await this.#getClient().query(`SELECT * FROM "${tableName}" WHERE "${pkName}" = $1`, [
-					pk,
-				])
+				const result = await this.#getClient().query(
+					`SELECT * FROM ${quoteQualifiedIdentifier(tableName)} WHERE "${pkName}" = $1`,
+					[pk],
+				)
 				return result.rows[0] ?? null
 			}
 			const { sql, params } = buildPkUpdateQuery(tableName, pkName, pk, data)
@@ -228,7 +233,7 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			const tableName = this.#resolveTableName(c)
 			const pkName = schema.pkField.name
 			const result = await this.#getClient().query(
-				`DELETE FROM "${tableName}" WHERE "${pkName}" = $1 RETURNING *`,
+				`DELETE FROM ${quoteQualifiedIdentifier(tableName)} WHERE "${pkName}" = $1 RETURNING *`,
 				[pk],
 			)
 			return result.rows[0] ?? null
@@ -443,31 +448,37 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		}
 	}
 
-	async applyCreateTable(change: CreateTableChange<any>): Promise<void> {
+	async applyCreateTable(change: CreateTableChange<any>, target?: unknown): Promise<void> {
+		const table = this.#resolveTableName((target as PostgresqlRepoConfig | undefined) ?? { table: change.name })
 		const pkType = FIELD_TYPE_TO_PG[change.pk.type] ?? 'text'
 		const cols = [`"${change.pk.name}" ${pkType} PRIMARY KEY`]
 		for (const f of change.fields) {
 			cols.push(this.#renderColumnDef(f))
 		}
-		await this.#getClient().query(`CREATE TABLE "${change.name}" (${cols.join(', ')})`)
+		await this.#getClient().query(`CREATE TABLE ${quoteQualifiedIdentifier(table)} (${cols.join(', ')})`)
 	}
 
-	async applyDropTable(change: DropTableChange): Promise<void> {
-		await this.#getClient().query(`DROP TABLE "${change.name}"`)
+	async applyDropTable(change: DropTableChange, target?: unknown): Promise<void> {
+		const table = this.#resolveTableName((target as PostgresqlRepoConfig | undefined) ?? { table: change.name })
+		await this.#getClient().query(`DROP TABLE ${quoteQualifiedIdentifier(table)}`)
 	}
 
-	async applyAddField(change: AddFieldChange<any>): Promise<void> {
+	async applyAddField(change: AddFieldChange<any>, target?: unknown): Promise<void> {
+		const table = this.#resolveTableName((target as PostgresqlRepoConfig | undefined) ?? { table: change.table })
 		const colDef = this.#renderColumnDef(change.field)
-		await this.#getClient().query(`ALTER TABLE "${change.table}" ADD COLUMN ${colDef}`)
+		await this.#getClient().query(`ALTER TABLE ${quoteQualifiedIdentifier(table)} ADD COLUMN ${colDef}`)
 	}
 
-	async applyDropField(change: DropFieldChange): Promise<void> {
-		await this.#getClient().query(`ALTER TABLE "${change.table}" DROP COLUMN "${change.name}"`)
+	async applyDropField(change: DropFieldChange, target?: unknown): Promise<void> {
+		const table = this.#resolveTableName((target as PostgresqlRepoConfig | undefined) ?? { table: change.table })
+		await this.#getClient().query(`ALTER TABLE ${quoteQualifiedIdentifier(table)} DROP COLUMN "${change.name}"`)
 	}
 
-	async applyModifyField(change: ModifyFieldChange<any>): Promise<void> {
+	async applyModifyField(change: ModifyFieldChange<any>, target?: unknown): Promise<void> {
 		const client = this.#getClient()
-		const table = `"${change.table}"`
+		const table = quoteQualifiedIdentifier(
+			this.#resolveTableName((target as PostgresqlRepoConfig | undefined) ?? { table: change.table }),
+		)
 		const col = `"${change.name}"`
 		const newType = FIELD_TYPE_TO_PG[change.to.type] ?? 'text'
 		await client.query(`ALTER TABLE ${table} ALTER COLUMN ${col} TYPE ${newType} USING ${col}::${newType}`)
@@ -488,48 +499,89 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		}
 	}
 
-	async applyRenameTable(change: RenameTableChange): Promise<void> {
-		await this.#getClient().query(`ALTER TABLE "${change.from}" RENAME TO "${change.to}"`)
+	async applyRenameTable(change: RenameTableChange, fromTarget?: unknown, toTarget?: unknown): Promise<void> {
+		const from = (fromTarget as PostgresqlRepoConfig | undefined) ?? { table: change.from }
+		const to = (toTarget as PostgresqlRepoConfig | undefined) ?? { table: change.to }
+		const fromSchema = from.schema === 'public' ? undefined : from.schema
+		const toSchema = to.schema === 'public' ? undefined : to.schema
+		if (fromSchema !== toSchema) throw new Error('PostgreSQL table rename cannot cross schemas')
+		await this.#getClient().query(
+			`ALTER TABLE ${quoteQualifiedIdentifier(this.#resolveTableName(from))} RENAME TO ${quoteQualifiedIdentifier(to.table)}`,
+		)
 	}
 
-	async applyRenameField(change: RenameFieldChange): Promise<void> {
-		await this.#getClient().query(`ALTER TABLE "${change.table}" RENAME COLUMN "${change.from}" TO "${change.to}"`)
+	async applyRenameField(change: RenameFieldChange, target?: unknown): Promise<void> {
+		const table = this.#resolveTableName((target as PostgresqlRepoConfig | undefined) ?? { table: change.table })
+		await this.#getClient().query(
+			`ALTER TABLE ${quoteQualifiedIdentifier(table)} RENAME COLUMN "${change.from}" TO "${change.to}"`,
+		)
 	}
 
-	async applyAddIndex(change: AddIndexChange): Promise<void> {
-		const name = change.name ?? this.#deriveIndexName(change.table, change.on as string[], change.unique)
+	async applyAddIndex(change: AddIndexChange, target?: unknown): Promise<void> {
+		const config = (target as PostgresqlRepoConfig | undefined) ?? { table: change.table }
+		const name = change.name ?? this.#deriveIndexName(config.table, change.on as string[], change.unique)
 		const unique = change.unique ? 'UNIQUE ' : ''
 		const cols = (change.on as string[]).map((c) => `"${c}"`).join(', ')
-		await this.#getClient().query(`CREATE ${unique}INDEX "${name}" ON "${change.table}" (${cols})`)
+		await this.#getClient().query(
+			`CREATE ${unique}INDEX "${name}" ON ${quoteQualifiedIdentifier(this.#resolveTableName(config))} (${cols})`,
+		)
 	}
 
-	async applyDropIndex(change: DropIndexChange): Promise<void> {
-		await this.#getClient().query(`DROP INDEX "${change.name}"`)
+	async applyDropIndex(change: DropIndexChange, target?: unknown): Promise<void> {
+		const config = (target as PostgresqlRepoConfig | undefined) ?? { table: change.table }
+		const name = config.schema && config.schema !== 'public' ? `${config.schema}.${change.name}` : change.name
+		await this.#getClient().query(`DROP INDEX ${quoteQualifiedIdentifier(name)}`)
 	}
 
-	async applyAddForeignKey(change: AddForeignKeyChange): Promise<void> {
-		const name = change.name ?? `fk_${change.table}_${change.on}`
-		let sql = `ALTER TABLE "${change.table}" ADD CONSTRAINT "${name}" FOREIGN KEY ("${change.on}") REFERENCES "${change.references.table}" ("${change.references.column}")`
+	async applyAddForeignKey(change: AddForeignKeyChange, target?: unknown, referencedTarget?: unknown): Promise<void> {
+		const config = (target as PostgresqlRepoConfig | undefined) ?? { table: change.table }
+		const referenced = (referencedTarget as PostgresqlRepoConfig | undefined) ?? { table: change.references.table }
+		const name = change.name ?? `fk_${config.table}_${change.on}`
+		let sql = `ALTER TABLE ${quoteQualifiedIdentifier(this.#resolveTableName(config))} ADD CONSTRAINT "${name}" FOREIGN KEY ("${change.on}") REFERENCES ${quoteQualifiedIdentifier(this.#resolveTableName(referenced))} ("${change.references.column}")`
 		if (change.onDelete) sql += ` ON DELETE ${this.#renderFkAction(change.onDelete)}`
 		if (change.onUpdate) sql += ` ON UPDATE ${this.#renderFkAction(change.onUpdate)}`
 		await this.#getClient().query(sql)
 	}
 
-	async applyDropForeignKey(change: DropForeignKeyChange): Promise<void> {
-		await this.#getClient().query(`ALTER TABLE "${change.table}" DROP CONSTRAINT "${change.name}"`)
+	async applyDropForeignKey(change: DropForeignKeyChange, target?: unknown): Promise<void> {
+		const config = (target as PostgresqlRepoConfig | undefined) ?? { table: change.table }
+		await this.#getClient().query(
+			`ALTER TABLE ${quoteQualifiedIdentifier(this.#resolveTableName(config))} DROP CONSTRAINT "${change.name}"`,
+		)
+	}
+
+	physicalTargetIdentity(config: PostgresqlRepoConfig): string {
+		return JSON.stringify([config.schema ?? 'public', config.table])
+	}
+
+	async introspectTarget(config: PostgresqlRepoConfig): Promise<DiscoveredSchema | null> {
+		return (await this.#introspect(config))[0] ?? null
 	}
 
 	async introspect(): Promise<DiscoveredSchema[]> {
+		return this.#introspect()
+	}
+
+	async #introspect(config?: PostgresqlRepoConfig): Promise<DiscoveredSchema[]> {
 		const { OrmIntrospectionError } = await import('../../errors/introspection.js')
 		const client = this.#getClient()
+		const targetSchema = config?.schema ?? 'public'
 
-		const tablesResult = await client.query(
-			`
+		const tablesResult = config
+			? await client.query(
+					`
+			SELECT table_name FROM information_schema.tables
+			WHERE table_schema = $1 AND table_name = $2 AND table_type = 'BASE TABLE'
+		`,
+					[targetSchema, config.table],
+				)
+			: await client.query(
+					`
 			SELECT table_name FROM information_schema.tables
 			WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name != $1
 		`,
-			[TRACKER_TABLE],
-		)
+					[TRACKER_TABLE],
+				)
 
 		const schemas: DiscoveredSchema[] = []
 
@@ -540,10 +592,10 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				`
 				SELECT column_name, data_type, is_nullable, column_default
 				FROM information_schema.columns
-				WHERE table_schema = 'public' AND table_name = $1
+				WHERE table_schema = $1 AND table_name = $2
 				ORDER BY ordinal_position
 			`,
-				[tableName],
+				[targetSchema, tableName],
 			)
 
 			const pkResult = await client.query(
@@ -552,9 +604,9 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				FROM information_schema.table_constraints tc
 				JOIN information_schema.key_column_usage kcu
 					ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-				WHERE tc.table_schema = 'public' AND tc.table_name = $1 AND tc.constraint_type = 'PRIMARY KEY'
+				WHERE tc.table_schema = $1 AND tc.table_name = $2 AND tc.constraint_type = 'PRIMARY KEY'
 			`,
-				[tableName],
+				[targetSchema, tableName],
 			)
 
 			const pkColName = pkResult.rows[0]?.column_name as string | undefined
@@ -565,9 +617,9 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				FROM information_schema.table_constraints tc
 				JOIN information_schema.key_column_usage kcu
 					ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-				WHERE tc.table_schema = 'public' AND tc.table_name = $1 AND tc.constraint_type = 'UNIQUE'
+				WHERE tc.table_schema = $1 AND tc.table_name = $2 AND tc.constraint_type = 'UNIQUE'
 			`,
-				[tableName],
+				[targetSchema, tableName],
 			)
 			const uniqueCols = new Set(uniqueResult.rows.map((r: any) => r.column_name))
 
@@ -613,9 +665,9 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				`
 				SELECT indexname, indexdef
 				FROM pg_indexes
-				WHERE schemaname = 'public' AND tablename = $1
+				WHERE schemaname = $1 AND tablename = $2
 			`,
-				[tableName],
+				[targetSchema, tableName],
 			)
 
 			const indexes: { name: string; on: readonly string[]; unique: boolean }[] = []
@@ -645,9 +697,9 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 					ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
 				JOIN information_schema.referential_constraints rc
 					ON tc.constraint_name = rc.constraint_name AND tc.table_schema = rc.constraint_schema
-				WHERE tc.table_schema = 'public' AND tc.table_name = $1 AND tc.constraint_type = 'FOREIGN KEY'
+				WHERE tc.table_schema = $1 AND tc.table_name = $2 AND tc.constraint_type = 'FOREIGN KEY'
 			`,
-				[tableName],
+				[targetSchema, tableName],
 			)
 
 			const foreignKeys: {
@@ -1469,6 +1521,25 @@ if (import.meta.vitest) {
 			expect(queries[0].sql).toBe('ALTER TABLE "users" RENAME TO "accounts"')
 		})
 
+		test('applyRenameTable rejects cross-schema targets before querying', async () => {
+			await expect(
+				adapter.applyRenameTable(
+					{ kind: 'renameTable', from: 'users', to: 'accounts' },
+					{ schema: 'tenant_a', table: 'users' },
+					{ schema: 'tenant_b', table: 'accounts' },
+				),
+			).rejects.toThrow('cannot cross schemas')
+			expect(queries).toEqual([])
+		})
+
+		test('resolved migration targets quote schema and table separately', async () => {
+			await adapter.applyAddField(
+				{ kind: 'addField', table: 'users', field: { name: 'bio', type: 'string' } },
+				{ schema: 'tenant', table: 'physical_users' },
+			)
+			expect(queries[0].sql).toContain('ALTER TABLE "tenant"."physical_users" ADD COLUMN')
+		})
+
 		test('applyRenameField generates ALTER TABLE RENAME COLUMN', async () => {
 			await adapter.applyRenameField({ kind: 'renameField', table: 'users', from: 'name', to: 'fullName' })
 			expect(queries[0].sql).toBe('ALTER TABLE "users" RENAME COLUMN "name" TO "fullName"')
@@ -1490,6 +1561,31 @@ if (import.meta.vitest) {
 			expect(queries[0].sql).toBe('CREATE UNIQUE INDEX "my_idx" ON "users" ("email")')
 		})
 
+		test('index and foreign-key migrations honor independently resolved schemas', async () => {
+			await adapter.applyAddIndex(
+				{ kind: 'addIndex', table: 'users', on: ['email'] },
+				{ schema: 'tenant-one', table: 'physical users' },
+			)
+			await adapter.applyDropIndex(
+				{ kind: 'dropIndex', table: 'users', name: 'literal index' },
+				{ schema: 'tenant-one', table: 'physical users' },
+			)
+			await adapter.applyAddForeignKey(
+				{ kind: 'addForeignKey', table: 'posts', on: 'authorId', references: { table: 'users', column: 'id' } },
+				{ schema: 'tenant-one', table: 'physical posts' },
+				{ schema: 'accounts', table: 'physical users' },
+			)
+
+			expect(queries[0].sql).toBe(
+				'CREATE INDEX "idx_physical users_email" ON "tenant-one"."physical users" ("email")',
+			)
+			expect(queries[1].sql).toBe('DROP INDEX "tenant-one"."literal index"')
+			expect(queries[2].sql).toContain(
+				'ALTER TABLE "tenant-one"."physical posts" ADD CONSTRAINT "fk_physical posts_authorId"',
+			)
+			expect(queries[2].sql).toContain('REFERENCES "accounts"."physical users" ("id")')
+		})
+
 		test('applyAddIndex auto-derives unique suffix when unique and no name', async () => {
 			await adapter.applyAddIndex({ kind: 'addIndex', table: 'posts', on: ['author', 'title'], unique: true })
 			expect(queries[0].sql).toBe(
@@ -1498,7 +1594,7 @@ if (import.meta.vitest) {
 		})
 
 		test('applyDropIndex generates DROP INDEX', async () => {
-			await adapter.applyDropIndex({ kind: 'dropIndex', name: 'idx_users_email' })
+			await adapter.applyDropIndex({ kind: 'dropIndex', table: 'users', name: 'idx_users_email' })
 			expect(queries[0].sql).toBe('DROP INDEX "idx_users_email"')
 		})
 
@@ -1586,6 +1682,27 @@ if (import.meta.vitest) {
 			])
 			expect(s.indexes).toEqual([{ name: 'users_email_idx', on: ['email'], unique: true }])
 			expect(s.foreignKeys).toEqual([])
+		})
+
+		test('targeted introspection scopes every query to the resolved schema and table', async () => {
+			;(adapter.pool as any).query = async (sql: string, params?: unknown[]) => {
+				queries.push({ sql, params })
+				if (sql.includes('information_schema.tables')) return { rows: [{ table_name: 'users' }] }
+				if (sql.includes('information_schema.columns')) {
+					return { rows: [{ column_name: 'id', data_type: 'text', is_nullable: 'NO', column_default: null }] }
+				}
+				if (sql.includes('PRIMARY KEY')) return { rows: [{ column_name: 'id' }] }
+				return { rows: [] }
+			}
+
+			expect((await adapter.introspectTarget({ schema: 'tenant', table: 'users' }))?.name).toBe('users')
+			expect(queries.every(({ params }) => params?.[0] === 'tenant' && params?.[1] === 'users')).toBe(true)
+			expect(adapter.physicalTargetIdentity({ table: 'users' })).toBe(
+				adapter.physicalTargetIdentity({ schema: 'public', table: 'users' }),
+			)
+			expect(adapter.physicalTargetIdentity({ schema: 'tenant', table: 'users' })).not.toBe(
+				adapter.physicalTargetIdentity({ table: 'users' }),
+			)
 		})
 
 		test('introspect throws OrmIntrospectionError on unsupported PG type', async () => {
