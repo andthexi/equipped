@@ -77,7 +77,15 @@ this release does not implement them.
 ## Live PostgreSQL verification
 
 The upgrade suite now runs against a configured isolated database by setting
-`PG_TEST_URL`. It exercises identity, mapped base and scoped table routing,
+`PG_TEST_URL`:
+
+```sh
+PG_TEST_URL='postgresql://user:password@127.0.0.1:5432/equipped_test' \
+	pnpm exec vitest run tests/orm/adapters/postgresql/migrations.test.ts
+```
+
+The URL must name a test-owned database, never a shared development or production
+database. The suite exercises identity, mapped base and scoped table routing,
 PostgreSQL namespaces, migration-time Repo writes, independently resolved rename
 and foreign-key endpoints, owning-table index changes, and targeted codegen
 round trips. Fixtures use unique owned schemas and migration ids; teardown checks
