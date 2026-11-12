@@ -273,6 +273,25 @@ if (import.meta.vitest) {
 			expect(users[0].posts).toHaveLength(2)
 		})
 
+		test('preload queries resolve each related schema logical name through the shared pipeline', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const resolvedNames: string[] = []
+			const repo = Repo.from(adapter)
+				.resolve((name) => {
+					resolvedNames.push(name)
+					return { table: `mapped_${name}` }
+				})
+				.build()
+			const user = await repo.on(UserSchema).one().create({ email: 'mapped@test.com', name: 'Mapped' })
+			await repo.on(PostSchema).one().create({ title: 'Mapped post', userId: user.id })
+			resolvedNames.length = 0
+
+			const users = await repo.on(UserSchema).all().preload([UserRels.posts]).find()
+
+			expect(users[0].posts).toHaveLength(1)
+			expect(resolvedNames).toEqual(['users', 'posts'])
+		})
+
 		test('hasOne and belongsTo preloads resolve null and non-null branches', async () => {
 			const Repo = makeRepo()
 			const user = await Repo.on(UserSchema).one().create({ email: 'x@test.com', name: 'X' })

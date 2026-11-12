@@ -102,6 +102,28 @@ if (import.meta.vitest) {
 			expect((await adapter.introspect()).map(({ name }) => name)).toEqual(['scoped_generic_resolver'])
 		})
 
+		test('types base resolvers and scoped transforms with logical names', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const schema = Schema.from('typed_logical_name')
+				.pk('id', v.string(), () => 'typed-id')
+				.build()
+			const repo = Repo.from(adapter)
+				.resolve((name) => {
+					expectTypeOf(name).toEqualTypeOf<string>()
+					return { table: name }
+				})
+				.build()
+
+			await repo.resolve(
+				(config, name) => {
+					expectTypeOf(config).toEqualTypeOf<{ table: string }>()
+					expectTypeOf(name).toEqualTypeOf<string>()
+					return { table: `${name}_${config.table}` }
+				},
+				() => repo.on(schema).all().find(),
+			)
+		})
+
 		test('uses schema-config input before transforming it for the adapter', async () => {
 			class TransformingConfigAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.string().pipe((table) => ({ table }))
@@ -2447,6 +2469,35 @@ if (import.meta.vitest) {
 	})
 
 	describe('ALS-backed resolve', () => {
+		test('resolves each operation afresh without retaining an effective config', async () => {
+			const seenConfigs: unknown[] = []
+			const resolvedNames: string[] = []
+			const adapter = InMemoryAdapter.create({})
+			const origUse = adapter.use.bind(adapter)
+			;(adapter as any).use = vi.fn((schema: AnySchema, config: unknown) => {
+				seenConfigs.push(config)
+				return origUse(schema, config as { table: string })
+			})
+			const schema = Schema.from('fresh_config')
+				.pk('id', v.string(), () => 'fresh-id')
+				.build()
+			const repo = Repo.from(adapter)
+				.resolve((name) => {
+					resolvedNames.push(name)
+					return { table: name }
+				})
+				.build()
+
+			await repo.resolve(
+				(config, name) => ({ table: `scoped_${name}_${config.table}` }),
+				() => repo.on(schema).all().find(),
+			)
+			await repo.on(schema).all().find()
+
+			expect(resolvedNames).toEqual(['fresh_config', 'fresh_config'])
+			expect(seenConfigs).toEqual([{ table: 'scoped_fresh_config_fresh_config' }, { table: 'fresh_config' }])
+		})
+
 		test('reads inside repo.resolve see the override', async () => {
 			const seenConfigs: unknown[] = []
 			const adapter = InMemoryAdapter.create({})
@@ -2679,11 +2730,19 @@ if (import.meta.vitest) {
 
 		test('dispatch validator validates config against schemaConfigPipe', async () => {
 			const { adapter } = makeClassAdapter()
+			const findMany = vi.spyOn(adapter, 'findMany')
 			const repo = Repo.from(adapter)
 				.resolve(() => ({ table: 123 }) as any)
 				.build()
 
-			await expect(repo.on(TestSchema).all().find()).rejects.toBeInstanceOf(OrmValidationError)
+			try {
+				await repo.on(TestSchema).all().find()
+				expect.unreachable('invalid schema config should reject before adapter dispatch')
+			} catch (error) {
+				expect(error).toBeInstanceOf(OrmValidationError)
+				expect((error as InstanceType<typeof OrmValidationError>).schema).toBe('class_test')
+			}
+			expect(findMany).not.toHaveBeenCalled()
 		})
 
 		test('dispatch validator validates after transforms applied', async () => {
