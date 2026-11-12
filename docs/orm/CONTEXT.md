@@ -2110,7 +2110,7 @@ rejected. The bar for promotion is concrete, not speculative.
 | 4   | **`'bigint'` field type**                     | Arbitrary-precision integers not in the canonical field-type set.                                                                                                                                                                                                             | Encode as string; or `raw`.                                                                                                                                                                                                       |
 | 5   | **Bulk upsert**                               | `upsertMany` not supported. Single-document upsert only.                                                                                                                                                                                                                      | `raw` (Mongo `bulkWrite`, PG bulk `ON CONFLICT`).                                                                                                                                                                                 |
 | 6   | **Adapter-typed extensions**                  | Adapter-contributed typed namespaces on the Repo (e.g. `repo.pg.fts`) not supported.                                                                                                                                                                                          | Adapter's `raw` method.                                                                                                                                                                                                           |
-| 7   | **Migrations / DDL**                          | Schema migration, table creation, DDL operations out of scope.                                                                                                                                                                                                                | User-managed (dedicated migration tools); `raw` for ad-hoc DDL.                                                                                                                                                                   |
+| 7   | **Migration long-tail DDL**                   | The §16 migration runtime owns the canonical Change algebra, but views, triggers, sequences, CHECK constraints, composite keys, and adapter-specific DDL remain out of scope.                                                                                                 | Use a migration `execute` Change with adapter-native SQL/driver calls.                                                                                                                                                            |
 | 8   | **Aggregates**                                | `count` / `sum` / `avg` / `groupBy` out of scope.                                                                                                                                                                                                                             | `raw`.                                                                                                                                                                                                                            |
 | 9   | **Change-feeds / CDC**                        | Mongo change streams, Firebase realtime listeners, Debezium-style CDC, and realtime subscriptions remain out of scope. Bounded row iteration is in scope via `AllBuilder.iterate()` (§5.10).                                                                                  | `raw` for change-feeds / CDC.                                                                                                                                                                                                     |
 | 10  | **Server-side joins**                         | Joined queries (`findManyJoined`, PG `JOIN`, Mongo `$lookup`) out of scope. Preloads run package-side via `findMany`.                                                                                                                                                         | `raw`.                                                                                                                                                                                                                            |
@@ -2330,9 +2330,10 @@ runner for evolving the underlying database. A migration is a typed
 description of a set of `Change`s; the `Migrator` walks pending migrations
 in order, holds a cluster-safe lock, wraps each in a tx (where the adapter
 supports one), and records each as applied via the adapter's storage
-capability. There is no `down()`. The runtime is **A** in the C-hybrid
-scope; codegen ("B") is deferred — see `docs/orm/TODO.md`. See ADR
-`2026-05-09-migrations-runtime.md` for the decision tree.
+capability. There is no `down()`. The runtime is **A** and codegen is **B** in
+the C-hybrid scope; both ship in v1. See ADRs
+`2026-05-09-migrations-runtime.md` and `2026-05-09-migrations-codegen.md` for
+the decision tree.
 
 ### 16.1 Migration unit
 
@@ -2442,7 +2443,7 @@ The **Migrator** is constructed via the builder-chain rule (§2.2). It is
 the only verb-bearing entity in this subsystem.
 
 ```ts
-const migrator = Migrator.from(repo)
+const migrator = Migrator.from(repo, adapter)
   .migrations([m1, m2, m3])                        // explicit array; lex-sorted by id; dupes throw
   .withoutLock?()                                  // optional opt-out; only allowed when adapter lacks acquireMigrationLock
   .build()
@@ -2490,17 +2491,17 @@ class PgAdapter extends configurable(pgConnPipe, OrmAdapter) {
 	async acquireMigrationLock<T>(fn: () => Promise<T>): Promise<T>
 
 	// declarative variant renderers (full SQL set: 11 methods)
-	async applyCreateTable(change: CreateTableChange): Promise<void>
-	async applyDropTable(change: DropTableChange): Promise<void>
-	async applyAddField(change: AddFieldChange): Promise<void>
-	async applyDropField(change: DropFieldChange): Promise<void>
-	async applyModifyField(change: ModifyFieldChange): Promise<void>
-	async applyRenameTable(change: RenameTableChange): Promise<void>
-	async applyRenameField(change: RenameFieldChange): Promise<void>
-	async applyAddIndex(change: AddIndexChange): Promise<void>
-	async applyDropIndex(change: DropIndexChange): Promise<void>
-	async applyAddForeignKey(change: AddForeignKeyChange): Promise<void>
-	async applyDropForeignKey(change: DropForeignKeyChange): Promise<void>
+	async applyCreateTable(change: CreateTableChange, target: SchemaConfig): Promise<void>
+	async applyDropTable(change: DropTableChange, target: SchemaConfig): Promise<void>
+	async applyAddField(change: AddFieldChange, target: SchemaConfig): Promise<void>
+	async applyDropField(change: DropFieldChange, target: SchemaConfig): Promise<void>
+	async applyModifyField(change: ModifyFieldChange, target: SchemaConfig): Promise<void>
+	async applyRenameTable(change: RenameTableChange, from: SchemaConfig, to: SchemaConfig): Promise<void>
+	async applyRenameField(change: RenameFieldChange, target: SchemaConfig): Promise<void>
+	async applyAddIndex(change: AddIndexChange, target: SchemaConfig): Promise<void>
+	async applyDropIndex(change: DropIndexChange, target: SchemaConfig): Promise<void>
+	async applyAddForeignKey(change: AddForeignKeyChange, owner: SchemaConfig, referenced: SchemaConfig): Promise<void>
+	async applyDropForeignKey(change: DropForeignKeyChange, target: SchemaConfig): Promise<void>
 }
 
 class MongoAdapter extends configurable(mongoConnPipe, OrmAdapter) {
@@ -2671,7 +2672,7 @@ tracker row from the adapter's storage.
 
 ### 16.8 Validation flow
 
-Validation runs once at `Migrator.from(repo).migrations(arr).build()` —
+Validation runs once at `Migrator.from(repo, adapter).migrations(arr).build()` —
 the **validate-once rule** (§7.1) applies to migrations too. The
 **`assertNormalisedChanges` function** walks every Change in every
 Migration and enforces:
@@ -2706,11 +2707,11 @@ class OrmValidationError extends EquippedError {
 ### 16.9 Cross-cutting interactions
 
 - **`repo.resolve(transform, fn)` wrapping `migrator.up()`.** The config
-  transform applies to every query inside `up()` — including `apply*`
-  method calls if the adapter routes through `this.config`. Tenant-aware
-  migrations ARE expressible via `repo.resolve` wrap, but at the
-  conceptual level `Change.name` is a literal DB name; tenant prefixing
-  belongs to the resolver, not the algebra.
+  transform applies to every query and every declarative `apply*` call inside
+  `up()`. The Migrator resolves each Change's logical table name through the
+  Repo at execution time and passes the validated effective config to the
+  adapter. Tenant-aware migrations are expressible via the scope, while the
+  historical Change payload stays resolver-independent.
 - **`repo.session(...)` wrapping `migrator.up()`** — see §16.6
   atomic-across-migrations escape.
 - **EventLog interactions** — none. Migrations and the EventLog (§15) are
@@ -2748,12 +2749,13 @@ class OrmValidationError extends EquippedError {
   Adapter-owned tracker tables keep recovery adapter-specific by
   construction. Users who need to remove a tracker row do so directly
   via the adapter's documented storage shape.
-- **No drift detection.** The runtime trusts user-supplied `Change`
+- **No runtime drift detection.** The runtime trusts user-supplied `Change`
   payloads. If the live DB diverges from the migration sequence
   (manual edits, restores from backup, partially-rolled-back changes),
   the next `.up()` may fail loud (`apply*` errors) but doesn't
-  proactively detect drift. Drift detection is a B (codegen) concern
-  — see `docs/orm/TODO.md`.
+  proactively detect drift. Codegen reports the natural current-to-target diff,
+  but does not compare the live database with historical migration snapshots
+  (§16.13).
 
 ### 16.11 Migration codegen ("B" in the C-hybrid scope)
 
@@ -2767,7 +2769,7 @@ The **MigrationCodegen artifact** is constructed via the builder-chain
 rule (§2.2):
 
 ```ts
-const codegen = MigrationCodegen.from(repo)
+const codegen = MigrationCodegen.from(repo, adapter)
   .target([UserSchema, PostSchema, …])           // declared schemas = desired state
   .build()
 ```
@@ -2779,7 +2781,8 @@ the type level — an adapter must declare `introspectTarget(config)`,
 `physicalTargetIdentity(config)`, and broad diagnostic `introspect()`. An adapter
 without all three resolves to a
 type error at the `.from(...)` call. Symmetric with §5.3
-`SchemaCompatible<A, S>`:
+`SchemaCompatible<A, S>` (the adapter argument is also required so codegen can
+perform targeted introspection):
 
 ```ts
 type IntrospectableAdapter<A extends OrmAdapter> = A extends {
@@ -2791,7 +2794,10 @@ type IntrospectableAdapter<A extends OrmAdapter> = A extends {
 	: never
 
 class MigrationCodegen {
-	static from<A extends OrmAdapter>(repo: Repo<IntrospectableAdapter<A>>): MigrationCodegenBuilder<A>
+	static from<A extends OrmAdapter>(
+		repo: Repo<IntrospectableAdapter<A>>,
+		adapter: IntrospectableAdapter<A>,
+	): MigrationCodegenBuilder<A>
 }
 ```
 

@@ -3,13 +3,14 @@
 The migrations subsystem ships first-party codegen ("B" in the C-hybrid
 scope, alongside the runtime "A" decided in
 `2026-05-09-migrations-runtime.md`). A new `MigrationCodegen` artifact
-takes a Repo plus an explicit set of target Schemas and produces a
+takes a Repo plus an explicit managed subset of target Schemas and produces a
 `ReadonlyArray<ChangeFor<A>> | null` (the `null` when the live DB already
-matches target). Codegen requires the adapter to declare
-`introspect?(): Promise<DiscoveredSchema[]>` — absence of `introspect` is
-a compile error at `MigrationCodegen.from(repo)` via type-level narrowing
-(symmetric with `SchemaCompatible<A, S>` in §5.3). The full v1 spec
-extends `docs/orm/CONTEXT.md` §16.
+matches target). Codegen requires the adapter to declare targeted
+`introspectTarget(config)` and `physicalTargetIdentity(config)` plus broad
+diagnostic `introspect()` — absence is a compile error at
+`MigrationCodegen.from(repo, adapter)` via type-level narrowing (symmetric with
+`SchemaCompatible<A, S>` in §5.3). The full v1 spec extends
+`docs/orm/CONTEXT.md` §16.
 
 The diff algorithm is **name-based only** — renames surface as
 `dropField` + `addField` pairs that the user post-edits to use
@@ -80,8 +81,9 @@ library.
 
 - New artifact `MigrationCodegen` in `src/orm/migrations/` joins
   `Migrator` from the runtime ADR. Builder-chain shape per §2.2.
-- New optional adapter capability `introspect?():
-Promise<DiscoveredSchema[]>`. In-tree adapters: PostgreSQL implements
+- New adapter introspection capabilities: targeted `introspectTarget(config)`,
+  canonical `physicalTargetIdentity(config)`, and broad diagnostic
+  `introspect()`. In-tree adapters: PostgreSQL implements
   via `information_schema.columns` + `pg_indexes` +
   `information_schema.table_constraints`; SQLite via `PRAGMA
 table_info(...)` etc.; MongoDB via `db.listCollections()` +
@@ -105,6 +107,8 @@ table_info(...)` etc.; MongoDB via `db.listCollections()` +
   exposes. Running `codegen.diff()` against a drifted DB returns
   Changes that reconcile current → target; the user reviews them and
   accepts/rejects.
+- The supplied target list is an ownership boundary. Omitted physical targets
+  remain untouched, and table removal requires an explicit `dropTable` Change.
 - §14 out-of-scope row 17 (which previously said "Migration codegen
   deferred") is updated: codegen ships in v1 with the listed
   limitations.
