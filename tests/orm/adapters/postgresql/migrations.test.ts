@@ -182,6 +182,12 @@ describe.skipIf(!PG_TEST_URL)('PostgresAdapter: live migration and codegen integ
 		const repo = Repo.from(adapter)
 			.resolve((name) => ({ schema: namespace, table: mappings[name] ?? name }))
 			.build()
+		const UserSchema = Schema.from('users').pk('id', v.string()).field('email', v.string()).build()
+		const PostSchema = Schema.from('posts')
+			.pk('id', v.string())
+			.field('title', v.string())
+			.field('authorId', v.string())
+			.build()
 		const ArticleSchema = Schema.from('articles')
 			.pk('id', v.string())
 			.field('headline', v.string())
@@ -216,13 +222,12 @@ describe.skipIf(!PG_TEST_URL)('PostgresAdapter: live migration and codegen integ
 					},
 					{
 						kind: 'execute',
-						up: async () => {
-							await adapter.pool.query(
-								`INSERT INTO "${namespace}"."physical_users" (id, email) VALUES ('u1', 'u@example.com')`,
-							)
-							await adapter.pool.query(
-								`INSERT INTO "${namespace}"."physical_posts" (id, title, "authorId") VALUES ('p1', 'hello', 'u1')`,
-							)
+						up: async (migrationRepo) => {
+							await migrationRepo.on(UserSchema).one().create({ id: 'u1', email: 'u@example.com' })
+							await migrationRepo
+								.on(PostSchema)
+								.one()
+								.create({ id: 'p1', title: 'hello', authorId: 'u1' })
 						},
 					},
 				],
@@ -276,8 +281,9 @@ describe.skipIf(!PG_TEST_URL)('PostgresAdapter: live migration and codegen integ
 			}),
 		])
 
+		const createId = migrationId('codegen_create')
 		await Migrator.from(repo, adapter)
-			.migrations([{ id: migrationId('codegen_create'), changes: createChanges! }])
+			.migrations([{ id: createId, changes: createChanges! }])
 			.build()
 			.up()
 		expect(await firstCodegen.diff()).toBeNull()
@@ -292,8 +298,12 @@ describe.skipIf(!PG_TEST_URL)('PostgresAdapter: live migration and codegen integ
 		expect(evolveChanges).toEqual([
 			{ kind: 'addField', table: 'users', field: { name: 'displayName', type: 'string' } },
 		])
+		const evolveId = migrationId('codegen_evolve')
 		await Migrator.from(repo, adapter)
-			.migrations([{ id: migrationId('codegen_evolve'), changes: evolveChanges! }])
+			.migrations([
+				{ id: createId, changes: createChanges! },
+				{ id: evolveId, changes: evolveChanges! },
+			])
 			.build()
 			.up()
 
