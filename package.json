@@ -343,14 +343,14 @@
 		"@types/pug": "^2.0.10",
 		"@types/supertest": "^6.0.3",
 		"commander": "^14.0.3",
+		"commit-and-tag-version": "^13.3.0",
 		"eslint": "10.14.0",
 		"husky": "^9.1.7",
+		"prettier": "3.10.1",
+		"tsdown": "0.23.7",
 		"tsx": "^4.22.4",
 		"typescript": "^5.9.3",
 		"vitest": "^5.1.0",
-		"commit-and-tag-version": "^13.3.0",
-		"prettier": "3.10.1",
-		"tsdown": "0.23.7",
 		"xi-configs": "0.1.0"
 	},
 	"dependencies": {
@@ -394,7 +394,7 @@
 		"socket.io": "4.8.3",
 		"supertest": "7.2.2",
 		"ulid": "3.0.2",
-		"valleyed": "4.5.19"
+		"valleyed": "4.5.25"
 	},
 	"repository": {
 		"url": "git+https://github.com/andthexi/equipped.git"

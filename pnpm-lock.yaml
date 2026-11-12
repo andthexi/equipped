@@ -128,8 +128,8 @@ importers:
                 specifier: 3.0.2
                 version: 3.0.2
             valleyed:
-                specifier: 4.5.19
-                version: 4.5.19
+                specifier: 4.5.25
+                version: 4.5.25
         devDependencies:
             '@commitlint/cli':
                 specifier: ^21.2.4
@@ -5919,11 +5919,12 @@ packages:
         deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
         hasBin: true
 
-    valleyed@4.5.19:
+    valleyed@4.5.25:
         resolution:
             {
-                integrity: sha512-lrqZtE+RyY2WRVfuhUa19FQFr8nzj9yd9yEJTEJ/+FU+/BjgIwK32F99N7pjyPcKaaXBrMXQzYYyxEz4rl6mDQ==,
+                integrity: sha512-9rjahtzoPaEVJjvPqyOH327ZgsJELwjinmlbVYylfLsSCo8WASWII60aoebZCDwQ9dDCURAoYg7h3fjbzAbkqQ==,
             }
+        engines: { node: '>=20.19' }
 
     vary@1.1.2:
         resolution:
@@ -9497,7 +9498,7 @@ snapshots:
 
     uuid@8.3.2: {}
 
-    valleyed@4.5.19:
+    valleyed@4.5.25:
         dependencies:
             '@standard-schema/spec': 1.1.0
             url-regex-safe: 4.0.0
@@ -9511,11 +9512,11 @@ snapshots:
     vite@7.3.1(@types/node@25.2.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.1):
         dependencies:
             esbuild: 0.27.1
-            fdir: 6.5.0(picomatch@4.0.3)
-            picomatch: 4.0.3
+            fdir: 6.5.0(picomatch@4.0.7)
+            picomatch: 4.0.7
             postcss: 8.5.8
             rollup: 4.44.1
-            tinyglobby: 0.2.15
+            tinyglobby: 0.2.17
         optionalDependencies:
             '@types/node': 25.2.0
             fsevents: 2.3.3
