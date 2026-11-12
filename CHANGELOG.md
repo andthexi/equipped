@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [5.3.5](https://github.com/andthexi/equipped/compare/v5.3.4...v5.3.5) (2026-11-12)
+
+
+### Bug Fixes
+
+* **orm:** preserve schema config types in repo builder ([#158](https://github.com/andthexi/equipped/issues/158)) ([db7c305](https://github.com/andthexi/equipped/commit/db7c3056abb2f24c3bfc7e2ce3384e2a525bbfe2))
+
 ### [5.3.4](https://github.com/kevinand11/equipped/compare/v5.3.3...v5.3.4) (2026-11-11)
 
 
