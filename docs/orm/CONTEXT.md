@@ -172,7 +172,7 @@ fn)` (§6).
 
 ```ts
 const repo = Repo.from(PostgresAdapter)
-  .resolve((schema) => ({ table: schema.name }))
+  .resolve((name) => ({ table: name }))
   .build()
 
 await repo.on(UserSchema).one().id('u1').find()
@@ -1116,7 +1116,7 @@ session-owned client.
 ## 6. Configuration resolution
 
 The Repo holds two pieces of config-machinery: a **base resolver** that maps
-a schema to a config (build-time, required), and a **runtime override stack**
+a schema's logical name to a config (build-time, required), and a **runtime override stack**
 that lets callers temporarily transform the base config (call-time, optional).
 
 ### 6.1 Two-tier config and the base resolver
@@ -1136,14 +1136,16 @@ Adapter configuration splits into two tiers:
 The **base resolver** is the function passed to `Repo.from(adapter).resolve(...)`
 at build time. It produces a **base schema config** per schema. The
 resolver's return type is constrained to `PipeInput<typeof adapter.schemaConfigPipe>`
-— the framework enforces `(schema: AnySchema) => SchemaConfigInput`.
+— the framework enforces `(name: string) => SchemaConfigInput`. This is a
+breaking callback contract: resolvers receive the logical name, not a Schema
+object, and there is no legacy Schema fallback.
 
 ```ts
 const adapter = PostgresAdapter.create({ host, port, user, password })
 //      ^^^^^^^ connection config validated here, exposed as adapter.config
 
 const repo = Repo.from(adapter)
-  .resolve((schema) => ({ table: schema.name }))   // schema-config; typed by adapter.schemaConfigPipe
+  .resolve((name) => ({ table: name }))   // schema-config; typed by adapter.schemaConfigPipe
   .build()
 ```
 
@@ -1152,7 +1154,7 @@ schema. Without `.resolve(...)`, `.build()` is unavailable (§2.6).
 
 ### 6.2 Runtime override: `repo.resolve(transform, fn)`
 
-A `ConfigTransform<C>` is a function `(cfg: C, schema: AnySchema) => C` that
+A `ConfigTransform<C>` is a function `(cfg: C, name: string) => C` that
 transforms a base config per query.
 
 `repo.resolve(transform, fn)` is the **runtime override mechanism**. It pushes
@@ -1163,7 +1165,7 @@ up the transform automatically. The stack is popped on `fn`'s settlement
 
 ```ts
 await repo.resolve(
-  (cfg, schema) => ({ ...cfg, table: `t_${tenantId}_${cfg.table}` }),
+  (cfg, name) => ({ ...cfg, table: `t_${tenantId}_${name}` }),
   async () => {
     await repo.on(UserSchema).all().find()       // sees transformed config
   },
@@ -1185,7 +1187,7 @@ The **config resolution pipeline** is the per-query process that produces the
 **effective schema config** — the schema-level config actually handed to the
 adapter method:
 
-1. **Base resolve.** `.resolve(...)` runs against the schema → base schema config.
+1. **Base resolve.** `.resolve(...)` runs against the schema's logical name → base schema config.
 2. **Stack apply.** Every transform currently active on the runtime stack
    (pushed via `repo.resolve(transform, fn)`) is applied in push order on top
    of the base.
@@ -1226,7 +1228,7 @@ chain inside the handler picks up the transform automatically.
 
 ```ts
 const repo = Repo.from(PgAdapter)
-  .resolve((s) => ({ table: s.name }))
+  .resolve((name) => ({ table: name }))
   .build()
 
 // Middleware: wrap each request in repo.resolve

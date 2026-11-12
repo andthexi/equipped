@@ -1,36 +1,23 @@
-import type { Pipe } from 'valleyed'
-
 import type { InferAdapterConfig } from '../adapter'
-import { currentTransforms, run } from './als'
+import { run } from './als'
 import { SchemaContext, SchemaRef, type HasMethod, type SchemaRefSurface } from './builders'
 import type { OrmAdapterConfig, OrmAdapterLike } from '../adapters/base'
 import type { IterationOptions } from '../query-options'
 import type { AnySchema } from '../schema'
-import { composeSchemaConfig } from '../schema-validations'
+import { registerRepoConfig, resolveRepoConfig } from './internals/config'
 
 export type { ConfigTransform } from './als'
 
 export class Repo<A extends OrmAdapterLike<any>> {
 	readonly #adapter: A
-	readonly #defaults: (schema: AnySchema) => InferAdapterConfig<A>
-	readonly #schemaConfigPipe: Pipe<any, any> | undefined
 
-	constructor({ adapter, resolve }: { adapter: A; resolve: (schema: AnySchema) => InferAdapterConfig<A> }) {
+	constructor({ adapter, resolve }: { adapter: A; resolve: (name: string) => InferAdapterConfig<A> }) {
 		this.#adapter = adapter
-		this.#defaults = resolve
-		this.#schemaConfigPipe = (adapter as any).schemaConfigPipe
+		registerRepoConfig<A>(this, resolve, (adapter as any).schemaConfigPipe)
 	}
 
 	#getConfig(s: AnySchema): InferAdapterConfig<A> {
-		const transforms = [...currentTransforms<InferAdapterConfig<A>>()]
-		if (this.#schemaConfigPipe) {
-			return composeSchemaConfig(this.#defaults, transforms, s, this.#schemaConfigPipe) as InferAdapterConfig<A>
-		}
-		let config = this.#defaults(s)
-		for (const transform of transforms) {
-			config = transform(config, s)
-		}
-		return config
+		return resolveRepoConfig<A>(this, s.name)
 	}
 
 	#getUse(s: AnySchema) {
@@ -49,7 +36,7 @@ export class Repo<A extends OrmAdapterLike<any>> {
 		return this.#adapter.session?.(fn) ?? fn()
 	}
 
-	resolve<T>(resolver: (config: InferAdapterConfig<A>, schema: AnySchema) => InferAdapterConfig<A>, fn: () => T): T {
+	resolve<T>(resolver: (config: InferAdapterConfig<A>, name: string) => InferAdapterConfig<A>, fn: () => T): T {
 		return run<InferAdapterConfig<A>, T>(resolver, fn)
 	}
 }
@@ -63,7 +50,7 @@ class RepoBuilder<A extends OrmAdapterLike<any>> {
 		this.#resolve = resolve
 	}
 
-	resolve(fn: (schema: AnySchema) => OrmAdapterConfig<A>): RepoBuilder<A> {
+	resolve(fn: (name: string) => OrmAdapterConfig<A>): RepoBuilder<A> {
 		return new RepoBuilder<A>(this.#adapter, fn)
 	}
 
@@ -100,7 +87,7 @@ if (import.meta.vitest) {
 				.field('name', v.string())
 				.build()
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 			const created = await repo.on(TestSchema).one().create({ name: 'Hello' })
 			expect(created.name).toBe('Hello')
@@ -115,7 +102,7 @@ if (import.meta.vitest) {
 				.field('name', v.string())
 				.build()
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 			const ref = repo.on(TestSchema)
 			expect(ref).toBeInstanceOf(SchemaRef)
@@ -126,7 +113,7 @@ if (import.meta.vitest) {
 		test('.resolve() returns a new builder, not the same instance', () => {
 			const adapter = InMemoryAdapter.create({})
 			const base = Repo.from(adapter)
-			const a = base.resolve((s) => ({ table: s.name }))
+			const a = base.resolve((name) => ({ table: name }))
 			expect(a).not.toBe(base)
 		})
 	})
@@ -178,7 +165,7 @@ if (import.meta.vitest) {
 		function makeRepo() {
 			const adapter = InMemoryAdapter.create({})
 			return Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 		}
 
@@ -412,7 +399,7 @@ if (import.meta.vitest) {
 			}
 
 			const adapter = new (IterAdapter as any)() as IterAdapter
-			const repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			const repo = Repo.from(adapter).resolve((name) => ({ table: name })).build()
 			const rows: Array<{ id: string; name: string; age: number }> = []
 			for await (const row of repo.on(TestSchema).all().where((q) => q.gt('age', 19)).orderBy('age', 'desc').offset(1).limit(2).iterate()) {
 				rows.push(row)
@@ -449,7 +436,7 @@ if (import.meta.vitest) {
 			}
 
 			const adapter = new (IterAdapter as any)() as IterAdapter
-			const repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			const repo = Repo.from(adapter).resolve((name) => ({ table: name })).build()
 
 			const iterated: Array<{ id: string; name: string }> = []
 			for await (const row of repo.on(TestSchema).all().limit(10).iterate({ batchSize: 3 })) {
@@ -484,7 +471,7 @@ if (import.meta.vitest) {
 			}
 
 			const adapter = new (IterAdapter as any)() as IterAdapter
-			const repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			const repo = Repo.from(adapter).resolve((name) => ({ table: name })).build()
 
 			for (const batchSize of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.POSITIVE_INFINITY, Number.NaN, '2'] as const) {
 				try {
@@ -519,7 +506,7 @@ if (import.meta.vitest) {
 					},
 				}
 			})
-			const repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			const repo = Repo.from(adapter).resolve((name) => ({ table: name })).build()
 			const alice = await repo.on(UserSchema).one().create({ email: 'alice@iter.com', name: 'Alice' })
 			const bob = await repo.on(UserSchema).one().create({ email: 'bob@iter.com', name: 'Bob' })
 			await repo.on(PostSchema).one().create({ title: 'A1', userId: alice.id })
@@ -576,7 +563,7 @@ if (import.meta.vitest) {
 			})
 
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 
 			await repo.resolve(
@@ -645,7 +632,7 @@ if (import.meta.vitest) {
 			spy.mockRestore()
 
 			const repo = Repo.from(rawAdapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 			const TestSchema = Schema.from('raw_test')
 				.pk('id', v.string(), () => 'x')
@@ -709,7 +696,7 @@ if (import.meta.vitest) {
 			})
 
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 			await repo.on(PersonSchema).one().create({ firstName: 'Grace', lastName: 'Hopper' })
 			await repo.on(PersonSchema).all().select(['id', 'fullName']).find()
@@ -751,7 +738,7 @@ if (import.meta.vitest) {
 			})
 
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 			await repo.on(PersonSchema).one().create({ firstName: 'Katherine', lastName: 'Johnson' })
 
@@ -764,7 +751,7 @@ if (import.meta.vitest) {
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 
 			const use = adapter.use(TestSchema, { table: 'findbytest' })
@@ -1476,7 +1463,7 @@ if (import.meta.vitest) {
 		function makeE2eRepo() {
 			const adapter = InMemoryAdapter.create({})
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 			return { repo, adapter }
 		}
@@ -1774,7 +1761,7 @@ if (import.meta.vitest) {
 		function makeUpdateRepo() {
 			const adapter = InMemoryAdapter.create({})
 			return Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 		}
 
@@ -1839,7 +1826,7 @@ if (import.meta.vitest) {
 		function makeUpsertRepo() {
 			const adapter = InMemoryAdapter.create({})
 			return Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 		}
 
@@ -2092,7 +2079,7 @@ if (import.meta.vitest) {
 		function makeSessionRepo() {
 			const adapter = InMemoryAdapter.create({})
 			return Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 		}
 
@@ -2254,7 +2241,7 @@ if (import.meta.vitest) {
 				.field('name', v.string())
 				.build()
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 
 			await repo.resolve(
@@ -2281,7 +2268,7 @@ if (import.meta.vitest) {
 				.field('name', v.string())
 				.build()
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 
 			await repo.resolve(
@@ -2307,7 +2294,7 @@ if (import.meta.vitest) {
 				.field('name', v.string())
 				.build()
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 
 			await Promise.all([
@@ -2347,7 +2334,7 @@ if (import.meta.vitest) {
 				.field('name', v.string())
 				.build()
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 
 			await repo.resolve(
@@ -2441,7 +2428,7 @@ if (import.meta.vitest) {
 		test('Repo.from(classAdapter).resolve(...).build() creates a working repo', async () => {
 			const { adapter } = makeClassAdapter()
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 
 			const created = await repo.on(TestSchema).one().create({ name: 'Alice', age: 30 })
@@ -2467,7 +2454,7 @@ if (import.meta.vitest) {
 		test('dispatch validator validates after transforms applied', async () => {
 			const { adapter } = makeClassAdapter()
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 
 			await expect(
@@ -2481,7 +2468,7 @@ if (import.meta.vitest) {
 		test('createMany + findMany round-trip works', async () => {
 			const { adapter } = makeClassAdapter()
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 
 			const created = await repo.on(TestSchema).all().create([
@@ -2497,7 +2484,7 @@ if (import.meta.vitest) {
 		test('update and delete work on class-based adapter', async () => {
 			const { adapter } = makeClassAdapter()
 			const repo = Repo.from(adapter)
-				.resolve((s) => ({ table: s.name }))
+				.resolve((name) => ({ table: name }))
 				.build()
 
 			const user = await repo.on(TestSchema).one().create({ name: 'Alice', age: 30 })
@@ -2522,7 +2509,7 @@ if (import.meta.vitest) {
 
 		function makeAggRepo() {
 			const adapter = InMemoryAdapter.create({})
-			const repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			const repo = Repo.from(adapter).resolve((name) => ({ table: name })).build()
 			return { repo, adapter }
 		}
 

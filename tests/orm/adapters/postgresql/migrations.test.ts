@@ -50,7 +50,7 @@ describe.skipIf(skipIfNoDb())('PostgresAdapter: real PG integration', () => {
 			password: parsed.password,
 			database: parsed.pathname.slice(1),
 		})
-		repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+		repo = Repo.from(adapter).resolve((name) => ({ table: name })).build()
 	})
 
 	afterEach(async () => {

@@ -76,10 +76,10 @@ if (import.meta.vitest) {
 		const adapter = InMemoryAdapter.create({})
 		return new Repo({
 			adapter,
-			resolve: (s) => {
-				if (s === EventLogSchema) return { table: 'events' }
-				if (s === CounterSchema) return { table: 'counters' }
-				return { table: s.name }
+			resolve: (name) => {
+				if (name === EventLogSchema.name) return { table: 'events' }
+				if (name === CounterSchema.name) return { table: 'counters' }
+				return { table: name }
 			},
 		})
 	}

@@ -1123,7 +1123,7 @@ if (import.meta.vitest) {
 
 		function makeEnv() {
 			const adapter = JsonAdapter.create({ filePath })
-			const repo = new Repo({ adapter, resolve: (s) => ({ table: s.name }) })
+			const repo = new Repo({ adapter, resolve: (name) => ({ table: name }) })
 			return { adapter, repo }
 		}
 
@@ -1249,12 +1249,12 @@ if (import.meta.vitest) {
 
 			const adapter1 = JsonAdapter.create({ filePath })
 			await adapter1.connect()
-			const repo1 = new Repo({ adapter: adapter1, resolve: (s) => ({ table: s.name }) })
+			const repo1 = new Repo({ adapter: adapter1, resolve: (name) => ({ table: name }) })
 			const migrator1 = Migrator.from(repo1, adapter1).migrations(migrations).build()
 
 			const adapter2 = JsonAdapter.create({ filePath })
 			await adapter2.connect()
-			const repo2 = new Repo({ adapter: adapter2, resolve: (s) => ({ table: s.name }) })
+			const repo2 = new Repo({ adapter: adapter2, resolve: (name) => ({ table: name }) })
 			const migrator2 = Migrator.from(repo2, adapter2).migrations(migrations).build()
 
 			const p1 = migrator1.up()

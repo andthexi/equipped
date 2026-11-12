@@ -562,7 +562,7 @@ if (import.meta.vitest) {
 		let repo: any
 		beforeEach(() => {
 			const adapter = InMemoryAdapter.create({})
-			repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			repo = Repo.from(adapter).resolve((name) => ({ table: name })).build()
 		})
 
 		test('update() executes and returns updated row', async () => {
@@ -636,7 +636,7 @@ if (import.meta.vitest) {
 		let repo: any
 		beforeEach(() => {
 			const adapter = InMemoryAdapter.create({})
-			repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			repo = Repo.from(adapter).resolve((name) => ({ table: name })).build()
 		})
 
 		describe('type narrowing', () => {
@@ -848,7 +848,7 @@ if (import.meta.vitest) {
 
 		function makeRepo() {
 			const adapter = InMemoryAdapter.create({})
-			return Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			return Repo.from(adapter).resolve((name) => ({ table: name })).build()
 		}
 
 		async function seedItems(repo: any, count: number) {
@@ -1124,9 +1124,9 @@ if (import.meta.vitest) {
 				}
 			})
 			const repo = Repo.from(adapter)
-				.resolve((s) => {
+				.resolve((name) => {
 					events.push('resolve')
-					return { table: s.name }
+					return { table: name }
 				})
 				.build()
 			await seedItems(repo, 3)

@@ -1,8 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
-import type { AnySchema } from '../schema'
-
-export type ConfigTransform<C> = (config: C, schema: AnySchema) => C
+export type ConfigTransform<C> = (config: C, name: string) => C
 
 const store = new AsyncLocalStorage<ConfigTransform<any>[]>()
 
@@ -19,12 +17,10 @@ if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
 
 	type TestConfig = { prefix: string }
-	const dummySchema = { name: 'test' } as AnySchema
-
 	function applyTransforms(base: TestConfig): TestConfig {
 		let config = base
 		for (const t of currentTransforms<TestConfig>()) {
-			config = t(config, dummySchema)
+			config = t(config, 'test')
 		}
 		return config
 	}

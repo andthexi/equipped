@@ -157,7 +157,7 @@ if (import.meta.vitest) {
 
 	function makeEnv() {
 		const adapter = InMemoryAdapter.create({})
-		const repo = new Repo({ adapter, resolve: (s) => ({ table: s.name }) })
+		const repo = new Repo({ adapter, resolve: (name) => ({ table: name }) })
 		return { adapter, repo }
 	}
 
@@ -648,7 +648,7 @@ if (import.meta.vitest) {
 				async session<T>(fn: () => Promise<T>): Promise<T> { return fn() }
 			}
 			const nlAdapter = new (NoLockAdapter as any)() as NoLockAdapter
-			const nlRepo = new Repo({ adapter: nlAdapter, resolve: (s) => ({ table: s.name }) })
+			const nlRepo = new Repo({ adapter: nlAdapter, resolve: (name) => ({ table: name }) })
 			const step = Migrator.from(nlRepo, nlAdapter).migrations([])
 			expectTypeOf(step).toHaveProperty('build')
 			expectTypeOf(step).toHaveProperty('withoutLock')

@@ -152,17 +152,17 @@ export function validateUpdateOps(schema: AnySchema, ops: AnyUpdateOp[], operati
 }
 
 export function composeSchemaConfig(
-	resolve: (schema: AnySchema) => unknown,
-	transforms: ReadonlyArray<(config: any, schema: AnySchema) => any>,
-	schema: AnySchema,
+	resolve: (name: string) => unknown,
+	transforms: ReadonlyArray<(config: any, name: string) => any>,
+	name: string,
 	pipe: Pipe<any, any>,
 ): unknown {
-	let config = resolve(schema)
+	let config = resolve(name)
 	for (const transform of transforms) {
-		config = transform(config, schema)
+		config = transform(config, name)
 	}
 	const r = v.validate(pipe, config)
-	if (!r.valid) throw new OrmValidationError('validation', schema.name, 'schemaConfig', [{ cause: r.error }])
+	if (!r.valid) throw new OrmValidationError('validation', name, 'schemaConfig', [{ cause: r.error }])
 	return r.value
 }
 
@@ -502,20 +502,24 @@ if (import.meta.vitest) {
 	})
 
 	describe('composeSchemaConfig', () => {
-		const TestSchema = Schema.from('cfg_test')
-			.pk('id', v.string(), () => 'x')
-			.build()
-
 		const tablePipe = v.object({ table: v.string() })
 
-		test('composes base resolver output and validates against pipe', () => {
+		test('passes the logical name through the resolver and transforms', () => {
+			const seen: string[] = []
 			const result = composeSchemaConfig(
-				() => ({ table: 'users' }),
-				[],
-				TestSchema,
+				(name) => {
+					seen.push(name)
+					return { table: name }
+				},
+				[(config, name) => {
+					seen.push(name)
+					return { table: `scoped_${config.table}` }
+				}],
+				'users',
 				tablePipe,
 			)
-			expect(result).toEqual({ table: 'users' })
+			expect(result).toEqual({ table: 'scoped_users' })
+			expect(seen).toEqual(['users', 'users'])
 		})
 
 		test('applies transforms in order before validation', () => {
@@ -525,7 +529,7 @@ if (import.meta.vitest) {
 					(cfg: any) => ({ ...cfg, table: `a_${cfg.table}` }),
 					(cfg: any) => ({ ...cfg, table: `b_${cfg.table}` }),
 				],
-				TestSchema,
+				'cfg_test',
 				tablePipe,
 			)
 			expect(result).toEqual({ table: 'b_a_users' })
@@ -536,7 +540,7 @@ if (import.meta.vitest) {
 				composeSchemaConfig(
 					() => ({ table: 123 }),
 					[],
-					TestSchema,
+					'cfg_test',
 					tablePipe,
 				)
 				expect.unreachable()
@@ -555,7 +559,7 @@ if (import.meta.vitest) {
 				composeSchemaConfig(
 					() => ({ table: 'users' }),
 					[(cfg: any) => ({ ...cfg, table: 42 })],
-					TestSchema,
+					'cfg_test',
 					tablePipe,
 				)
 				expect.unreachable()
@@ -572,7 +576,7 @@ if (import.meta.vitest) {
 			const result = composeSchemaConfig(
 				() => ({ table: 'orders' }),
 				[(cfg: any) => ({ ...cfg, prefix: 'tenant1' })],
-				TestSchema,
+				'cfg_test',
 				pipe,
 			)
 			expect(result).toEqual({ table: 'orders', prefix: 'tenant1' })

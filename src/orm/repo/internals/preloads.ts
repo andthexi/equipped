@@ -246,7 +246,7 @@ if (import.meta.vitest) {
 
 		function makeRepo() {
 			const adapter = InMemoryAdapter.create({})
-			return Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			return Repo.from(adapter).resolve((name) => ({ table: name })).build()
 		}
 
 		async function expectPreloadQueryShapeError(read: Promise<unknown>, cause: RegExp) {
@@ -406,7 +406,7 @@ if (import.meta.vitest) {
 				}
 			})
 
-			const repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			const repo = Repo.from(adapter).resolve((name) => ({ table: name })).build()
 			const u1 = await repo.on(UserSchema).one().create({ email: 'a@test.com', name: 'A' })
 			const u2 = await repo.on(UserSchema).one().create({ email: 'b@test.com', name: 'B' })
 			const u3 = await repo.on(UserSchema).one().create({ email: 'c@test.com', name: 'C' })
