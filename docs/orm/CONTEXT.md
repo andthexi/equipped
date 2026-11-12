@@ -2758,9 +2758,9 @@ class OrmValidationError extends EquippedError {
 ### 16.11 Migration codegen ("B" in the C-hybrid scope)
 
 The codegen subsystem produces a `ReadonlyArray<ChangeFor<A>>` from a
-diff between the user's declared Schemas (the **target state**) and the
-live DB (the **current state** recovered via the adapter's
-`introspect()` capability). It is the second half of the C-hybrid scope
+diff between the user's explicitly managed Schemas (the **target state**) and
+their corresponding live targets (the **current state** recovered via the
+adapter's targeted introspection capability). It is the second half of the C-hybrid scope
 (§16.1's runtime is the first); both ship in v1.
 
 The **MigrationCodegen artifact** is constructed via the builder-chain
@@ -2775,12 +2775,20 @@ const codegen = MigrationCodegen.from(repo)
 `.build()` prerequisite (per §2.6): `.target(...)` was called.
 
 The **codegen capability gate** narrows `MigrationCodegen.from(repo)` at
-the type level — adapter without `introspect?()` declared resolves to a
+the type level — an adapter must declare `introspectTarget(config)`,
+`physicalTargetIdentity(config)`, and broad diagnostic `introspect()`. An adapter
+without all three resolves to a
 type error at the `.from(...)` call. Symmetric with §5.3
 `SchemaCompatible<A, S>`:
 
 ```ts
-type IntrospectableAdapter<A extends OrmAdapter> = A extends { introspect(): Promise<DiscoveredSchema[]> } ? A : never
+type IntrospectableAdapter<A extends OrmAdapter> = A extends {
+	introspectTarget(config: unknown): Promise<DiscoveredSchema | null>
+	physicalTargetIdentity(config: unknown): string
+	introspect(): Promise<DiscoveredSchema[]>
+}
+	? A
+	: never
 
 class MigrationCodegen {
 	static from<A extends OrmAdapter>(repo: Repo<IntrospectableAdapter<A>>): MigrationCodegenBuilder<A>
@@ -2811,6 +2819,22 @@ const migration: Migration<typeof adapter> = {
 }
 // User serializes `migration` to a file, holds in memory, etc.
 ```
+
+At diff time, each target's logical schema name is resolved through the supplied
+Repo's base resolver, active `repo.resolve(...)` transform stack, and schema-config
+pipe. This happens when `diff()` is called, not when codegen is built. Targeted
+introspection receives that validated effective config. The resulting Changes
+still contain logical table names and copied field payloads; they do not retain
+live Schema objects or resolved physical names. Migrator resolves those logical
+names once when applying a Change, so mapped and namespace-aware targets are not
+double mapped.
+
+The target array is an ownership boundary, not a complete database inventory.
+Only supplied logical schemas are compared. Omitted physical tables are left
+untouched and never cause `dropTable`, `dropIndex`, or `dropForeignKey` cleanup;
+an empty target array is a no-op. Whole-table removal is therefore explicit:
+author a `dropTable` Change (and any prerequisite cleanup Changes) in a Migration.
+Removing a Schema from `.target(...)` does not request deletion.
 
 The **no-auto-id rule**: codegen does not generate an `id`.
 Id-conventions (timestamp prefix vs counter vs slug) are user-domain.
@@ -2852,8 +2876,8 @@ no-file-emission decision (§16.13).
 
 ### 16.14 DiscoveredSchema and adapter introspection
 
-Introspection returns one **DiscoveredSchema** per top-level container
-(table for SQL, collection for Mongo) the adapter finds in the live DB:
+Broad diagnostic introspection returns one **DiscoveredSchema** per top-level
+container (table for SQL, collection for Mongo) the adapter finds in the live DB:
 
 ```ts
 type DiscoveredField = {
@@ -2893,6 +2917,14 @@ empty arrays for `fields`/`foreignKeys` and absent `pk` are honest
 about Mongo's schemaless storage. Per-adapter descriptor types were
 rejected — they'd double the surface for marginal precision since
 `DiscoveredIndex` is identical across adapters.
+
+Codegen does not use broad discovery as a fallback. For every managed Schema it
+resolves the effective Repo config, checks the adapter's canonical
+`physicalTargetIdentity(config)`, and calls `introspectTarget(config)` only for
+that location. Two logical names with the same canonical physical identity are
+ambiguous ownership and fail explicitly with both names; codegen never attempts
+to invert a resolver or guess which logical name owns a discovered table.
+`discover()` remains the explicit broad diagnostic API.
 
 The **Mongo-introspection rule** (referenced from §16.13): the Mongo
 adapter's `introspect()` returns descriptors with `fields: []`,
@@ -2956,10 +2988,13 @@ function diffSchemas<A extends OrmAdapter>(
 Reads `adapter` only to know which `Change` kinds are supported (per
 §16.4 structural narrowing). No DB calls.
 
-The **name-based-matching rule**: tables/columns/indexes/FKs match by
-literal name only. Anything in `target` but not `current` → "add"
-Change; anything in `current` but not `target` → "drop" Change; same
-name with differing payload → "modify" or surfaces as
+The **managed name-based-matching rule**: supplied tables and their
+columns/indexes/FKs match by literal logical name only. Anything in `target` but
+not `current` → "add" Change. A field in a matched managed table that is in
+`current` but not its target Schema → "drop" Change. A current table with no
+corresponding supplied target is outside the ownership boundary and ignored;
+the exported diff function does not infer whole-table deletion from omission.
+The same name with differing payload → "modify" or surfaces as
 `drop` + `add` (e.g. index-shape change). Renames are NOT auto-detected
 (per §16.13).
 

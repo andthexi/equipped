@@ -108,19 +108,6 @@ export function diffSchemas(
 ): ReadonlyArray<AnyChange> {
 	const changes: AnyChange[] = []
 	const currentByName = new Map(current.map((s) => [s.name, s]))
-	const targetByName = new Map(target.map((s) => [s.name, s]))
-
-	for (const disc of current) {
-		if (!targetByName.has(disc.name)) {
-			for (const fk of disc.foreignKeys) {
-				changes.push({ kind: 'dropForeignKey', table: disc.name, name: fk.name })
-			}
-			for (const idx of disc.indexes) {
-				changes.push({ kind: 'dropIndex', table: disc.name, name: idx.name })
-			}
-			changes.push({ kind: 'dropTable', name: disc.name })
-		}
-	}
 
 	for (const schema of target) {
 		const info = extractSchemaInfo(schema)
@@ -287,7 +274,7 @@ if (import.meta.vitest) {
 			})
 		})
 
-		test('drop table detected when current has table absent from target', () => {
+		test('omitted current tables are outside the managed target and left alone', () => {
 			const adapter = makeAdapter()
 			const current: DiscoveredSchema[] = [
 				{
@@ -301,10 +288,7 @@ if (import.meta.vitest) {
 				},
 			]
 			const result = diffSchemas(adapter, [], current)
-			const kinds = result.map((c) => c.kind)
-			expect(kinds).toContain('dropForeignKey')
-			expect(kinds).toContain('dropIndex')
-			expect(kinds).toContain('dropTable')
+			expect(result).toEqual([])
 		})
 
 		test('rename surfaces as drop+add (NOT auto-rename)', () => {
@@ -389,7 +373,7 @@ if (import.meta.vitest) {
 			expect(result).toEqual([])
 		})
 
-		test('multiple tables: creates missing and drops extra', () => {
+		test('multiple tables: creates missing and ignores extra', () => {
 			const adapter = makeAdapter()
 			const UserSchema = Schema.from('users')
 				.pk('id', v.string(), () => 'x')
@@ -417,10 +401,8 @@ if (import.meta.vitest) {
 			]
 			const result = diffSchemas(adapter, [UserSchema, PostSchema], current)
 			const kinds = result.map((c) => c.kind)
-			expect(kinds).toContain('dropTable')
+			expect(kinds).not.toContain('dropTable')
 			expect(kinds).toContain('createTable')
-			const dropTable = result.find((c) => c.kind === 'dropTable') as any
-			expect(dropTable.name).toBe('comments')
 			const createTable = result.find((c) => c.kind === 'createTable') as any
 			expect(createTable.name).toBe('posts')
 		})
@@ -457,7 +439,7 @@ if (import.meta.vitest) {
 			expect(kinds.every((k) => k === 'addIndex' || k === 'dropIndex')).toBe(true)
 		})
 
-		test('drop index and drop FK emitted when table is dropped', () => {
+		test('empty target never emits table-drop prerequisite cleanup', () => {
 			const adapter = makeAdapter()
 			const current: DiscoveredSchema[] = [
 				{
@@ -471,10 +453,7 @@ if (import.meta.vitest) {
 				},
 			]
 			const result = diffSchemas(adapter, [], current)
-			expect(result).toHaveLength(3)
-			expect(result[0].kind).toBe('dropForeignKey')
-			expect(result[1].kind).toBe('dropIndex')
-			expect(result[2].kind).toBe('dropTable')
+			expect(result).toEqual([])
 		})
 
 		test('nullable field mismatch detected as modify', () => {
