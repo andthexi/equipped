@@ -3,6 +3,8 @@ import { v, type Pipe, type PipeOutput } from 'valleyed'
 import { ComputedField, SchemaField, type AnyComputedField, type AnySchemaField } from './fields.js'
 import type { Prettify } from './utils.js'
 
+const RESERVED_SCHEMA_NAMES = new Set(['_equipped_migrations', '_equipped_migration_locks'])
+
 type AnyPrimaryKeyField = SchemaField<string, Pipe<any, any>, true>
 
 export type AnySchema = Schema<
@@ -178,6 +180,7 @@ export class Schema<
 	}
 
 	static from<N extends string>(name: N): SchemaBuilder<N> {
+		if (RESERVED_SCHEMA_NAMES.has(name)) throw new Error(`Schema name "${name}" is reserved`)
 		return new SchemaBuilder(name)
 	}
 }
@@ -196,6 +199,13 @@ if (import.meta.vitest) {
 			.build()
 
 		describe('Schema.from()', () => {
+			test.each(['_equipped_migrations', '_equipped_migration_locks'])(
+				'rejects reserved name %s immediately',
+				(name) => {
+					expect(() => Schema.from(name)).toThrow(`Schema name "${name}" is reserved`)
+				},
+			)
+
 			test('returns a SchemaBuilder instance', () => {
 				expect(Schema.from('test')).toBeInstanceOf(SchemaBuilder)
 			})

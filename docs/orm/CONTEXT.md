@@ -2472,11 +2472,11 @@ The adapter declares two flat capability groups (§3.1):
 
 **Migration storage methods** (verb-first prefix):
 
-| Method                           | Required?                | Purpose                                                                 |
-| -------------------------------- | ------------------------ | ----------------------------------------------------------------------- |
-| `loadMigrations()`               | yes (for any migrations) | returns applied `[{ id, appliedAt }]`                                   |
-| `recordMigration(id, appliedAt)` | yes                      | marks one migration as applied                                          |
-| `acquireMigrationLock<T>(fn)`    | optional                 | wraps `fn` in cluster-safe lock; signature mirrors `session(fn)` (§8.1) |
+| Method                                          | Required?                | Purpose                                                      |
+| ----------------------------------------------- | ------------------------ | ------------------------------------------------------------ |
+| `loadMigrations(historyConfig)`                 | yes (for any migrations) | returns applied `[{ id, appliedAt }]`                        |
+| `recordMigration(historyConfig, id, appliedAt)` | yes                      | marks one migration as applied                               |
+| `acquireMigrationLock<T>(historyConfig, fn)`    | optional                 | wraps `fn` in a lock scoped to the resolved history identity |
 
 There is no `forgetMigration` — forward-only, no automatic un-record.
 Local-dev recovery is manual (delete the tracker row directly).
@@ -2539,13 +2539,15 @@ User puts `{ kind: 'addField' }` in a Mongo migration → TS error 2322 at
 the offending Change literal. Type-system-is-the-contract (§13 #4) at
 work.
 
-The **adapter-owned storage rule**: each adapter owns its tracker table's
-name, schema, and physical layout. PG might use a single `equipped_migrations`
-table with `id` + `applied_at` columns; Mongo might use a sentinel
-collection; Firebase might use a single doc with an applied-id list. The
-shape is the adapter's choice and is documented in the adapter's README.
-The framework only sees the typed `{ id, appliedAt }` payload returned by
-`loadMigrations`.
+The **resolved history rule**: every `up()`, `status()`, and `dry()` resolves
+the reserved logical name `_equipped_migrations` exactly once through the
+Repo's active resolver and validation pipeline. The resulting config is passed
+unchanged to load, record, and lock operations. Adapters partition history and
+locks by that config's physical identity. `_equipped_migration_locks` is also
+reserved for adapter lock storage; neither reserved name can be used by an
+ordinary Schema. There is no fallback to the former `equipped_migrations`
+name. The adapter owns the physical history layout, while the framework sees
+only the typed `{ id, appliedAt }` payload returned by `loadMigrations`.
 
 ### 16.5 Migrator runtime API
 

@@ -46,7 +46,7 @@ type ForeignKeyMeta = {
 
 type Snapshot = {
 	stores: Map<string, Map<string, Record<string, unknown>>>
-	migrations: Map<string, MigrationRecord>
+	migrations: Map<string, Map<string, MigrationRecord>>
 	indexes: Map<string, IndexMeta>
 	tables: Map<string, TableMeta>
 	foreignKeys: Map<string, ForeignKeyMeta>
@@ -292,12 +292,12 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	readonly aggregateOps = ['count', 'countDistinct', 'sum', 'avg', 'min', 'max'] as const
 
 	readonly stores = new Map<string, Map<string, Record<string, unknown>>>()
-	readonly migrations = new Map<string, MigrationRecord>()
+	readonly migrations = new Map<string, Map<string, MigrationRecord>>()
 	readonly indexes = new Map<string, IndexMeta>()
 	readonly tables = new Map<string, TableMeta>()
 	readonly foreignKeys = new Map<string, ForeignKeyMeta>()
 
-	#migrationLock: Promise<void> = Promise.resolve()
+	readonly #migrationLocks = new Map<string, Promise<void>>()
 
 	protected constructor(config: typeof InMemoryAdapter.Config) {
 		super(config)
@@ -321,7 +321,8 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 			}
 			stores.set(name, storeCopy)
 		}
-		const migrations = new Map(this.migrations)
+		const migrations = new Map<string, Map<string, MigrationRecord>>()
+		for (const [identity, records] of this.migrations) migrations.set(identity, new Map(records))
 		const indexes = new Map(this.indexes)
 		const tables = new Map<string, TableMeta>()
 		for (const [name, meta] of this.tables.entries()) {
@@ -523,12 +524,16 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		return results
 	}
 
-	async loadMigrations(): Promise<{ id: string; appliedAt: number }[]> {
-		return [...this.migrations.values()].map((m) => ({ id: m.id, appliedAt: m.appliedAt }))
+	async loadMigrations(config: InMemoryRepoConfig): Promise<{ id: string; appliedAt: number }[]> {
+		const records = this.migrations.get(this.physicalTargetIdentity(config))
+		return [...(records?.values() ?? [])].map((m) => ({ id: m.id, appliedAt: m.appliedAt }))
 	}
 
-	async recordMigration(id: string, appliedAt: number): Promise<void> {
-		this.migrations.set(id, { id, appliedAt })
+	async recordMigration(config: InMemoryRepoConfig, id: string, appliedAt: number): Promise<void> {
+		const identity = this.physicalTargetIdentity(config)
+		let records = this.migrations.get(identity)
+		if (!records) this.migrations.set(identity, (records = new Map()))
+		records.set(id, { id, appliedAt })
 	}
 
 	async applyCreateTable(change: CreateTableChange<any>, target?: unknown): Promise<void> {
@@ -716,13 +721,14 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		return schemas
 	}
 
-	async acquireMigrationLock<T>(fn: () => Promise<T>): Promise<T> {
+	async acquireMigrationLock<T>(config: InMemoryRepoConfig, fn: () => Promise<T>): Promise<T> {
+		const identity = this.physicalTargetIdentity(config)
 		let release!: () => void
 		const next = new Promise<void>((r) => {
 			release = r
 		})
-		const prev = this.#migrationLock
-		this.#migrationLock = next
+		const prev = this.#migrationLocks.get(identity) ?? Promise.resolve()
+		this.#migrationLocks.set(identity, next)
 		await prev
 		try {
 			return await fn()

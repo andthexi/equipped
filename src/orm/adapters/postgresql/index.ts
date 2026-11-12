@@ -63,7 +63,7 @@ const postgresqlConnectionPipe = () =>
 		ssl: v.defaults(v.boolean(), false),
 	})
 
-const TRACKER_TABLE = 'equipped_migrations'
+const TRACKER_TABLE = '_equipped_migrations'
 const ADVISORY_LOCK_KEY = 3_735_928_559
 const DEFAULT_CURSOR_BATCH_SIZE = 1000
 
@@ -421,30 +421,33 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		}
 	}
 
-	async loadMigrations(): Promise<{ id: string; appliedAt: number }[]> {
+	async loadMigrations(config: PostgresqlRepoConfig): Promise<{ id: string; appliedAt: number }[]> {
 		const client = this.#getClient()
+		const table = quoteQualifiedIdentifier(this.#resolveTableName(config))
 		await client.query(`
-			CREATE TABLE IF NOT EXISTS "${TRACKER_TABLE}" (
+			CREATE TABLE IF NOT EXISTS ${table} (
 				id text PRIMARY KEY,
 				applied_at bigint NOT NULL
 			)
 		`)
-		const result = await client.query(`SELECT id, applied_at FROM "${TRACKER_TABLE}"`)
+		const result = await client.query(`SELECT id, applied_at FROM ${table}`)
 		return result.rows.map((row: any) => ({ id: row.id, appliedAt: Number(row.applied_at) }))
 	}
 
-	async recordMigration(id: string, appliedAt: number): Promise<void> {
+	async recordMigration(config: PostgresqlRepoConfig, id: string, appliedAt: number): Promise<void> {
 		const client = this.#getClient()
-		await client.query(`INSERT INTO "${TRACKER_TABLE}" (id, applied_at) VALUES ($1, $2)`, [id, appliedAt])
+		const table = quoteQualifiedIdentifier(this.#resolveTableName(config))
+		await client.query(`INSERT INTO ${table} (id, applied_at) VALUES ($1, $2)`, [id, appliedAt])
 	}
 
-	async acquireMigrationLock<T>(fn: () => Promise<T>): Promise<T> {
+	async acquireMigrationLock<T>(config: PostgresqlRepoConfig, fn: () => Promise<T>): Promise<T> {
 		const client = this.#getClient()
-		await client.query(`SELECT pg_advisory_lock($1)`, [ADVISORY_LOCK_KEY])
+		const lockKey = `${ADVISORY_LOCK_KEY}:${this.physicalTargetIdentity(config)}`
+		await client.query(`SELECT pg_advisory_lock(hashtextextended($1, 0))`, [lockKey])
 		try {
 			return await fn()
 		} finally {
-			await client.query(`SELECT pg_advisory_unlock($1)`, [ADVISORY_LOCK_KEY])
+			await client.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [lockKey])
 		}
 	}
 
@@ -1412,7 +1415,7 @@ if (import.meta.vitest) {
 				}
 				return { rows: [] }
 			}
-			const result = await adapter.loadMigrations()
+			const result = await adapter.loadMigrations({ table: '_equipped_migrations' })
 			expect(queries).toHaveLength(2)
 			expect(queries[0].sql).toContain('CREATE TABLE IF NOT EXISTS')
 			expect(queries[0].sql).toContain('equipped_migrations')
@@ -1421,7 +1424,7 @@ if (import.meta.vitest) {
 		})
 
 		test('recordMigration inserts into tracker table', async () => {
-			await adapter.recordMigration('0001-init', 1700000000000)
+			await adapter.recordMigration({ table: '_equipped_migrations' }, '0001-init', 1700000000000)
 			expect(queries).toHaveLength(1)
 			expect(queries[0].sql).toContain('INSERT INTO')
 			expect(queries[0].sql).toContain('equipped_migrations')
@@ -1429,7 +1432,7 @@ if (import.meta.vitest) {
 		})
 
 		test('acquireMigrationLock wraps fn with pg_advisory_lock/unlock', async () => {
-			const result = await adapter.acquireMigrationLock(async () => {
+			const result = await adapter.acquireMigrationLock({ table: '_equipped_migrations' }, async () => {
 				queries.push({ sql: 'USER_FN' })
 				return 42
 			})
@@ -1441,7 +1444,7 @@ if (import.meta.vitest) {
 
 		test('acquireMigrationLock unlocks even on error', async () => {
 			await expect(
-				adapter.acquireMigrationLock(async () => {
+				adapter.acquireMigrationLock({ table: '_equipped_migrations' }, async () => {
 					throw new Error('boom')
 				}),
 			).rejects.toThrow('boom')
@@ -1790,7 +1793,7 @@ if (import.meta.vitest) {
 		test('introspect excludes tracker table from results', async () => {
 			;(adapter.pool as any).query = async (sql: string, params?: unknown[]) => {
 				if (sql.includes('information_schema.tables')) {
-					expect(params).toContain('equipped_migrations')
+					expect(params).toContain('_equipped_migrations')
 					return { rows: [] }
 				}
 				return { rows: [] }
