@@ -517,27 +517,37 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		)
 	}
 
-	async applyAddIndex(change: AddIndexChange): Promise<void> {
-		const name = change.name ?? this.#deriveIndexName(change.table, change.on as string[], change.unique)
+	async applyAddIndex(change: AddIndexChange, target?: unknown): Promise<void> {
+		const config = (target as PostgresqlRepoConfig | undefined) ?? { table: change.table }
+		const name = change.name ?? this.#deriveIndexName(config.table, change.on as string[], change.unique)
 		const unique = change.unique ? 'UNIQUE ' : ''
 		const cols = (change.on as string[]).map((c) => `"${c}"`).join(', ')
-		await this.#getClient().query(`CREATE ${unique}INDEX "${name}" ON "${change.table}" (${cols})`)
+		await this.#getClient().query(
+			`CREATE ${unique}INDEX "${name}" ON ${quoteQualifiedIdentifier(this.#resolveTableName(config))} (${cols})`,
+		)
 	}
 
-	async applyDropIndex(change: DropIndexChange): Promise<void> {
-		await this.#getClient().query(`DROP INDEX "${change.name}"`)
+	async applyDropIndex(change: DropIndexChange, target?: unknown): Promise<void> {
+		const config = (target as PostgresqlRepoConfig | undefined) ?? { table: change.table }
+		const name = config.schema && config.schema !== 'public' ? `${config.schema}.${change.name}` : change.name
+		await this.#getClient().query(`DROP INDEX ${quoteQualifiedIdentifier(name)}`)
 	}
 
-	async applyAddForeignKey(change: AddForeignKeyChange): Promise<void> {
-		const name = change.name ?? `fk_${change.table}_${change.on}`
-		let sql = `ALTER TABLE "${change.table}" ADD CONSTRAINT "${name}" FOREIGN KEY ("${change.on}") REFERENCES "${change.references.table}" ("${change.references.column}")`
+	async applyAddForeignKey(change: AddForeignKeyChange, target?: unknown, referencedTarget?: unknown): Promise<void> {
+		const config = (target as PostgresqlRepoConfig | undefined) ?? { table: change.table }
+		const referenced = (referencedTarget as PostgresqlRepoConfig | undefined) ?? { table: change.references.table }
+		const name = change.name ?? `fk_${config.table}_${change.on}`
+		let sql = `ALTER TABLE ${quoteQualifiedIdentifier(this.#resolveTableName(config))} ADD CONSTRAINT "${name}" FOREIGN KEY ("${change.on}") REFERENCES ${quoteQualifiedIdentifier(this.#resolveTableName(referenced))} ("${change.references.column}")`
 		if (change.onDelete) sql += ` ON DELETE ${this.#renderFkAction(change.onDelete)}`
 		if (change.onUpdate) sql += ` ON UPDATE ${this.#renderFkAction(change.onUpdate)}`
 		await this.#getClient().query(sql)
 	}
 
-	async applyDropForeignKey(change: DropForeignKeyChange): Promise<void> {
-		await this.#getClient().query(`ALTER TABLE "${change.table}" DROP CONSTRAINT "${change.name}"`)
+	async applyDropForeignKey(change: DropForeignKeyChange, target?: unknown): Promise<void> {
+		const config = (target as PostgresqlRepoConfig | undefined) ?? { table: change.table }
+		await this.#getClient().query(
+			`ALTER TABLE ${quoteQualifiedIdentifier(this.#resolveTableName(config))} DROP CONSTRAINT "${change.name}"`,
+		)
 	}
 
 	physicalTargetIdentity(config: PostgresqlRepoConfig): string {
@@ -1551,6 +1561,31 @@ if (import.meta.vitest) {
 			expect(queries[0].sql).toBe('CREATE UNIQUE INDEX "my_idx" ON "users" ("email")')
 		})
 
+		test('index and foreign-key migrations honor independently resolved schemas', async () => {
+			await adapter.applyAddIndex(
+				{ kind: 'addIndex', table: 'users', on: ['email'] },
+				{ schema: 'tenant-one', table: 'physical users' },
+			)
+			await adapter.applyDropIndex(
+				{ kind: 'dropIndex', table: 'users', name: 'literal index' },
+				{ schema: 'tenant-one', table: 'physical users' },
+			)
+			await adapter.applyAddForeignKey(
+				{ kind: 'addForeignKey', table: 'posts', on: 'authorId', references: { table: 'users', column: 'id' } },
+				{ schema: 'tenant-one', table: 'physical posts' },
+				{ schema: 'accounts', table: 'physical users' },
+			)
+
+			expect(queries[0].sql).toBe(
+				'CREATE INDEX "idx_physical users_email" ON "tenant-one"."physical users" ("email")',
+			)
+			expect(queries[1].sql).toBe('DROP INDEX "tenant-one"."literal index"')
+			expect(queries[2].sql).toContain(
+				'ALTER TABLE "tenant-one"."physical posts" ADD CONSTRAINT "fk_physical posts_authorId"',
+			)
+			expect(queries[2].sql).toContain('REFERENCES "accounts"."physical users" ("id")')
+		})
+
 		test('applyAddIndex auto-derives unique suffix when unique and no name', async () => {
 			await adapter.applyAddIndex({ kind: 'addIndex', table: 'posts', on: ['author', 'title'], unique: true })
 			expect(queries[0].sql).toBe(
@@ -1559,7 +1594,7 @@ if (import.meta.vitest) {
 		})
 
 		test('applyDropIndex generates DROP INDEX', async () => {
-			await adapter.applyDropIndex({ kind: 'dropIndex', name: 'idx_users_email' })
+			await adapter.applyDropIndex({ kind: 'dropIndex', table: 'users', name: 'idx_users_email' })
 			expect(queries[0].sql).toBe('DROP INDEX "idx_users_email"')
 		})
 

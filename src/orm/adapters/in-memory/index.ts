@@ -637,28 +637,35 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		}
 	}
 
-	async applyAddIndex(change: AddIndexChange): Promise<void> {
-		const indexName = change.name ?? `${change.table}_${change.on.join('_')}_idx`
-		this.indexes.set(indexName, { table: change.table, on: change.on, unique: change.unique ?? false })
+	async applyAddIndex(change: AddIndexChange, target?: unknown): Promise<void> {
+		const table = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table
+		const indexName = change.name ?? `${table}_${change.on.join('_')}_idx`
+		this.indexes.set(indexName, { table, on: change.on, unique: change.unique ?? false })
 	}
 
-	async applyDropIndex(change: DropIndexChange): Promise<void> {
-		this.indexes.delete(change.name)
+	async applyDropIndex(change: DropIndexChange, target?: unknown): Promise<void> {
+		const table = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table
+		if (this.indexes.get(change.name)?.table === table) this.indexes.delete(change.name)
 	}
 
-	async applyAddForeignKey(change: AddForeignKeyChange): Promise<void> {
-		const fkName = change.name ?? `${change.table}_${change.on}_fk`
+	async applyAddForeignKey(change: AddForeignKeyChange, target?: unknown, referencedTarget?: unknown): Promise<void> {
+		const table = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table
+		const referencedTable = referencedTarget
+			? resolveConfigName({} as AnySchema, referencedTarget as InMemoryRepoConfig)
+			: change.references.table
+		const fkName = change.name ?? `${table}_${change.on}_fk`
 		this.foreignKeys.set(fkName, {
-			table: change.table,
+			table,
 			on: change.on,
-			references: { table: change.references.table, column: change.references.column },
+			references: { table: referencedTable, column: change.references.column },
 			onDelete: change.onDelete as ForeignKeyAction | undefined,
 			onUpdate: change.onUpdate as ForeignKeyAction | undefined,
 		})
 	}
 
-	async applyDropForeignKey(change: DropForeignKeyChange): Promise<void> {
-		this.foreignKeys.delete(change.name)
+	async applyDropForeignKey(change: DropForeignKeyChange, target?: unknown): Promise<void> {
+		const table = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table
+		if (this.foreignKeys.get(change.name)?.table === table) this.foreignKeys.delete(change.name)
 	}
 
 	physicalTargetIdentity(config: InMemoryRepoConfig): string {

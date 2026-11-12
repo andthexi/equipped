@@ -28,10 +28,27 @@ export async function applyChange(
 		await method.call(adapter, change, from, to)
 		return
 	}
+	if (change.kind === 'addForeignKey' && typeof repo.resolveConfig === 'function') {
+		await method.call(
+			adapter,
+			change,
+			repo.resolveConfig(change.table),
+			repo.resolveConfig(change.references.table),
+		)
+		return
+	}
 
-	const resolvesTarget = ['createTable', 'dropTable', 'addField', 'dropField', 'modifyField', 'renameField'].includes(
-		change.kind,
-	)
+	const resolvesTarget = [
+		'createTable',
+		'dropTable',
+		'addField',
+		'dropField',
+		'modifyField',
+		'renameField',
+		'addIndex',
+		'dropIndex',
+		'dropForeignKey',
+	].includes(change.kind)
 	if (!resolvesTarget || typeof repo.resolveConfig !== 'function') {
 		await method.call(adapter, change)
 		return
@@ -78,12 +95,33 @@ if (import.meta.vitest) {
 			expect(repo.resolveConfig.mock.calls).toEqual([['users'], ['accounts']])
 		})
 
-		test('routes addIndex to adapter.applyAddIndex', async () => {
+		test('resolves index and foreign-key targets without rewriting literal names', async () => {
 			const applyAddIndex = vi.fn().mockResolvedValue(undefined)
-			const adapter = { applyAddIndex } as any
-			const repo = {} as any
-			await applyChange(adapter, repo, { kind: 'addIndex', table: 'users', on: ['email'] })
-			expect(applyAddIndex).toHaveBeenCalledWith({ kind: 'addIndex', table: 'users', on: ['email'] })
+			const applyDropIndex = vi.fn().mockResolvedValue(undefined)
+			const applyAddForeignKey = vi.fn().mockResolvedValue(undefined)
+			const adapter = { applyAddIndex, applyDropIndex, applyAddForeignKey } as any
+			const repo = { resolveConfig: vi.fn((name: string) => ({ table: `physical_${name}` })) } as any
+			const addIndex = { kind: 'addIndex' as const, table: 'users', on: ['email'], name: 'literal_idx' }
+			const dropIndex = { kind: 'dropIndex' as const, table: 'users', name: 'literal_idx' }
+			const addForeignKey = {
+				kind: 'addForeignKey' as const,
+				table: 'posts',
+				on: 'authorId',
+				references: { table: 'users', column: 'id' },
+				name: 'literal_fk',
+			}
+
+			await applyChange(adapter, repo, addIndex)
+			await applyChange(adapter, repo, dropIndex)
+			await applyChange(adapter, repo, addForeignKey)
+
+			expect(applyAddIndex).toHaveBeenCalledWith(addIndex, { table: 'physical_users' })
+			expect(applyDropIndex).toHaveBeenCalledWith(dropIndex, { table: 'physical_users' })
+			expect(applyAddForeignKey).toHaveBeenCalledWith(
+				addForeignKey,
+				{ table: 'physical_posts' },
+				{ table: 'physical_users' },
+			)
 		})
 
 		test('routes execute to change.up(repo)', async () => {
@@ -171,7 +209,7 @@ if (import.meta.vitest) {
 		test('routes dropIndex to adapter.applyDropIndex', async () => {
 			const applyDropIndex = vi.fn().mockResolvedValue(undefined)
 			const adapter = { applyDropIndex } as any
-			const change = { kind: 'dropIndex' as const, name: 'users_email_idx' }
+			const change = { kind: 'dropIndex' as const, table: 'users', name: 'users_email_idx' }
 			await applyChange(adapter, {} as any, change)
 			expect(applyDropIndex).toHaveBeenCalledWith(change)
 		})

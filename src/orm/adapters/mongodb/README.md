@@ -40,7 +40,7 @@ Migration records are stored in `equipped_migrations` (default database from the
 | Kind        | Method                                                          |
 | ----------- | --------------------------------------------------------------- |
 | `addIndex`  | `applyAddIndex` — `createIndex({ field: 1 }, { unique, name })` |
-| `dropIndex` | `applyDropIndex` — scans collections to find and drop by name   |
+| `dropIndex` | `applyDropIndex` — drops by name from the resolved collection   |
 | `execute`   | User callback receives the `Repo`                               |
 
 ### No lock support

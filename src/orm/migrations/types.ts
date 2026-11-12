@@ -64,6 +64,7 @@ export type AddIndexChange = {
 
 export type DropIndexChange = {
 	kind: 'dropIndex'
+	table: string
 	name: string
 }
 
