@@ -2603,6 +2603,15 @@ expensive per acquire) and equally cluster-safe — another node hitting
 the lock waits until the entire run completes, which is the desired
 behaviour.
 
+MongoDB stores migration history in the resolved database and collection for
+`_equipped_migrations`; history writes join the active `ClientSession`. Its
+distributed lock collection is `_equipped_migration_locks` in that same
+database, keyed by the resolved history collection's full physical identity.
+Acquisition is an atomic insert with a unique owner token and bounded polling;
+release matches both identity and owner. Locks have no lease, expiry, renewal,
+or stale-owner takeover: a crashed owner's document requires explicit
+administrative deletion, and migration callbacks are never retried.
+
 The **per-migration tx rule**: each migration gets its own
 `repo.session(...)` (when the adapter declares `transactional.session`
 and `m.tx !== false`). Failure at migration N rolls back N alone;
