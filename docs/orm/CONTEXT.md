@@ -1523,8 +1523,26 @@ connection.
 
 **Adapter-defines-nesting rule.** A `repo.session(...)` inside another
 `repo.session(...)` is delegated to the adapter. The framework calls
-`adapter.transactional.session(fn)` again; the adapter decides its own nesting
+`adapter.session(fn)` again; the adapter decides its own nesting
 behaviour (PG savepoints, Mongo subtransactions, Firebase no-ops or rejection).
+
+For `InMemoryAdapter`, every state-observing or state-mutating operation crosses
+a per-instance FIFO **admission boundary** unless the current async context
+already owns admission for that adapter. A **root session** is the outermost
+session active for that adapter instance; it owns admission while taking and
+either committing or restoring an adapter-wide snapshot. Outside reads therefore
+cannot observe uncommitted state, and outside writes cannot be erased by a later
+rollback. A same-instance **nested session** joins the active transaction flatly,
+without reacquiring admission and without an independent snapshot or savepoint.
+Migration locking uses the same re-entrant admission boundary without taking a
+snapshot, so a migration's nested session remains its rollback boundary. A
+session on a different in-memory adapter instance remains an independent root
+and does not share admission or transaction state.
+
+In-memory root rollback restores all stores and migration/schema metadata before
+admission is released. There is no cross-adapter atomicity or deadlock detection;
+different instances can progress independently, and callers must keep
+cross-instance nesting acyclic.
 
 The **nesting documentation contract**: adapter authors must document their
 nesting behaviour in the adapter's README.
