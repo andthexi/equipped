@@ -51,6 +51,7 @@ _Avoid_: Bare table name, logical schema name
 - Adapters receive the explicit migration payload together with resolved config for each target; no physical table name is fed back through the resolver.
 - Column names and explicit index or constraint names are literal identifiers, not **Logical schema names**; automatically derived object names use the **Physical target**, and a drop-index payload includes its owning logical table.
 - Codegen compares only explicitly managed targets through adapter-owned targeted introspection; broad discovery remains a diagnostic operation rather than a declaration of ownership.
+- Targeted introspection accepts validated resolved adapter config and returns one `DiscoveredSchema` or `null`; it does not construct a declarative Schema. Each adapter also canonicalizes that config as a physical target identity, including PostgreSQL schema and MongoDB database namespaces. Broad `introspect()` remains available for diagnostic inventory.
 - Distinct codegen targets sharing one **Physical target identity** are rejected rather than producing conflicting changes.
 - Supported operations honor PostgreSQL schema and MongoDB database **Target namespaces**; namespace provisioning and cross-namespace table renames remain outside this change, with cross-namespace rename attempts rejected.
 

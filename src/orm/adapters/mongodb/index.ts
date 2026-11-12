@@ -399,6 +399,31 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 		}
 	}
 
+	physicalTargetIdentity(config: MongoDbRepoConfig): string {
+		return JSON.stringify([config.db, config.col])
+	}
+
+	async introspectTarget(config: MongoDbRepoConfig): Promise<DiscoveredSchema | null> {
+		const db = this.client.db(config.db)
+		const collections = await db.listCollections({ name: config.col }).toArray()
+		if (!collections.some((collection) => collection.name === config.col)) return null
+
+		const rawIndexes = await db.collection(config.col).listIndexes().toArray()
+		return {
+			name: config.col,
+			pk: undefined,
+			fields: [],
+			indexes: rawIndexes
+				.filter((index) => index.name !== '_id_')
+				.map((index) => ({
+					name: index.name as string,
+					on: Object.keys(index.key as Record<string, unknown>) as ReadonlyArray<string>,
+					unique: !!index.unique,
+				})),
+			foreignKeys: [],
+		}
+	}
+
 	async introspect(): Promise<DiscoveredSchema[]> {
 		const db = this.client.db()
 		const collections = await db.listCollections().toArray()
@@ -929,13 +954,31 @@ if (import.meta.vitest) {
 						}),
 					}
 				},
-				listCollections: () => ({
-					toArray: async () => [...state.collections.keys()].map((name) => ({ name })),
+				listCollections: (filter?: { name?: string }) => ({
+					toArray: async () =>
+						[...state.collections.keys()]
+							.filter((name) => !filter?.name || name === filter.name)
+							.map((name) => ({ name })),
 				}),
 			})
 
 			return state
 		}
+
+		test('targeted introspection selects a resolved database and collection', async () => {
+			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/default' })
+			const state = mockMongoDb(adapter)
+			state.collections.set('users', { indexes: [] })
+
+			expect((await adapter.introspectTarget({ db: 'tenant', col: 'users' }))?.name).toBe('users')
+			expect(await adapter.introspectTarget({ db: 'tenant', col: 'missing' })).toBeNull()
+			expect(adapter.physicalTargetIdentity({ db: 'tenant', col: 'users' })).toBe(
+				JSON.stringify(['tenant', 'users']),
+			)
+			expect(adapter.physicalTargetIdentity({ db: 'other', col: 'users' })).not.toBe(
+				adapter.physicalTargetIdentity({ db: 'tenant', col: 'users' }),
+			)
+		})
 
 		test('loadMigrations reads from equipped_migrations collection', async () => {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })

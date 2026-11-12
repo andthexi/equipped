@@ -57,7 +57,7 @@ const migrator = Migrator.from(repo, adapter).migrations(migrations).withoutLock
 
 ### Introspection
 
-`introspect()` returns `DiscoveredSchema[]` with `fields: []`, `pk: undefined`, `foreignKeys: []` per the Mongo-introspection rule. Only indexes are discovered (the implicit `_id_` index is skipped). The tracker collection is excluded from results.
+`introspectTarget({ db, col })` inspects only the resolved database and collection, returning `null` when it is absent. `physicalTargetIdentity({ db, col })` includes both names so collections in different databases remain distinct. `introspect()` remains the broad diagnostic discovery surface and returns `DiscoveredSchema[]` with `fields: []`, `pk: undefined`, `foreignKeys: []` per the Mongo-introspection rule. Only indexes are discovered (the implicit `_id_` index is skipped). The tracker collection is excluded from broad results.
 
 ## Session nesting behaviour
 

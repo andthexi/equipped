@@ -99,6 +99,8 @@ export abstract class OrmAdapter {
 	applyAddForeignKey?(change: AddForeignKeyChange): Promise<void>
 	applyDropForeignKey?(change: DropForeignKeyChange): Promise<void>
 	introspect?(): Promise<DiscoveredSchema[]>
+	introspectTarget?(config: unknown): Promise<DiscoveredSchema | null>
+	physicalTargetIdentity?(config: unknown): string
 
 	protected onFatalError(err: unknown): never {
 		const wrapped = err instanceof EquippedError ? err : new EquippedError('OrmAdapter fatal error', {}, err)

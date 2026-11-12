@@ -540,17 +540,38 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		await this.#getClient().query(`ALTER TABLE "${change.table}" DROP CONSTRAINT "${change.name}"`)
 	}
 
+	physicalTargetIdentity(config: PostgresqlRepoConfig): string {
+		return JSON.stringify([config.schema ?? 'public', config.table])
+	}
+
+	async introspectTarget(config: PostgresqlRepoConfig): Promise<DiscoveredSchema | null> {
+		return (await this.#introspect(config))[0] ?? null
+	}
+
 	async introspect(): Promise<DiscoveredSchema[]> {
+		return this.#introspect()
+	}
+
+	async #introspect(config?: PostgresqlRepoConfig): Promise<DiscoveredSchema[]> {
 		const { OrmIntrospectionError } = await import('../../errors/introspection.js')
 		const client = this.#getClient()
+		const targetSchema = config?.schema ?? 'public'
 
-		const tablesResult = await client.query(
-			`
+		const tablesResult = config
+			? await client.query(
+					`
+			SELECT table_name FROM information_schema.tables
+			WHERE table_schema = $1 AND table_name = $2 AND table_type = 'BASE TABLE'
+		`,
+					[targetSchema, config.table],
+				)
+			: await client.query(
+					`
 			SELECT table_name FROM information_schema.tables
 			WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name != $1
 		`,
-			[TRACKER_TABLE],
-		)
+					[TRACKER_TABLE],
+				)
 
 		const schemas: DiscoveredSchema[] = []
 
@@ -561,10 +582,10 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				`
 				SELECT column_name, data_type, is_nullable, column_default
 				FROM information_schema.columns
-				WHERE table_schema = 'public' AND table_name = $1
+				WHERE table_schema = $1 AND table_name = $2
 				ORDER BY ordinal_position
 			`,
-				[tableName],
+				[targetSchema, tableName],
 			)
 
 			const pkResult = await client.query(
@@ -573,9 +594,9 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				FROM information_schema.table_constraints tc
 				JOIN information_schema.key_column_usage kcu
 					ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-				WHERE tc.table_schema = 'public' AND tc.table_name = $1 AND tc.constraint_type = 'PRIMARY KEY'
+				WHERE tc.table_schema = $1 AND tc.table_name = $2 AND tc.constraint_type = 'PRIMARY KEY'
 			`,
-				[tableName],
+				[targetSchema, tableName],
 			)
 
 			const pkColName = pkResult.rows[0]?.column_name as string | undefined
@@ -586,9 +607,9 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				FROM information_schema.table_constraints tc
 				JOIN information_schema.key_column_usage kcu
 					ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-				WHERE tc.table_schema = 'public' AND tc.table_name = $1 AND tc.constraint_type = 'UNIQUE'
+				WHERE tc.table_schema = $1 AND tc.table_name = $2 AND tc.constraint_type = 'UNIQUE'
 			`,
-				[tableName],
+				[targetSchema, tableName],
 			)
 			const uniqueCols = new Set(uniqueResult.rows.map((r: any) => r.column_name))
 
@@ -634,9 +655,9 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				`
 				SELECT indexname, indexdef
 				FROM pg_indexes
-				WHERE schemaname = 'public' AND tablename = $1
+				WHERE schemaname = $1 AND tablename = $2
 			`,
-				[tableName],
+				[targetSchema, tableName],
 			)
 
 			const indexes: { name: string; on: readonly string[]; unique: boolean }[] = []
@@ -666,9 +687,9 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 					ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
 				JOIN information_schema.referential_constraints rc
 					ON tc.constraint_name = rc.constraint_name AND tc.table_schema = rc.constraint_schema
-				WHERE tc.table_schema = 'public' AND tc.table_name = $1 AND tc.constraint_type = 'FOREIGN KEY'
+				WHERE tc.table_schema = $1 AND tc.table_name = $2 AND tc.constraint_type = 'FOREIGN KEY'
 			`,
-				[tableName],
+				[targetSchema, tableName],
 			)
 
 			const foreignKeys: {
@@ -1626,6 +1647,27 @@ if (import.meta.vitest) {
 			])
 			expect(s.indexes).toEqual([{ name: 'users_email_idx', on: ['email'], unique: true }])
 			expect(s.foreignKeys).toEqual([])
+		})
+
+		test('targeted introspection scopes every query to the resolved schema and table', async () => {
+			;(adapter.pool as any).query = async (sql: string, params?: unknown[]) => {
+				queries.push({ sql, params })
+				if (sql.includes('information_schema.tables')) return { rows: [{ table_name: 'users' }] }
+				if (sql.includes('information_schema.columns')) {
+					return { rows: [{ column_name: 'id', data_type: 'text', is_nullable: 'NO', column_default: null }] }
+				}
+				if (sql.includes('PRIMARY KEY')) return { rows: [{ column_name: 'id' }] }
+				return { rows: [] }
+			}
+
+			expect((await adapter.introspectTarget({ schema: 'tenant', table: 'users' }))?.name).toBe('users')
+			expect(queries.every(({ params }) => params?.[0] === 'tenant' && params?.[1] === 'users')).toBe(true)
+			expect(adapter.physicalTargetIdentity({ table: 'users' })).toBe(
+				adapter.physicalTargetIdentity({ schema: 'public', table: 'users' }),
+			)
+			expect(adapter.physicalTargetIdentity({ schema: 'tenant', table: 'users' })).not.toBe(
+				adapter.physicalTargetIdentity({ table: 'users' }),
+			)
 		})
 
 		test('introspect throws OrmIntrospectionError on unsupported PG type', async () => {

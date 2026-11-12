@@ -661,37 +661,50 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		this.foreignKeys.delete(change.name)
 	}
 
+	physicalTargetIdentity(config: InMemoryRepoConfig): string {
+		return resolveConfigName({} as AnySchema, config)
+	}
+
+	async introspectTarget(config: InMemoryRepoConfig): Promise<DiscoveredSchema | null> {
+		const name = this.physicalTargetIdentity(config)
+		if (!this.tables.has(name) && !this.stores.has(name)) return null
+
+		const meta = this.tables.get(name)
+		const fields = [...(meta?.fields.values() ?? [])].map((f) => ({
+			name: f.name,
+			type: f.type as FieldTypeName,
+			nullable: f.nullable ?? false,
+			...(f.default !== undefined ? { default: f.default } : {}),
+			...(f.unique ? { unique: true } : {}),
+		}))
+		const indexes = [...this.indexes.entries()]
+			.filter(([, idx]) => idx.table === name)
+			.map(([indexName, index]) => ({ name: indexName, on: index.on, unique: index.unique }))
+		const foreignKeys = [...this.foreignKeys.entries()]
+			.filter(([, foreignKey]) => foreignKey.table === name)
+			.map(([foreignKeyName, foreignKey]) => ({
+				name: foreignKeyName,
+				on: foreignKey.on,
+				references: { ...foreignKey.references },
+				...(foreignKey.onDelete ? { onDelete: foreignKey.onDelete } : {}),
+				...(foreignKey.onUpdate ? { onUpdate: foreignKey.onUpdate } : {}),
+			}))
+
+		return {
+			name,
+			pk: meta ? { name: meta.pk.name, type: meta.pk.type as FieldTypeName } : undefined,
+			fields,
+			indexes,
+			foreignKeys,
+		}
+	}
+
 	async introspect(): Promise<DiscoveredSchema[]> {
 		const schemas: DiscoveredSchema[] = []
 		const names = new Set([...this.tables.keys(), ...this.stores.keys()])
 		for (const name of names) {
-			const meta = this.tables.get(name)
-			const fields = [...(meta?.fields.values() ?? [])].map((f) => ({
-				name: f.name,
-				type: f.type as FieldTypeName,
-				nullable: f.nullable ?? false,
-				...(f.default !== undefined ? { default: f.default } : {}),
-				...(f.unique ? { unique: true } : {}),
-			}))
-			const indexes = [...this.indexes.entries()]
-				.filter(([, idx]) => idx.table === name)
-				.map(([idxName, idx]) => ({ name: idxName, on: idx.on, unique: idx.unique }))
-			const foreignKeys = [...this.foreignKeys.entries()]
-				.filter(([, fk]) => fk.table === name)
-				.map(([fkName, fk]) => ({
-					name: fkName,
-					on: fk.on,
-					references: { table: fk.references.table, column: fk.references.column },
-					...(fk.onDelete ? { onDelete: fk.onDelete } : {}),
-					...(fk.onUpdate ? { onUpdate: fk.onUpdate } : {}),
-				}))
-			schemas.push({
-				name,
-				pk: meta ? { name: meta.pk.name, type: meta.pk.type as FieldTypeName } : undefined,
-				fields,
-				indexes,
-				foreignKeys,
-			})
+			const schema = await this.introspectTarget({ table: name })
+			if (schema) schemas.push(schema)
 		}
 		return schemas
 	}
@@ -734,6 +747,27 @@ if (import.meta.vitest) {
 	const { v } = await import('valleyed')
 
 	describe('in-memory adapter', () => {
+		test('targeted introspection uses the resolved physical table and reports absence', async () => {
+			const adapter = InMemoryAdapter.create({})
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'tenant_users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
+
+			expect(await adapter.introspectTarget({ table: 'users', prefix: 'tenant_' })).toEqual({
+				name: 'tenant_users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+				indexes: [],
+				foreignKeys: [],
+			})
+			expect(await adapter.introspectTarget({ table: 'missing', prefix: 'tenant_' })).toBeNull()
+			expect(adapter.physicalTargetIdentity({ table: 'users', prefix: 'tenant_' })).toBe('tenant_users')
+			expect(adapter.physicalTargetIdentity({ table: 'tenant_users' })).toBe('tenant_users')
+		})
+
 		test('introspect discovers lazily written stores without inventing schema metadata', async () => {
 			const schema = Schema.from('users')
 				.pk('id', v.string(), () => 'u')
