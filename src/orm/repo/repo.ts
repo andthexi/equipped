@@ -3,7 +3,7 @@ import type { Pipe } from 'valleyed'
 import type { InferAdapterConfig } from '../adapter'
 import { currentTransforms, run } from './als'
 import { SchemaContext, SchemaRef, type HasMethod, type SchemaRefSurface } from './builders'
-import type { OrmAdapterConfig, OrmAdapterLike } from '../adapters/base'
+import type { OrmAdapterLike } from '../adapters/base'
 import type { IterationOptions } from '../query-options'
 import type { AnySchema } from '../schema'
 import { composeSchemaConfig } from '../schema-validations'
@@ -63,7 +63,7 @@ class RepoBuilder<A extends OrmAdapterLike<any>> {
 		this.#resolve = resolve
 	}
 
-	resolve(fn: (schema: AnySchema) => OrmAdapterConfig<A>): RepoBuilder<A> {
+	resolve(fn: (schema: AnySchema) => InferAdapterConfig<A>): RepoBuilder<A> {
 		return new RepoBuilder<A>(this.#adapter, fn)
 	}
 
@@ -93,6 +93,57 @@ if (import.meta.vitest) {
 	}
 
 	describe('Repo.from() and repo.on()', () => {
+		function buildRepo<A extends OrmAdapterLike<unknown>>(adapter: A, resolve: (schema: AnySchema) => InferAdapterConfig<A>) {
+			return Repo.from(adapter).resolve(resolve).build()
+		}
+
+		test('builds and queries through a generic schema-config resolver', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const schema = Schema.from('generic_resolver')
+				.pk('id', v.string(), () => 'generic-id')
+				.field('name', v.string())
+				.build()
+			const repo = buildRepo(adapter, (schema) => ({ table: `scoped_${schema.name}` }))
+
+			const created = await repo.on(schema).one().create({ name: 'Generic resolver' })
+			expect(await repo.on(schema).one().id(created.id).find()).toEqual(created)
+			expect((await adapter.introspect()).map(({ name }) => name)).toEqual(['scoped_generic_resolver'])
+		})
+
+		test('uses schema-config input before transforming it for the adapter', async () => {
+			class TransformingConfigAdapter extends OrmAdapter {
+				readonly schemaConfigPipe = v.string().pipe((table) => ({ table }))
+				readonly supportedFieldTypes = ['string'] as const
+				readonly seenConfigs: unknown[] = []
+
+				async findMany(_schema: AnySchema, config: unknown) {
+					this.seenConfigs.push(config)
+					return [{ id: 'stored-id' }]
+				}
+			}
+
+			const adapter = new TransformingConfigAdapter()
+			const schema = Schema.from('transformed_resolver').pk('id', v.string(), () => 'unused').build()
+			const repo = buildRepo(adapter, (schema) => schema.name)
+
+			expect(adapter.seenConfigs).toEqual([])
+			expect(await repo.on(schema).all().find()).toEqual([{ id: 'stored-id' }])
+			expect(adapter.seenConfigs).toEqual([{ table: 'transformed_resolver' }])
+		})
+
+		test('preserves use-config inference for an adapter without a schema config pipe', async () => {
+			const storage = InMemoryAdapter.create({})
+			const adapter = {
+				use: (schema: AnySchema, config: { table: string }) => storage.use(schema, config),
+			}
+			const schema = Schema.from('legacy_resolver').pk('id', v.string(), () => 'legacy-id').build()
+			const repo = buildRepo(adapter, (schema) => ({ table: schema.name }))
+
+			const created = await repo.on(schema).one().create({})
+			expect(await repo.on(schema).all().find()).toEqual([created])
+			expect((await storage.introspect()).map(({ name }) => name)).toEqual(['legacy_resolver'])
+		})
+
 		test('Repo.from(adapter).resolve(...).build() creates a working repo', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const TestSchema = Schema.from('test')
