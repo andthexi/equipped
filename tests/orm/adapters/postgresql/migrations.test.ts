@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 
-import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import { Pool } from 'pg'
 import { v } from 'valleyed'
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 
 import { Instance } from '../../../../src/instance'
 import { PostgresAdapter } from '../../../../src/orm/adapters/postgresql'
@@ -157,16 +157,32 @@ describe.skipIf(!PG_TEST_URL)('PostgresAdapter: live migration and codegen integ
 		const physical = await adapter.pool.query(`SELECT id, email FROM "${namespace}"."base_people"`)
 		expect(physical.rows).toEqual([{ id: 'base-1', email: 'base@example.com' }])
 
-		await adapter.pool.query(
-			`CREATE TABLE "${namespace}"."scope_people" (id text PRIMARY KEY, email text NOT NULL)`,
-		)
+		const scopedMigration: Migration<typeof adapter> = {
+			id: migrationId('routing_scoped'),
+			changes: [
+				{
+					kind: 'createTable',
+					name: 'users',
+					pk: { name: 'id', type: 'string' },
+					fields: [{ name: 'email', type: 'string' }],
+				},
+				{
+					kind: 'execute',
+					up: async (migrationRepo) => {
+						await migrationRepo.on(UserSchema).one().create({ id: 'scope-1', email: 'scope@example.com' })
+					},
+				},
+			],
+		}
 		await repo.resolve(
 			(config) => ({ ...config, table: 'scope_people' }),
 			async () => {
-				await repo.on(UserSchema).one().create({ id: 'scope-1', email: 'scope@example.com' })
+				await Migrator.from(repo, adapter).migrations([migration, scopedMigration]).build().up()
 				expect(await repo.on(UserSchema).one().id('scope-1').find()).toMatchObject({
 					email: 'scope@example.com',
 				})
+				const scopedPhysical = await adapter.pool.query(`SELECT id, email FROM "${namespace}"."scope_people"`)
+				expect(scopedPhysical.rows).toEqual([{ id: 'scope-1', email: 'scope@example.com' }])
 			},
 		)
 		expect(await repo.on(UserSchema).one().id('scope-1').find()).toBeNull()
