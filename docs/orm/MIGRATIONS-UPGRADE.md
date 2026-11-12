@@ -91,4 +91,5 @@ verification as complete. The suite exercises identity, mapped base and scoped
 table routing, PostgreSQL namespaces, migration-time Repo writes, independently resolved rename
 and foreign-key endpoints, owning-table index changes, and targeted codegen
 round trips. Fixtures use unique owned schemas and migration ids; teardown checks
-that pre-existing public tables remain untouched.
+that pre-existing public tables remain untouched and removes only objects owned by
+the current run.
