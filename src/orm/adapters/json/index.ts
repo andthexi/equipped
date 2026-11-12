@@ -380,6 +380,14 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropForeignKey(change))
 	}
 
+	physicalTargetIdentity(config: JsonAdapterConfig): string {
+		return this.#inMemory.physicalTargetIdentity(config)
+	}
+
+	async introspectTarget(config: JsonAdapterConfig): Promise<DiscoveredSchema | null> {
+		return this.#withCurrentFile(false, async () => await this.#inMemory.introspectTarget(config))
+	}
+
 	async introspect(): Promise<DiscoveredSchema[]> {
 		return this.#withCurrentFile(false, async () => await this.#inMemory.introspect())
 	}
@@ -451,6 +459,23 @@ if (import.meta.vitest) {
 	})
 
 	describe('json adapter — surface parity with in-memory', () => {
+		test('targeted introspection reads one resolved table while broad discovery remains available', async () => {
+			const adapter = JsonAdapter.create({ filePath })
+			await adapter.connect()
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
+
+			expect((await adapter.introspectTarget({ table: 'users' }))?.name).toBe('users')
+			expect(await adapter.introspectTarget({ table: 'missing' })).toBeNull()
+			expect(adapter.physicalTargetIdentity({ table: 'users' })).toBe('users')
+			expect(await adapter.introspect()).toHaveLength(1)
+			await adapter.disconnect()
+		})
+
 		test('CRUD: create, find, update, delete round-trip', async () => {
 			const schema = Schema.from('users')
 				.pk('id', v.string(), () => 'u')
