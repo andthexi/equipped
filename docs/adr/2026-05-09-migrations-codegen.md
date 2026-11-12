@@ -8,7 +8,7 @@ takes a Repo plus an explicit managed subset of target Schemas and produces a
 matches target). Codegen requires the adapter to declare targeted
 `introspectTarget(config)` and `physicalTargetIdentity(config)` plus broad
 diagnostic `introspect()` — absence is a compile error at
-`MigrationCodegen.from(repo, adapter)` via type-level narrowing (symmetric with
+`MigrationCodegen.from(repo)` via type-level narrowing (symmetric with
 `SchemaCompatible<A, S>` in §5.3). The full v1 spec extends
 `docs/orm/CONTEXT.md` §16.
 

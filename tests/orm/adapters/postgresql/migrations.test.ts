@@ -151,7 +151,7 @@ describe.skipIf(!PG_TEST_URL)('PostgresAdapter: live migration and codegen integ
 			],
 		}
 
-		await Migrator.from(repo, adapter).migrations([migration]).build().up()
+		await Migrator.from(repo).withLock().migrations([migration]).build().up()
 
 		expect(await repo.on(UserSchema).one().id('base-1').find()).toMatchObject({ email: 'base@example.com' })
 		const physical = await adapter.pool.query(`SELECT id, email FROM "${namespace}"."base_people"`)
@@ -177,7 +177,7 @@ describe.skipIf(!PG_TEST_URL)('PostgresAdapter: live migration and codegen integ
 		await repo.resolve(
 			(config) => ({ ...config, table: 'scope_people' }),
 			async () => {
-				await Migrator.from(repo, adapter).migrations([migration, scopedMigration]).build().up()
+				await Migrator.from(repo).withLock().migrations([migration, scopedMigration]).build().up()
 				expect(await repo.on(UserSchema).one().id('scope-1').find()).toMatchObject({
 					email: 'scope@example.com',
 				})
@@ -257,7 +257,7 @@ describe.skipIf(!PG_TEST_URL)('PostgresAdapter: live migration and codegen integ
 			},
 		]
 
-		await Migrator.from(repo, adapter).migrations(migrations).build().up()
+		await Migrator.from(repo).withLock().migrations(migrations).build().up()
 
 		expect(await repo.on(ArticleSchema).one().id('p1').find()).toMatchObject({ headline: 'hello', authorId: 'u1' })
 		const catalog = await adapter.pool.query(
@@ -287,7 +287,7 @@ describe.skipIf(!PG_TEST_URL)('PostgresAdapter: live migration and codegen integ
 			.resolve((name) => ({ schema: namespace, table: `mapped_${name}` }))
 			.build()
 		const UserV1 = Schema.from('users').pk('id', v.string()).field('email', v.string()).build()
-		const firstCodegen = MigrationCodegen.from(repo, adapter).target([UserV1]).build()
+		const firstCodegen = MigrationCodegen.from(repo).target([UserV1]).build()
 		const createChanges = await firstCodegen.diff()
 		expect(createChanges).toEqual([
 			expect.objectContaining({
@@ -298,7 +298,8 @@ describe.skipIf(!PG_TEST_URL)('PostgresAdapter: live migration and codegen integ
 		])
 
 		const createId = migrationId('codegen_create')
-		await Migrator.from(repo, adapter)
+		await Migrator.from(repo)
+			.withLock()
 			.migrations([{ id: createId, changes: createChanges! }])
 			.build()
 			.up()
@@ -309,13 +310,14 @@ describe.skipIf(!PG_TEST_URL)('PostgresAdapter: live migration and codegen integ
 			.field('email', v.string())
 			.field('displayName', v.string())
 			.build()
-		const secondCodegen = MigrationCodegen.from(repo, adapter).target([UserV2]).build()
+		const secondCodegen = MigrationCodegen.from(repo).target([UserV2]).build()
 		const evolveChanges = await secondCodegen.diff()
 		expect(evolveChanges).toEqual([
 			{ kind: 'addField', table: 'users', field: { name: 'displayName', type: 'string' } },
 		])
 		const evolveId = migrationId('codegen_evolve')
-		await Migrator.from(repo, adapter)
+		await Migrator.from(repo)
+			.withLock()
 			.migrations([
 				{ id: createId, changes: createChanges! },
 				{ id: evolveId, changes: evolveChanges! },

@@ -1304,7 +1304,7 @@ if (import.meta.vitest) {
 				},
 			]
 
-			const migrator = Migrator.from(repo, adapter).migrations(migrations).build()
+			const migrator = Migrator.from(repo).withLock().migrations(migrations).build()
 			const result = await migrator.up()
 			expect(result.ran).toEqual(['0001-create', '0002-evolve', '0003-cleanup', '0004-seed'])
 
@@ -1364,12 +1364,12 @@ if (import.meta.vitest) {
 			const adapter1 = JsonAdapter.create({ filePath })
 			await adapter1.connect()
 			const repo1 = new Repo({ adapter: adapter1, resolve: (name) => ({ table: name }) })
-			const migrator1 = Migrator.from(repo1, adapter1).migrations(migrations).build()
+			const migrator1 = Migrator.from(repo1).withLock().migrations(migrations).build()
 
 			const adapter2 = JsonAdapter.create({ filePath })
 			await adapter2.connect()
 			const repo2 = new Repo({ adapter: adapter2, resolve: (name) => ({ table: name }) })
-			const migrator2 = Migrator.from(repo2, adapter2).migrations(migrations).build()
+			const migrator2 = Migrator.from(repo2).withLock().migrations(migrations).build()
 
 			const p1 = migrator1.up()
 			const p2 = migrator2.up()
@@ -1414,7 +1414,7 @@ if (import.meta.vitest) {
 					},
 				],
 			}
-			const migrator = Migrator.from(r2, a2).migrations([m]).build()
+			const migrator = Migrator.from(r2).withLock().migrations([m]).build()
 			await expect(migrator.up()).rejects.toThrow(OrmMigrationError)
 			await a2.disconnect()
 

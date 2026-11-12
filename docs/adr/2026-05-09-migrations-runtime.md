@@ -3,7 +3,7 @@
 The orm gains an in-tree migrations subsystem ("A" in the C-hybrid scope;
 codegen "B" now ships alongside it). A migration is a typed
 `Migration<A> = { id, changes: Change[], tx? }` plain object the user passes
-in an array to `Migrator.from(repo, adapter).migrations([...]).build()`. The
+in an array to `Migrator.from(repo).withLock().migrations([...]).build()`. The
 `changes` field is a closed discriminated-union AST (12 variants —
 `createTable`, `addField`, `addIndex`, …, plus `execute` for raw escape)
 that adapters render via per-variant `apply*` methods structurally inferred
@@ -84,7 +84,7 @@ v1 spec lives in `docs/orm/CONTEXT.md` §16.
   `OrmValidationError`, `OrmNotFoundError`, `OrmReplayError` under
   `src/orm/errors/`.
 - New `'changes'` kind on `OrmValidationError` (§7.5) for boundary
-  validation failures at `Migrator.from(repo).migrations(arr).build()`.
+  validation failures at `Migrator.from(repo).withLock().migrations(arr).build()`.
 - Codegen ("B") ships with targeted introspection, adapter-aware diffing,
   and no file emission; see `2026-05-09-migrations-codegen.md` and
   `docs/orm/CONTEXT.md` §16.11.
