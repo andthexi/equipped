@@ -3,7 +3,7 @@
 The orm gains an in-tree migrations subsystem ("A" in the C-hybrid scope;
 codegen "B" now ships alongside it). A migration is a typed
 `Migration<A> = { id, changes: Change[], tx? }` plain object the user passes
-in an array to `Migrator.from(repo).migrations([...]).build()`. The
+in an array to `Migrator.from(repo, adapter).migrations([...]).build()`. The
 `changes` field is a closed discriminated-union AST (12 variants —
 `createTable`, `addField`, `addIndex`, …, plus `execute` for raw escape)
 that adapters render via per-variant `apply*` methods structurally inferred
