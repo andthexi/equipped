@@ -2,6 +2,8 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [5.3.6](https://github.com/andthexi/equipped/compare/v5.3.5...v5.3.6) (2026-11-12)
+
 ### [5.3.5](https://github.com/andthexi/equipped/compare/v5.3.4...v5.3.5) (2026-11-12)
 
 ### Bug Fixes
