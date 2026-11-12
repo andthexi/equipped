@@ -2,9 +2,17 @@ import pino, { type Logger } from 'pino'
 import { monotonicFactory } from 'ulid'
 import { type Pipe, v } from 'valleyed'
 
-import { EquippedError } from '../errors'
-import { type ClassRef, type HookCb, type HookEvent, type HookOptions, type HookRecord, registerHook, runHooks } from './hooks'
-import { instanceSettingsPipe, type Settings, type SettingsInput } from './settings'
+import { EquippedError } from '../errors/index.js'
+import {
+	type ClassRef,
+	type HookCb,
+	type HookEvent,
+	type HookOptions,
+	type HookRecord,
+	registerHook,
+	runHooks,
+} from './hooks.js'
+import { instanceSettingsPipe, type Settings, type SettingsInput } from './settings.js'
 
 export type { ClassRef, HookCb, HookEvent, HookOptions }
 
@@ -43,7 +51,8 @@ export class Instance {
 	}
 
 	get id() {
-		if (Instance.#id === undefined) return Instance.crash(new EquippedError('Instance doesnt have an alias yet', {}))
+		if (Instance.#id === undefined)
+			return Instance.crash(new EquippedError('Instance doesnt have an alias yet', {}))
 		return Instance.#id
 	}
 
@@ -96,7 +105,10 @@ export class Instance {
 	static get() {
 		if (!Instance.#instance)
 			return Instance.crash(
-				new EquippedError('Has not been initialized. Make sure an instance has been created before you get an instance', {}),
+				new EquippedError(
+					'Has not been initialized. Make sure an instance has been created before you get an instance',
+					{},
+				),
 			)
 		return Instance.#instance
 	}
@@ -159,7 +171,9 @@ if (import.meta.vitest) {
 
 	describe('Instance close', () => {
 		it('runs close hooks through public close without exiting and does not run them twice', async () => {
-			const instance = Instance.maybeGet() ?? Instance.create({ app: { name: 'instance-close-test' }, log: { level: 'silent' } })
+			const instance =
+				Instance.maybeGet() ??
+				Instance.create({ app: { name: 'instance-close-test' }, log: { level: 'silent' } })
 			let callCount = 0
 
 			Instance.on('close', () => {

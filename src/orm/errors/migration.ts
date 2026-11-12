@@ -1,4 +1,4 @@
-import { EquippedError } from '../../errors'
+import { EquippedError } from '../../errors/index.js'
 
 export type OrmMigrationPhase = 'lock' | 'load' | 'session' | 'user' | 'record'
 
@@ -7,7 +7,11 @@ export class OrmMigrationError extends EquippedError {
 	readonly phase: OrmMigrationPhase
 
 	constructor(opts: { id: string; phase: OrmMigrationPhase; cause: unknown }) {
-		super(`Migration failed at phase '${opts.phase}' for migration '${opts.id}'`, { id: opts.id, phase: opts.phase }, opts.cause)
+		super(
+			`Migration failed at phase '${opts.phase}' for migration '${opts.id}'`,
+			{ id: opts.id, phase: opts.phase },
+			opts.cause,
+		)
 		this.id = opts.id
 		this.phase = opts.phase
 	}
@@ -15,7 +19,7 @@ export class OrmMigrationError extends EquippedError {
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
-	const { EquippedError } = await import('../../errors')
+	const { EquippedError } = await import('../../errors/index.js')
 
 	describe('OrmMigrationError', () => {
 		test('stores id, phase, and cause on the instance', () => {
@@ -38,9 +42,9 @@ if (import.meta.vitest) {
 		})
 
 		test('discriminates from sibling error classes', async () => {
-			const { OrmValidationError } = await import('./validation')
-			const { OrmNotFoundError } = await import('./not-found')
-			const { OrmReplayError } = await import('./replay')
+			const { OrmValidationError } = await import('./validation.js')
+			const { OrmNotFoundError } = await import('./not-found.js')
+			const { OrmReplayError } = await import('./replay.js')
 			const err = new OrmMigrationError({ id: 'x', phase: 'load', cause: null })
 			expect(err).not.toBeInstanceOf(OrmValidationError)
 			expect(err).not.toBeInstanceOf(OrmNotFoundError)

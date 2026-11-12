@@ -1,14 +1,14 @@
 import type { Pipe } from 'valleyed'
 
-import type { InferAdapterConfig } from '../adapter'
-import { currentTransforms, run } from './als'
-import { SchemaContext, SchemaRef, type HasMethod, type SchemaRefSurface } from './builders'
-import type { OrmAdapterConfig, OrmAdapterLike } from '../adapters/base'
-import type { IterationOptions } from '../query-options'
-import type { AnySchema } from '../schema'
-import { composeSchemaConfig } from '../schema-validations'
+import type { InferAdapterConfig } from '../adapter.js'
+import type { OrmAdapterLike } from '../adapters/base.js'
+import type { IterationOptions } from '../query-options.js'
+import { composeSchemaConfig } from '../schema-validations.js'
+import type { AnySchema } from '../schema.js'
+import { currentTransforms, run } from './als.js'
+import { SchemaContext, SchemaRef, type HasMethod, type SchemaRefSurface } from './builders.js'
 
-export type { ConfigTransform } from './als'
+export type { ConfigTransform } from './als.js'
 
 export class Repo<A extends OrmAdapterLike<any>> {
 	readonly #adapter: A
@@ -38,7 +38,9 @@ export class Repo<A extends OrmAdapterLike<any>> {
 	}
 
 	on<S extends AnySchema>(schema: S): SchemaRefSurface<S, A> {
-		return new SchemaRef<S, A>(new SchemaContext(schema, (target) => this.#getUse(target))) as unknown as SchemaRefSurface<S, A>
+		return new SchemaRef<S, A>(
+			new SchemaContext(schema, (target) => this.#getUse(target)),
+		) as unknown as SchemaRefSurface<S, A>
 	}
 
 	static from<NewA extends OrmAdapterLike<any>>(adapter: NewA): RepoBuilder<NewA> {
@@ -63,7 +65,7 @@ class RepoBuilder<A extends OrmAdapterLike<any>> {
 		this.#resolve = resolve
 	}
 
-	resolve(fn: (schema: AnySchema) => OrmAdapterConfig<A>): RepoBuilder<A> {
+	resolve(fn: (schema: AnySchema) => InferAdapterConfig<A>): RepoBuilder<A> {
 		return new RepoBuilder<A>(this.#adapter, fn)
 	}
 
@@ -81,18 +83,76 @@ export type RepoSurface<A extends OrmAdapterLike<any>> = Repo<A> &
 if (import.meta.vitest) {
 	const { describe, test, expect, expectTypeOf, vi } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { InMemoryAdapter } = await import('../adapters/in-memory')
-	const { OrmAdapter } = await import('../orm-adapter')
-	const { OrmValidationError } = await import('../errors')
-	const { Instance } = await import('../../instance')
-	const { Relations } = await import('../relations')
-	const { Schema } = await import('../schema')
+	const { InMemoryAdapter } = await import('../adapters/in-memory/index.js')
+	const { OrmAdapter } = await import('../orm-adapter.js')
+	const { OrmValidationError } = await import('../errors/index.js')
+	const { Instance } = await import('../../instance/index.js')
+	const { Relations } = await import('../relations.js')
+	const { Schema } = await import('../schema.js')
 
 	function mockInstance() {
 		return vi.spyOn(Instance, 'on').mockImplementation(() => {})
 	}
 
 	describe('Repo.from() and repo.on()', () => {
+		function buildRepo<A extends OrmAdapterLike<unknown>>(
+			adapter: A,
+			resolve: (schema: AnySchema) => InferAdapterConfig<A>,
+		) {
+			return Repo.from(adapter).resolve(resolve).build()
+		}
+
+		test('builds and queries through a generic schema-config resolver', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const schema = Schema.from('generic_resolver')
+				.pk('id', v.string(), () => 'generic-id')
+				.field('name', v.string())
+				.build()
+			const repo = buildRepo(adapter, (schema) => ({ table: `scoped_${schema.name}` }))
+
+			const created = await repo.on(schema).one().create({ name: 'Generic resolver' })
+			expect(await repo.on(schema).one().id(created.id).find()).toEqual(created)
+			expect((await adapter.introspect()).map(({ name }) => name)).toEqual(['scoped_generic_resolver'])
+		})
+
+		test('uses schema-config input before transforming it for the adapter', async () => {
+			class TransformingConfigAdapter extends OrmAdapter {
+				readonly schemaConfigPipe = v.string().pipe((table) => ({ table }))
+				readonly supportedFieldTypes = ['string'] as const
+				readonly seenConfigs: unknown[] = []
+
+				async findMany(_schema: AnySchema, config: unknown) {
+					this.seenConfigs.push(config)
+					return [{ id: 'stored-id' }]
+				}
+			}
+
+			const adapter = new TransformingConfigAdapter()
+			const schema = Schema.from('transformed_resolver')
+				.pk('id', v.string(), () => 'unused')
+				.build()
+			const repo = buildRepo(adapter, (schema) => schema.name)
+
+			expect(adapter.seenConfigs).toEqual([])
+			expect(await repo.on(schema).all().find()).toEqual([{ id: 'stored-id' }])
+			expect(adapter.seenConfigs).toEqual([{ table: 'transformed_resolver' }])
+		})
+
+		test('preserves use-config inference for an adapter without a schema config pipe', async () => {
+			const storage = InMemoryAdapter.create({})
+			const adapter = {
+				use: (schema: AnySchema, config: { table: string }) => storage.use(schema, config),
+			}
+			const schema = Schema.from('legacy_resolver')
+				.pk('id', v.string(), () => 'legacy-id')
+				.build()
+			const repo = buildRepo(adapter, (schema) => ({ table: schema.name }))
+
+			const created = await repo.on(schema).one().create({})
+			expect(await repo.on(schema).all().find()).toEqual([created])
+			expect((await storage.introspect()).map(({ name }) => name)).toEqual(['legacy_resolver'])
+		})
+
 		test('Repo.from(adapter).resolve(...).build() creates a working repo', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const TestSchema = Schema.from('test')
@@ -166,7 +226,12 @@ if (import.meta.vitest) {
 			.pk('id', v.string(), () => `person-${++userCounter}`)
 			.field('firstName', v.string())
 			.field('lastName', v.string())
-			.computed('fullName', ['firstName', 'lastName'], v.string(), ({ firstName, lastName }) => `${firstName} ${lastName}`)
+			.computed(
+				'fullName',
+				['firstName', 'lastName'],
+				v.string(),
+				({ firstName, lastName }) => `${firstName} ${lastName}`,
+			)
 			.build()
 
 		const UserRels = Relations.from(UserSchema)
@@ -252,8 +317,17 @@ if (import.meta.vitest) {
 					{ email: 'two@agg-count.com', name: 'Same' },
 				])
 
-			const count = await repo.on(UserSchema).all().where((q) => q.eq('name', 'Same')).count()
-			const aggregate = await repo.on(UserSchema).aggregate().count('total').where((q) => q.eq('name', 'Same')).run()
+			const count = await repo
+				.on(UserSchema)
+				.all()
+				.where((q) => q.eq('name', 'Same'))
+				.count()
+			const aggregate = await repo
+				.on(UserSchema)
+				.aggregate()
+				.count('total')
+				.where((q) => q.eq('name', 'Same'))
+				.run()
 
 			expect(count).toBe(2)
 			expect(aggregate).toEqual({ total: 2 })
@@ -294,7 +368,12 @@ if (import.meta.vitest) {
 
 			expect((user.org as any).name).toBe('Fluent Org')
 
-			const updated = await repo.on(UserSchema).one().id(user.id).select(['id', 'name']).update({ name: 'Updated Writer' })
+			const updated = await repo
+				.on(UserSchema)
+				.one()
+				.id(user.id)
+				.select(['id', 'name'])
+				.update({ name: 'Updated Writer' })
 
 			expect(updated).toEqual({ id: user.id, name: 'Updated Writer' })
 
@@ -412,14 +491,27 @@ if (import.meta.vitest) {
 			}
 
 			const adapter = new (IterAdapter as any)() as IterAdapter
-			const repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			const repo = Repo.from(adapter)
+				.resolve((s) => ({ table: s.name }))
+				.build()
 			const rows: Array<{ id: string; name: string; age: number }> = []
-			for await (const row of repo.on(TestSchema).all().where((q) => q.gt('age', 19)).orderBy('age', 'desc').offset(1).limit(2).iterate()) {
+			for await (const row of repo
+				.on(TestSchema)
+				.all()
+				.where((q) => q.gt('age', 19))
+				.orderBy('age', 'desc')
+				.offset(1)
+				.limit(2)
+				.iterate()) {
 				rows.push(row)
 			}
 
 			expect(findManyCalls).toBe(0)
-			expect(capturedOptions).toMatchObject({ orderBy: [{ field: 'age', direction: 'desc' }], offset: 1, limit: 2 })
+			expect(capturedOptions).toMatchObject({
+				orderBy: [{ field: 'age', direction: 'desc' }],
+				offset: 1,
+				limit: 2,
+			})
 			expect(rows.map((row) => row.name)).toEqual(['Carol', 'Alice'])
 		})
 
@@ -449,7 +541,9 @@ if (import.meta.vitest) {
 			}
 
 			const adapter = new (IterAdapter as any)() as IterAdapter
-			const repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			const repo = Repo.from(adapter)
+				.resolve((s) => ({ table: s.name }))
+				.build()
 
 			const iterated: Array<{ id: string; name: string }> = []
 			for await (const row of repo.on(TestSchema).all().limit(10).iterate({ batchSize: 3 })) {
@@ -484,11 +578,24 @@ if (import.meta.vitest) {
 			}
 
 			const adapter = new (IterAdapter as any)() as IterAdapter
-			const repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			const repo = Repo.from(adapter)
+				.resolve((s) => ({ table: s.name }))
+				.build()
 
-			for (const batchSize of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.POSITIVE_INFINITY, Number.NaN, '2'] as const) {
+			for (const batchSize of [
+				0,
+				-1,
+				1.5,
+				Number.MAX_SAFE_INTEGER + 1,
+				Number.POSITIVE_INFINITY,
+				Number.NaN,
+				'2',
+			] as const) {
 				try {
-					for await (const _row of repo.on(TestSchema).all().iterate({ batchSize } as any)) {
+					for await (const _row of repo
+						.on(TestSchema)
+						.all()
+						.iterate({ batchSize } as any)) {
 						void _row
 					}
 					expect.unreachable(`batchSize ${String(batchSize)} should have failed`)
@@ -497,9 +604,7 @@ if (import.meta.vitest) {
 					const err = error as InstanceType<typeof OrmValidationError>
 					expect(err.kind).toBe('query-shape')
 					expect(err.operation).toBe('iterate')
-					expect(err.failures).toEqual([
-						expect.objectContaining({ option: 'batchSize' }),
-					])
+					expect(err.failures).toEqual([expect.objectContaining({ option: 'batchSize' })])
 				}
 			}
 			expect(iterateManyCalls).toBe(0)
@@ -519,7 +624,9 @@ if (import.meta.vitest) {
 					},
 				}
 			})
-			const repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			const repo = Repo.from(adapter)
+				.resolve((s) => ({ table: s.name }))
+				.build()
 			const alice = await repo.on(UserSchema).one().create({ email: 'alice@iter.com', name: 'Alice' })
 			const bob = await repo.on(UserSchema).one().create({ email: 'bob@iter.com', name: 'Bob' })
 			await repo.on(PostSchema).one().create({ title: 'A1', userId: alice.id })
@@ -527,7 +634,13 @@ if (import.meta.vitest) {
 			await repo.on(PostSchema).one().create({ title: 'B1', userId: bob.id })
 
 			const rows: any[] = []
-			const iterator = repo.on(UserSchema).all().orderBy('name', 'asc').select(['id', 'name']).preload([UserRels.posts]).iterate({ batchSize: 1 })
+			const iterator = repo
+				.on(UserSchema)
+				.all()
+				.orderBy('name', 'asc')
+				.select(['id', 'name'])
+				.preload([UserRels.posts])
+				.iterate({ batchSize: 1 })
 			expect(iterator[Symbol.asyncIterator]()).toBe(iterator)
 			for await (const row of iterator) rows.push(row)
 
@@ -541,13 +654,16 @@ if (import.meta.vitest) {
 
 		test('all().iterate honors page-based offsets and validates read query shape', async () => {
 			const repo = makeRepo()
-			await repo.on(UserSchema).all().create([
-				{ email: 'u1@iter.com', name: 'A' },
-				{ email: 'u2@iter.com', name: 'B' },
-				{ email: 'u3@iter.com', name: 'C' },
-				{ email: 'u4@iter.com', name: 'D' },
-				{ email: 'u5@iter.com', name: 'E' },
-			])
+			await repo
+				.on(UserSchema)
+				.all()
+				.create([
+					{ email: 'u1@iter.com', name: 'A' },
+					{ email: 'u2@iter.com', name: 'B' },
+					{ email: 'u3@iter.com', name: 'C' },
+					{ email: 'u4@iter.com', name: 'D' },
+					{ email: 'u5@iter.com', name: 'E' },
+				])
 
 			const paged: string[] = []
 			for await (const row of repo.on(UserSchema).all().orderBy('name', 'asc').limit(2).page(2).iterate()) {
@@ -556,7 +672,11 @@ if (import.meta.vitest) {
 			expect(paged).toEqual(['C', 'D'])
 
 			try {
-				for await (const _row of repo.on(UserSchema).all().select(['missing' as any]).iterate()) {
+				for await (const _row of repo
+					.on(UserSchema)
+					.all()
+					.select(['missing' as any])
+					.iterate()) {
 					void _row
 				}
 				expect.unreachable('iterate should validate selected fields before reading')
@@ -618,7 +738,12 @@ if (import.meta.vitest) {
 			expect((user.org as any).name).toBe('Corp')
 
 			await repo.on(PostSchema).one().create({ title: 'Post', userId: user.id })
-			const updated = await repo.on(UserSchema).one().id(user.id).preload([UserRels.posts]).update({ name: 'Updated' })
+			const updated = await repo
+				.on(UserSchema)
+				.one()
+				.id(user.id)
+				.preload([UserRels.posts])
+				.update({ name: 'Updated' })
 			expect(updated?.posts).toHaveLength(1)
 		})
 
@@ -635,7 +760,9 @@ if (import.meta.vitest) {
 				readonly schemaConfigPipe = v.object({ table: v.string() })
 				readonly supportedFieldTypes = ['string', 'number'] as const
 				readonly queryableOps = ['eq'] as const
-				async findMany() { return [] }
+				async findMany() {
+					return []
+				}
 				async raw(_s: any, _c: any, command: string, params: unknown[]) {
 					capturedArgs = [_s, _c, command, params]
 					return { rows: [{ id: '1' }] }
@@ -718,7 +845,7 @@ if (import.meta.vitest) {
 		})
 
 		test('unknown selected fields fail fast', async () => {
-			const { EquippedError } = await import('../../errors')
+			const { EquippedError } = await import('../../errors/index.js')
 			const repo = makeRepo()
 			await repo.on(PersonSchema).one().create({ firstName: 'Ada', lastName: 'Lovelace' })
 
@@ -732,7 +859,7 @@ if (import.meta.vitest) {
 		})
 
 		test('missing computed dependencies in adapter output fail fast', async () => {
-			const { EquippedError } = await import('../../errors')
+			const { EquippedError } = await import('../../errors/index.js')
 			const adapter = InMemoryAdapter.create({})
 			const origUse = adapter.use.bind(adapter)
 			;(adapter as any).use = vi.fn((schema: any, config: any) => {
@@ -793,16 +920,22 @@ if (import.meta.vitest) {
 
 			test('createOne injects onCreate defaults for missing fields', async () => {
 				const repo = makeRepo()
-				const inserted = await repo.on(UserSchema).one().create({ email: 'defaults@test.com', name: 'Defaults' })
+				const inserted = await repo
+					.on(UserSchema)
+					.one()
+					.create({ email: 'defaults@test.com', name: 'Defaults' })
 				expect(inserted.createdAt).toBe(1000)
 				expect(inserted.id).toBeDefined()
 			})
 
 			test('createOne throws OrmValidationError with kind validation and field populated', async () => {
-				const { OrmValidationError } = await import('../errors')
+				const { OrmValidationError } = await import('../errors/index.js')
 				const repo = makeRepo()
 				try {
-					await repo.on(UserSchema).one().create({ email: 123 as any, name: 'Bad' })
+					await repo
+						.on(UserSchema)
+						.one()
+						.create({ email: 123 as any, name: 'Bad' })
 					expect.unreachable()
 				} catch (e) {
 					expect(e).toBeInstanceOf(OrmValidationError)
@@ -817,10 +950,13 @@ if (import.meta.vitest) {
 
 			test('createMany round-trip via one().id().find()', async () => {
 				const repo = makeRepo()
-				const inserted = await repo.on(UserSchema).all().create([
-					{ email: 'a@test.com', name: 'Alice' },
-					{ email: 'b@test.com', name: 'Bob' },
-				])
+				const inserted = await repo
+					.on(UserSchema)
+					.all()
+					.create([
+						{ email: 'a@test.com', name: 'Alice' },
+						{ email: 'b@test.com', name: 'Bob' },
+					])
 				expect(inserted).toHaveLength(2)
 
 				const foundA = await repo.on(UserSchema).one().id(inserted[0].id).find()
@@ -830,14 +966,17 @@ if (import.meta.vitest) {
 			})
 
 			test('createMany collects all failures with rowIndex and throws single OrmValidationError', async () => {
-				const { OrmValidationError } = await import('../errors')
+				const { OrmValidationError } = await import('../errors/index.js')
 				const repo = makeRepo()
 				try {
-					await repo.on(UserSchema).all().create([
-						{ email: 'good@test.com', name: 'Good' },
-						{ email: 123 as any, name: 'Bad' },
-						{ email: 'also-bad' as any, name: 456 as any },
-					])
+					await repo
+						.on(UserSchema)
+						.all()
+						.create([
+							{ email: 'good@test.com', name: 'Good' },
+							{ email: 123 as any, name: 'Bad' },
+							{ email: 'also-bad' as any, name: 456 as any },
+						])
 					expect.unreachable()
 				} catch (e) {
 					expect(e).toBeInstanceOf(OrmValidationError)
@@ -860,10 +999,13 @@ if (import.meta.vitest) {
 
 			test('createMany with onCreate defaults applied to all rows', async () => {
 				const repo = makeRepo()
-				const inserted = await repo.on(UserSchema).all().create([
-					{ email: 'x@test.com', name: 'X' },
-					{ email: 'y@test.com', name: 'Y' },
-				])
+				const inserted = await repo
+					.on(UserSchema)
+					.all()
+					.create([
+						{ email: 'x@test.com', name: 'X' },
+						{ email: 'y@test.com', name: 'Y' },
+					])
 				expect(inserted[0].createdAt).toBe(1000)
 				expect(inserted[1].createdAt).toBe(1000)
 				expect(inserted[0].id).toBeDefined()
@@ -1026,7 +1168,7 @@ if (import.meta.vitest) {
 		test('undeclared filter op is never on GatedFilterGroup', () => {
 			const { GatedFilterGroup: _type } = {} as any
 			type EqOnlyOps = readonly ['eq']
-			type Gated = import('../filter').GatedFilterGroup<EqOnlyOps>
+			type Gated = import('../filter.js').GatedFilterGroup<EqOnlyOps>
 			expectTypeOf<Gated['eq']>().not.toBeNever()
 			expectTypeOf<Gated['ne']>().toBeNever()
 			expectTypeOf<Gated['gt']>().toBeNever()
@@ -1036,7 +1178,7 @@ if (import.meta.vitest) {
 
 		test('all declared ops are available, undeclared are never', () => {
 			type TwoOps = readonly ['eq', 'gt']
-			type Gated = import('../filter').GatedFilterGroup<TwoOps>
+			type Gated = import('../filter.js').GatedFilterGroup<TwoOps>
 			expectTypeOf<Gated['eq']>().not.toBeNever()
 			expectTypeOf<Gated['gt']>().not.toBeNever()
 			expectTypeOf<Gated['ne']>().toBeNever()
@@ -1052,7 +1194,7 @@ if (import.meta.vitest) {
 				readonly supportedFieldTypes = ['string'] as const
 				readonly queryableOps = [] as const
 			}
-			type Ops = import('../adapter').InferAdapterQueryableOps<MinimalAdapter>
+			type Ops = import('../adapter.js').InferAdapterQueryableOps<MinimalAdapter>
 			expectTypeOf<Ops>().toEqualTypeOf<readonly []>()
 		})
 	})
@@ -1063,11 +1205,13 @@ if (import.meta.vitest) {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				readonly queryableOps = ['eq'] as const
-				async findMany() { return [] }
+				async findMany() {
+					return []
+				}
 			}
 			type A = FindAdapter
-			type S = import('../schema').AnySchema
-			type All = import('./builders').AllBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type All = import('./builders.js').AllBuilderSurface<S, A>
 			expectTypeOf<All['find']>().toBeFunction()
 		})
 
@@ -1079,11 +1223,13 @@ if (import.meta.vitest) {
 				async *iterateMany() {}
 			}
 			type A = IterateAdapter
-			type S = import('../schema').AnySchema
-			type All = import('./builders').AllBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type All = import('./builders.js').AllBuilderSurface<S, A>
 			expectTypeOf<All['iterate']>().toBeFunction()
 			expectTypeOf<Parameters<All['iterate']>>().toEqualTypeOf<[options?: IterationOptions]>()
-			expectTypeOf<ReturnType<All['iterate']>>().toEqualTypeOf<AsyncGenerator<import('./internals/types').SelectedWithPreloads<S, never, []>, void, void>>()
+			expectTypeOf<ReturnType<All['iterate']>>().toEqualTypeOf<
+				AsyncGenerator<import('./internals/types.js').SelectedWithPreloads<S, never, []>, void, void>
+			>()
 		})
 
 		test('iterate exists only on AllBuilder and has no CDC-style sibling methods', () => {
@@ -1094,9 +1240,9 @@ if (import.meta.vitest) {
 				async *iterateMany() {}
 			}
 			type A = IterateAdapter
-			type S = import('../schema').AnySchema
-			type One = import('./builders').OneBuilderSurface<S, A>
-			type All = import('./builders').AllBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type One = import('./builders.js').OneBuilderSurface<S, A>
+			type All = import('./builders.js').AllBuilderSurface<S, A>
 			type OneHasIterate = 'iterate' extends keyof One ? true : false
 			type CdcKeys = Extract<'stream' | 'watch' | 'subscribe' | 'changeFeed', keyof All>
 			expectTypeOf<OneHasIterate>().toEqualTypeOf<false>()
@@ -1108,11 +1254,13 @@ if (import.meta.vitest) {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				readonly queryableOps = ['eq'] as const
-				async findMany() { return [] }
+				async findMany() {
+					return []
+				}
 			}
 			type A = FindOnlyAdapter
-			type S = import('../schema').AnySchema
-			type All = import('./builders').AllBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type All = import('./builders.js').AllBuilderSurface<S, A>
 			expectTypeOf<All['iterate']>().toBeNever()
 		})
 
@@ -1120,12 +1268,14 @@ if (import.meta.vitest) {
 			class ReadOnlyAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
-				async findMany() { return [] }
+				async findMany() {
+					return []
+				}
 			}
 			type A = ReadOnlyAdapter
-			type S = import('../schema').AnySchema
-			type One = import('./builders').OneBuilderSurface<S, A>
-			type All = import('./builders').AllBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type One = import('./builders.js').OneBuilderSurface<S, A>
+			type All = import('./builders.js').AllBuilderSurface<S, A>
 			expectTypeOf<One['update']>().toBeNever()
 			expectTypeOf<All['update']>().toBeNever()
 		})
@@ -1134,12 +1284,14 @@ if (import.meta.vitest) {
 			class NoDeleteAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
-				async findMany() { return [] }
+				async findMany() {
+					return []
+				}
 			}
 			type A = NoDeleteAdapter
-			type S = import('../schema').AnySchema
-			type One = import('./builders').OneBuilderSurface<S, A>
-			type All = import('./builders').AllBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type One = import('./builders.js').OneBuilderSurface<S, A>
+			type All = import('./builders.js').AllBuilderSurface<S, A>
 			expectTypeOf<One['delete']>().toBeNever()
 			expectTypeOf<All['delete']>().toBeNever()
 		})
@@ -1148,10 +1300,12 @@ if (import.meta.vitest) {
 			class NoRawAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
-				async findMany() { return [] }
+				async findMany() {
+					return []
+				}
 			}
 			type A = NoRawAdapter
-			type Ref = import('./builders').SchemaRefSurface<import('../schema').AnySchema, A>
+			type Ref = import('./builders.js').SchemaRefSurface<import('../schema.js').AnySchema, A>
 			expectTypeOf<Ref['raw']>().toBeNever()
 		})
 
@@ -1160,11 +1314,13 @@ if (import.meta.vitest) {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				readonly queryableOps = ['eq'] as const
-				async findMany() { return [] }
+				async findMany() {
+					return []
+				}
 			}
 			type A = NoUpsertAdapter
-			type S = import('../schema').AnySchema
-			type One = import('./builders').OneBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type One = import('./builders.js').OneBuilderSurface<S, A>
 			expectTypeOf<One['upsert']>().toBeNever()
 		})
 
@@ -1173,13 +1329,17 @@ if (import.meta.vitest) {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				readonly queryableOps = ['eq'] as const
-				async findMany() { return [] }
-				async updateMany() { return [] }
+				async findMany() {
+					return []
+				}
+				async updateMany() {
+					return []
+				}
 			}
 			type A = WithUpdateAdapter
-			type S = import('../schema').AnySchema
-			type One = import('./builders').OneBuilderSurface<S, A>
-			type All = import('./builders').AllBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type One = import('./builders.js').OneBuilderSurface<S, A>
+			type All = import('./builders.js').AllBuilderSurface<S, A>
 			expectTypeOf<One['update']>().toBeFunction()
 			expectTypeOf<All['update']>().toBeFunction()
 		})
@@ -1189,13 +1349,17 @@ if (import.meta.vitest) {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				readonly queryableOps = ['eq'] as const
-				async findMany() { return [] }
-				async deleteMany() { return [] }
+				async findMany() {
+					return []
+				}
+				async deleteMany() {
+					return []
+				}
 			}
 			type A = WithDeleteAdapter
-			type S = import('../schema').AnySchema
-			type One = import('./builders').OneBuilderSurface<S, A>
-			type All = import('./builders').AllBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type One = import('./builders.js').OneBuilderSurface<S, A>
+			type All = import('./builders.js').AllBuilderSurface<S, A>
 			expectTypeOf<One['delete']>().toBeFunction()
 			expectTypeOf<All['delete']>().toBeFunction()
 		})
@@ -1205,11 +1369,13 @@ if (import.meta.vitest) {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				readonly queryableOps = ['eq'] as const
-				async findMany() { return [] }
+				async findMany() {
+					return []
+				}
 			}
 			type A = NoCountAdapter
-			type S = import('../schema').AnySchema
-			type All = import('./builders').AllBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type All = import('./builders.js').AllBuilderSurface<S, A>
 			expectTypeOf<All['count']>().toBeNever()
 		})
 
@@ -1218,12 +1384,16 @@ if (import.meta.vitest) {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				readonly queryableOps = ['eq'] as const
-				async findMany() { return [] }
-				async count() { return 0 }
+				async findMany() {
+					return []
+				}
+				async count() {
+					return 0
+				}
 			}
 			type A = WithCountAdapter
-			type S = import('../schema').AnySchema
-			type All = import('./builders').AllBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type All = import('./builders.js').AllBuilderSurface<S, A>
 			expectTypeOf<All['count']>().toBeFunction()
 		})
 
@@ -1231,10 +1401,12 @@ if (import.meta.vitest) {
 			class WithRawAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
-				async raw(_s: any, _c: any, _command: string) { return { rows: [] } }
+				async raw(_s: any, _c: any, _command: string) {
+					return { rows: [] }
+				}
 			}
 			type A = WithRawAdapter
-			type Ref = import('./builders').SchemaRefSurface<import('../schema').AnySchema, A>
+			type Ref = import('./builders.js').SchemaRefSurface<import('../schema.js').AnySchema, A>
 			expectTypeOf<Ref['raw']>().toBeFunction()
 		})
 
@@ -1242,10 +1414,12 @@ if (import.meta.vitest) {
 			class TypedRawAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({ table: v.string() })
 				readonly supportedFieldTypes = ['string'] as const
-				async raw(_s: any, _c: any, _sql: string, _params: number[]) { return [42] }
+				async raw(_s: any, _c: any, _sql: string, _params: number[]) {
+					return [42]
+				}
 			}
 			type A = TypedRawAdapter
-			type Ref = import('./builders').SchemaRefSurface<import('../schema').AnySchema, A>
+			type Ref = import('./builders.js').SchemaRefSurface<import('../schema.js').AnySchema, A>
 			expectTypeOf<Ref['raw']>().toBeFunction()
 			expectTypeOf<Ref['raw']>().parameters.toEqualTypeOf<[sql: string, params: number[]]>()
 		})
@@ -1254,10 +1428,12 @@ if (import.meta.vitest) {
 			class DefaultRawAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({ table: v.string() })
 				readonly supportedFieldTypes = ['string'] as const
-				async raw(_s: any, _c: any, _sql: string) { return { rows: [] as unknown[] } }
+				async raw(_s: any, _c: any, _sql: string) {
+					return { rows: [] as unknown[] }
+				}
 			}
 			type A = DefaultRawAdapter
-			type Ref = import('./builders').SchemaRefSurface<import('../schema').AnySchema, A>
+			type Ref = import('./builders.js').SchemaRefSurface<import('../schema.js').AnySchema, A>
 			expectTypeOf<Ref['raw']>().toBeFunction()
 			expectTypeOf<Ref['raw']>().parameters.toEqualTypeOf<[sql: string]>()
 		})
@@ -1266,10 +1442,12 @@ if (import.meta.vitest) {
 			class ZeroArgRawAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
-				async raw(_s: any, _c: any) { return 'pong' }
+				async raw(_s: any, _c: any) {
+					return 'pong'
+				}
 			}
 			type A = ZeroArgRawAdapter
-			type Ref = import('./builders').SchemaRefSurface<import('../schema').AnySchema, A>
+			type Ref = import('./builders.js').SchemaRefSurface<import('../schema.js').AnySchema, A>
 			expectTypeOf<Ref['raw']>().parameters.toEqualTypeOf<[]>()
 			expectTypeOf<Ref['raw']>().toBeFunction()
 		})
@@ -1285,8 +1463,8 @@ if (import.meta.vitest) {
 				.field('name', v.string())
 				.build()
 			type S = typeof _TestSchema
-			type One = import('./builders').OneBuilderSurface<S, A, 'id'>
-			type All = import('./builders').AllBuilderSurface<S, A, 'id'>
+			type One = import('./builders.js').OneBuilderSurface<S, A, 'id'>
+			type All = import('./builders.js').AllBuilderSurface<S, A, 'id'>
 			expectTypeOf<One['update']>().toBeNever()
 			expectTypeOf<One['delete']>().toBeNever()
 			expectTypeOf<All['update']>().toBeNever()
@@ -1302,7 +1480,7 @@ if (import.meta.vitest) {
 				readonly aggregateOps = [] as const
 			}
 			type A = EmptyAggAdapter
-			type Ref = import('./builders').SchemaRefSurface<import('../schema').AnySchema, A>
+			type Ref = import('./builders.js').SchemaRefSurface<import('../schema.js').AnySchema, A>
 			expectTypeOf<Ref['aggregate']>().toBeNever()
 		})
 
@@ -1311,10 +1489,12 @@ if (import.meta.vitest) {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string', 'number'] as const
 				readonly aggregateOps = ['count', 'sum'] as const
-				async aggregate() { return [] }
+				async aggregate() {
+					return []
+				}
 			}
 			type A = FullAggAdapter
-			type Ref = import('./builders').SchemaRefSurface<import('../schema').AnySchema, A>
+			type Ref = import('./builders.js').SchemaRefSurface<import('../schema.js').AnySchema, A>
 			expectTypeOf<Ref['aggregate']>().toBeFunction()
 		})
 
@@ -1323,10 +1503,12 @@ if (import.meta.vitest) {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				readonly aggregateOps = [] as const
-				async aggregate() { return [] }
+				async aggregate() {
+					return []
+				}
 			}
 			type A = MethodOnlyAdapter
-			type Ref = import('./builders').SchemaRefSurface<import('../schema').AnySchema, A>
+			type Ref = import('./builders.js').SchemaRefSurface<import('../schema.js').AnySchema, A>
 			expectTypeOf<Ref['aggregate']>().toBeNever()
 		})
 
@@ -1337,7 +1519,7 @@ if (import.meta.vitest) {
 				readonly aggregateOps = ['count'] as const
 			}
 			type A = OpsOnlyAdapter
-			type Ref = import('./builders').SchemaRefSurface<import('../schema').AnySchema, A>
+			type Ref = import('./builders.js').SchemaRefSurface<import('../schema.js').AnySchema, A>
 			expectTypeOf<Ref['aggregate']>().toBeNever()
 		})
 
@@ -1347,7 +1529,7 @@ if (import.meta.vitest) {
 				readonly supportedFieldTypes = ['string'] as const
 			}
 			type A = DefaultAdapter
-			type Ref = import('./builders').SchemaRefSurface<import('../schema').AnySchema, A>
+			type Ref = import('./builders.js').SchemaRefSurface<import('../schema.js').AnySchema, A>
 			expectTypeOf<Ref['aggregate']>().toBeNever()
 		})
 	})
@@ -1357,7 +1539,9 @@ if (import.meta.vitest) {
 			readonly schemaConfigPipe = v.object({})
 			readonly supportedFieldTypes = ['string', 'number', 'boolean', 'object', 'array'] as const
 			readonly aggregateOps = ['count', 'countDistinct', 'sum', 'avg', 'min', 'max'] as const
-			async aggregate() { return [] }
+			async aggregate() {
+				return []
+			}
 		}
 		const _S = Schema.from('items')
 			.pk('id', v.string(), () => 'x')
@@ -1369,7 +1553,7 @@ if (import.meta.vitest) {
 			.build()
 		type S = typeof _S
 		type A = AggAdapter
-		type Builder = import('./builders').AggregateBuilder<S, A, {}, {}, false>
+		type Builder = import('./builders.js').AggregateBuilder<S, A, {}, {}, false>
 
 		test('.count(alias) adds alias to result type as number', () => {
 			type AfterCount = ReturnType<Builder['count']>
@@ -1389,25 +1573,31 @@ if (import.meta.vitest) {
 		})
 
 		test('.run() on non-empty Aggs takes no args', () => {
-			type WithCount = import('./builders').AggregateBuilder<S, A, { total: number }, {}, false>
+			type WithCount = import('./builders.js').AggregateBuilder<S, A, { total: number }, {}, false>
 			type RunParams = Parameters<WithCount['run']>
 			expectTypeOf<RunParams>().toEqualTypeOf<[]>()
 		})
 
 		test('.run() returns single object when HasGroupBy = false', () => {
-			type WithCount = import('./builders').AggregateBuilder<S, A, { total: number }, {}, false>
+			type WithCount = import('./builders.js').AggregateBuilder<S, A, { total: number }, {}, false>
 			type Result = Awaited<ReturnType<WithCount['run']>>
 			expectTypeOf<Result>().toEqualTypeOf<{ total: number }>()
 		})
 
 		test('.run() returns array when HasGroupBy = true', () => {
-			type WithGroupBy = import('./builders').AggregateBuilder<S, A, { total: number }, { name: string }, true>
+			type WithGroupBy = import('./builders.js').AggregateBuilder<S, A, { total: number }, { name: string }, true>
 			type Result = Awaited<ReturnType<WithGroupBy['run']>>
 			expectTypeOf<Result>().toEqualTypeOf<({ total: number } & { name: string })[]>()
 		})
 
 		test('group-key fields appear in result row with schema-declared types', () => {
-			type WithGroupBy = import('./builders').AggregateBuilder<S, A, { total: number }, { name: string; amount: number }, true>
+			type WithGroupBy = import('./builders.js').AggregateBuilder<
+				S,
+				A,
+				{ total: number },
+				{ name: string; amount: number },
+				true
+			>
 			type Result = Awaited<ReturnType<WithGroupBy['run']>>
 			type Row = Result[number]
 			expectTypeOf<Row>().toHaveProperty('total')
@@ -1440,26 +1630,28 @@ if (import.meta.vitest) {
 		})
 
 		test('.where().where() is a compile error', () => {
-			type AfterWhere = import('./builders').AggregateBuilder<S, A, {}, {}, false, true, false>
+			type AfterWhere = import('./builders.js').AggregateBuilder<S, A, {}, {}, false, true, false>
 			type WhereParams = Parameters<AfterWhere['where']>
 			expectTypeOf<WhereParams>().toEqualTypeOf<[never]>()
 		})
 
 		test('.having().having() is a compile error', () => {
-			type AfterHaving = import('./builders').AggregateBuilder<S, A, {}, {}, false, false, true>
+			type AfterHaving = import('./builders.js').AggregateBuilder<S, A, {}, {}, false, false, true>
 			type HavingParams = Parameters<AfterHaving['having']>
 			expectTypeOf<HavingParams>().toEqualTypeOf<[never]>()
 		})
 
 		test('.groupBy().groupBy() is a compile error', () => {
-			type AfterGroupBy = import('./builders').AggregateBuilder<S, A, {}, { name: string }, true, false, false>
+			type AfterGroupBy = import('./builders.js').AggregateBuilder<S, A, {}, { name: string }, true, false, false>
 			type GroupByParams = Parameters<AfterGroupBy['groupBy']>
 			expectTypeOf<GroupByParams>().toEqualTypeOf<[never]>()
 		})
 
 		test('clone-on-step: .where() returns a new builder', () => {
 			type After = ReturnType<Builder['where']>
-			expectTypeOf<After>().toMatchTypeOf<import('./builders').AggregateBuilder<S, A, {}, {}, false, true, false>>()
+			expectTypeOf<After>().toMatchTypeOf<
+				import('./builders.js').AggregateBuilder<S, A, {}, {}, false, true, false>
+			>()
 		})
 	})
 
@@ -1696,7 +1888,9 @@ if (import.meta.vitest) {
 			const results = await repo
 				.on(TestSchema)
 				.all()
-				.where((q) => q.and([(g) => g.gt(TestSchema.fields.age, 20), (g) => g.eq(TestSchema.fields.active, true)]))
+				.where((q) =>
+					q.and([(g) => g.gt(TestSchema.fields.age, 20), (g) => g.eq(TestSchema.fields.active, true)]),
+				)
 				.find()
 			expect(results.map((r) => r.name).sort()).toEqual(['Alice', 'Carol', 'Dave'])
 		})
@@ -1707,7 +1901,9 @@ if (import.meta.vitest) {
 			const results = await repo
 				.on(TestSchema)
 				.all()
-				.where((q) => q.or([(g) => g.eq(TestSchema.fields.name, 'Alice'), (g) => g.eq(TestSchema.fields.name, 'Bob')]))
+				.where((q) =>
+					q.or([(g) => g.eq(TestSchema.fields.name, 'Alice'), (g) => g.eq(TestSchema.fields.name, 'Bob')]),
+				)
 				.find()
 			expect(results.map((r) => r.name).sort()).toEqual(['Alice', 'Bob'])
 		})
@@ -1749,7 +1945,7 @@ if (import.meta.vitest) {
 		})
 
 		test('unknown field in filter throws OrmValidationError at boundary', async () => {
-			const { OrmValidationError: OrmValErr } = await import('../errors')
+			const { OrmValidationError: OrmValErr } = await import('../errors/index.js')
 			const { repo } = makeE2eRepo()
 			await seedData(repo)
 			await expect(
@@ -1809,11 +2005,15 @@ if (import.meta.vitest) {
 		})
 
 		test('update with inc op via SchemaUpdateInput', async () => {
-			const { IncOp } = await import('../updates')
+			const { IncOp } = await import('../updates.js')
 			const repo = makeUpdateRepo()
 			const item = await repo.on(ItemSchema).one().create({ title: 'Hello', views: 10 })
 
-			const updated = await repo.on(ItemSchema).one().id(item.id).update({ views: new IncOp('views', 5) })
+			const updated = await repo
+				.on(ItemSchema)
+				.one()
+				.id(item.id)
+				.update({ views: new IncOp('views', 5) })
 			expect(updated!.views).toBe(15)
 		})
 
@@ -1896,8 +2096,8 @@ if (import.meta.vitest) {
 		})
 
 		test('create-vs-op conflict throws OrmValidationError with kind conflicting-ops', async () => {
-			const { IncOp } = await import('../updates')
-			const { OrmValidationError } = await import('../errors')
+			const { IncOp } = await import('../updates.js')
+			const { OrmValidationError } = await import('../errors/index.js')
 			const repo = makeUpsertRepo()
 
 			try {
@@ -1984,7 +2184,7 @@ if (import.meta.vitest) {
 		})
 
 		test('validates create payload and throws OrmValidationError on invalid', async () => {
-			const { OrmValidationError } = await import('../errors')
+			const { OrmValidationError } = await import('../errors/index.js')
 			const repo = makeUpsertRepo()
 
 			await expect(
@@ -1997,7 +2197,7 @@ if (import.meta.vitest) {
 		})
 
 		test('upsert-filter-incompatible error from adapter boundary', async () => {
-			const { OrmValidationError } = await import('../errors')
+			const { OrmValidationError } = await import('../errors/index.js')
 
 			const spy = mockInstance()
 			class RestrictedAdapter extends OrmAdapter {
@@ -2005,8 +2205,16 @@ if (import.meta.vitest) {
 				readonly supportedFieldTypes = ['string', 'number', 'boolean'] as const
 				readonly queryableOps = ['eq'] as const
 				readonly updateOps = ['set'] as const
-				async findMany() { return [] }
-				async upsertOne(_schema: any, _config: any, _filter: any, _create: any, _ops: any): Promise<Record<string, unknown>> {
+				async findMany() {
+					return []
+				}
+				async upsertOne(
+					_schema: any,
+					_config: any,
+					_filter: any,
+					_create: any,
+					_ops: any,
+				): Promise<Record<string, unknown>> {
 					throw new OrmValidationError('upsert-filter-incompatible', 'test', 'upsertOne', [
 						{ cause: 'adapter requires single eq filter on unique column, received complex filter' },
 					])
@@ -2041,12 +2249,16 @@ if (import.meta.vitest) {
 				readonly supportedFieldTypes = ['string', 'number'] as const
 				readonly queryableOps = ['eq'] as const
 				readonly updateOps = ['set'] as const
-				async findMany() { return [] }
-				async upsertOne() { return {} }
+				async findMany() {
+					return []
+				}
+				async upsertOne() {
+					return {}
+				}
 			}
 			type A = WithUpsertAdapter
-			type S = import('../schema').AnySchema
-			type One = import('./builders').OneBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type One = import('./builders.js').OneBuilderSurface<S, A>
 			expectTypeOf<One['upsert']>().toBeFunction()
 		})
 
@@ -2056,11 +2268,13 @@ if (import.meta.vitest) {
 				readonly supportedFieldTypes = ['string', 'number'] as const
 				readonly queryableOps = ['eq'] as const
 				readonly updateOps = ['set'] as const
-				async findMany() { return [] }
+				async findMany() {
+					return []
+				}
 			}
 			type A = NoUpsertAdapter
-			type S = import('../schema').AnySchema
-			type One = import('./builders').OneBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type One = import('./builders.js').OneBuilderSurface<S, A>
 			expectTypeOf<One['upsert']>().toBeNever()
 		})
 
@@ -2069,11 +2283,13 @@ if (import.meta.vitest) {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string', 'number'] as const
 				readonly updateOps = ['set'] as const
-				async findByPk() { return null }
+				async findByPk() {
+					return null
+				}
 			}
 			type A = CrudOnlyAdapter
-			type S = import('../schema').AnySchema
-			type One = import('./builders').OneBuilderSurface<S, A>
+			type S = import('../schema.js').AnySchema
+			type One = import('./builders.js').OneBuilderSurface<S, A>
 			expectTypeOf<One['upsert']>().toBeNever()
 		})
 	})
@@ -2220,10 +2436,12 @@ if (import.meta.vitest) {
 			class NoSessionAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
-				async findMany() { return [] }
+				async findMany() {
+					return []
+				}
 			}
 			type A = NoSessionAdapter
-			const _repo = {} as import('./repo').RepoSurface<A>
+			const _repo = {} as import('./repo.js').RepoSurface<A>
 			expectTypeOf(_repo.session).toBeNever()
 		})
 
@@ -2231,10 +2449,12 @@ if (import.meta.vitest) {
 			class WithSessionAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
-				async session<T>(fn: () => Promise<T>): Promise<T> { return fn() }
+				async session<T>(fn: () => Promise<T>): Promise<T> {
+					return fn()
+				}
 			}
 			type A = WithSessionAdapter
-			const _repo = {} as import('./repo').RepoSurface<A>
+			const _repo = {} as import('./repo.js').RepoSurface<A>
 			expectTypeOf(_repo.session).toBeFunction()
 		})
 	})
@@ -2366,9 +2586,9 @@ if (import.meta.vitest) {
 	})
 
 	describe('class-based OrmAdapter with Repo', async () => {
-		const { OrmAdapter } = await import('../orm-adapter')
-		const { FilterGroup } = await import('../filter')
-		const { OrmValidationError } = await import('../errors')
+		const { OrmAdapter } = await import('../orm-adapter.js')
+		const { FilterGroup } = await import('../filter.js')
+		const { OrmValidationError } = await import('../errors/index.js')
 
 		function makeClassAdapter() {
 			const stores = new Map<string, Map<string, Record<string, unknown>>>()
@@ -2383,7 +2603,11 @@ if (import.meta.vitest) {
 				readonly queryableOps = ['eq'] as const
 				readonly updateOps = ['set'] as const
 
-				async findMany(_schema: import('../schema').AnySchema, config: unknown, group: import('../filter').FilterGroup) {
+				async findMany(
+					_schema: import('../schema.js').AnySchema,
+					config: unknown,
+					group: import('../filter.js').FilterGroup,
+				) {
 					const cfg = config as { table: string }
 					const store = getStore(cfg.table)
 					return [...store.values()].filter((doc) => {
@@ -2396,7 +2620,11 @@ if (import.meta.vitest) {
 					})
 				}
 
-				async createMany(s: import('../schema').AnySchema, config: unknown, data: Record<string, unknown>[]) {
+				async createMany(
+					s: import('../schema.js').AnySchema,
+					config: unknown,
+					data: Record<string, unknown>[],
+				) {
 					const cfg = config as { table: string }
 					const store = getStore(cfg.table)
 					const pk = s.pkField.name
@@ -2404,7 +2632,12 @@ if (import.meta.vitest) {
 					return data.map((d) => ({ ...d }))
 				}
 
-				async updateMany(s: import('../schema').AnySchema, config: unknown, group: import('../filter').FilterGroup, data: Record<string, unknown>) {
+				async updateMany(
+					s: import('../schema.js').AnySchema,
+					config: unknown,
+					group: import('../filter.js').FilterGroup,
+					data: Record<string, unknown>,
+				) {
 					const rows = await this.findMany(s, config, group)
 					const cfg = config as { table: string }
 					const store = getStore(cfg.table)
@@ -2416,7 +2649,11 @@ if (import.meta.vitest) {
 					})
 				}
 
-				async deleteMany(s: import('../schema').AnySchema, config: unknown, group: import('../filter').FilterGroup) {
+				async deleteMany(
+					s: import('../schema.js').AnySchema,
+					config: unknown,
+					group: import('../filter.js').FilterGroup,
+				) {
 					const rows = await this.findMany(s, config, group)
 					const cfg = config as { table: string }
 					const store = getStore(cfg.table)
@@ -2459,9 +2696,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ table: 123 }) as any)
 				.build()
 
-			await expect(
-				repo.on(TestSchema).all().find(),
-			).rejects.toBeInstanceOf(OrmValidationError)
+			await expect(repo.on(TestSchema).all().find()).rejects.toBeInstanceOf(OrmValidationError)
 		})
 
 		test('dispatch validator validates after transforms applied', async () => {
@@ -2484,10 +2719,13 @@ if (import.meta.vitest) {
 				.resolve((s) => ({ table: s.name }))
 				.build()
 
-			const created = await repo.on(TestSchema).all().create([
-				{ name: 'Alice', age: 30 },
-				{ name: 'Bob', age: 25 },
-			])
+			const created = await repo
+				.on(TestSchema)
+				.all()
+				.create([
+					{ name: 'Alice', age: 30 },
+					{ name: 'Bob', age: 25 },
+				])
 			expect(created).toHaveLength(2)
 
 			const all = await repo.on(TestSchema).all().find()
@@ -2522,18 +2760,23 @@ if (import.meta.vitest) {
 
 		function makeAggRepo() {
 			const adapter = InMemoryAdapter.create({})
-			const repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+			const repo = Repo.from(adapter)
+				.resolve((s) => ({ table: s.name }))
+				.build()
 			return { repo, adapter }
 		}
 
 		async function seedOrders(repo: any) {
-			await repo.on(OrderSchema).all().create([
-				{ product: 'Widget', amount: 10, region: 'US' },
-				{ product: 'Gadget', amount: 20, region: 'EU' },
-				{ product: 'Widget', amount: 30, region: 'US' },
-				{ product: 'Gadget', amount: 40, region: 'EU' },
-				{ product: 'Widget', amount: 50, region: 'US' },
-			])
+			await repo
+				.on(OrderSchema)
+				.all()
+				.create([
+					{ product: 'Widget', amount: 10, region: 'US' },
+					{ product: 'Gadget', amount: 20, region: 'EU' },
+					{ product: 'Widget', amount: 30, region: 'US' },
+					{ product: 'Gadget', amount: 40, region: 'EU' },
+					{ product: 'Widget', amount: 50, region: 'US' },
+				])
 		}
 
 		test('count returns total row count', async () => {
@@ -2587,7 +2830,12 @@ if (import.meta.vitest) {
 		test('boundary validation rejects unknown field in where filter', async () => {
 			const { repo } = makeAggRepo()
 			await expect(
-				repo.on(OrderSchema).aggregate().count('total').where((q) => q.eq('nonexistent', 'x')).run(),
+				repo
+					.on(OrderSchema)
+					.aggregate()
+					.count('total')
+					.where((q) => q.eq('nonexistent', 'x'))
+					.run(),
 			).rejects.toThrow(OrmValidationError)
 		})
 
@@ -2622,7 +2870,11 @@ if (import.meta.vitest) {
 		test('countDistinct returns unique value count', async () => {
 			const { repo } = makeAggRepo()
 			await seedOrders(repo)
-			const result = await repo.on(OrderSchema).aggregate().countDistinct(OrderSchema.fields.product, 'unique').run()
+			const result = await repo
+				.on(OrderSchema)
+				.aggregate()
+				.countDistinct(OrderSchema.fields.product, 'unique')
+				.run()
 			expect(result).toEqual({ unique: 2 })
 		})
 
@@ -2752,26 +3004,20 @@ if (import.meta.vitest) {
 		test('step order is irrelevant: groupBy before or after aggregators', async () => {
 			const { repo } = makeAggRepo()
 			await seedOrders(repo)
-			const resultA = await repo
-				.on(OrderSchema)
-				.aggregate()
-				.groupBy(OrderSchema.fields.region)
-				.count('cnt')
-				.run()
-			const resultB = await repo
-				.on(OrderSchema)
-				.aggregate()
-				.count('cnt')
-				.groupBy(OrderSchema.fields.region)
-				.run()
-			expect(resultA.sort((a, b) => a.region.localeCompare(b.region)))
-				.toEqual(resultB.sort((a, b) => a.region.localeCompare(b.region)))
+			const resultA = await repo.on(OrderSchema).aggregate().groupBy(OrderSchema.fields.region).count('cnt').run()
+			const resultB = await repo.on(OrderSchema).aggregate().count('cnt').groupBy(OrderSchema.fields.region).run()
+			expect(resultA.sort((a, b) => a.region.localeCompare(b.region))).toEqual(
+				resultB.sort((a, b) => a.region.localeCompare(b.region)),
+			)
 		})
 
 		test('boundary validation rejects unknown groupBy field', async () => {
 			const { repo } = makeAggRepo()
 			await expect(
-				(repo.on(OrderSchema).aggregate() as any).groupBy({ name: 'nonexistent', path: ['nonexistent'] }).count('total').run(),
+				(repo.on(OrderSchema).aggregate() as any)
+					.groupBy({ name: 'nonexistent', path: ['nonexistent'] })
+					.count('total')
+					.run(),
 			).rejects.toThrow(OrmValidationError)
 		})
 
@@ -2805,5 +3051,4 @@ if (import.meta.vitest) {
 			expect(result).toEqual({ avgAmount: 0 })
 		})
 	})
-
 }

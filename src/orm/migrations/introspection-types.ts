@@ -1,4 +1,4 @@
-import type { FieldTypeName } from '../adapter'
+import type { FieldTypeName } from '../adapter.js'
 
 export type ForeignKeyAction = 'cascade' | 'restrict' | 'setNull' | 'noAction'
 

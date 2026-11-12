@@ -1,7 +1,7 @@
 import { v, type Pipe } from 'valleyed'
 
-import { EquippedError } from '../../../errors'
-import type { AnySchema } from '../../schema'
+import { EquippedError } from '../../../errors/index.js'
+import type { AnySchema } from '../../schema.js'
 
 export type ComputedSelectionPlan = {
 	requestedSelect: Set<string> | null
@@ -80,11 +80,12 @@ export function applyComputedSelection(
 				depInput[dep] = row[dep]
 			}
 			const r = v.validate(def.pipe, def.compute(depInput))
-			if (!r.valid) throw new EquippedError('Computed field validation failed', {
-				schema: schema.name,
-				computedField: computeName,
-				cause: r.error,
-			})
+			if (!r.valid)
+				throw new EquippedError('Computed field validation failed', {
+					schema: schema.name,
+					computedField: computeName,
+					cause: r.error,
+				})
 			enriched[computeName] = r.value
 		}
 

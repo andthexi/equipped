@@ -1,5 +1,5 @@
-import { StatusCodes } from '../../server'
-import { RequestError } from '../requestError'
+import { StatusCodes } from '../../server/index.js'
+import { RequestError } from '../requestError.js'
 
 export class BadRequestError extends RequestError {
 	constructor(message: string, cause?: unknown) {

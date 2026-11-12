@@ -1,8 +1,8 @@
-import type { FieldTypeName } from '../adapter'
-import type { OrmAdapter } from '../orm-adapter'
-import type { AnySchema } from '../schema'
-import type { DiscoveredField, DiscoveredSchema } from './introspection-types'
-import type { AnyChange } from './types'
+import type { FieldTypeName } from '../adapter.js'
+import type { OrmAdapter } from '../orm-adapter.js'
+import type { AnySchema } from '../schema.js'
+import type { DiscoveredField, DiscoveredSchema } from './introspection-types.js'
+import type { AnyChange } from './types.js'
 
 const EMISSION_ORDER: AnyChange['kind'][] = [
 	'dropForeignKey',
@@ -65,7 +65,14 @@ function extractSchemaInfo(schema: AnySchema): {
 	return { name: schema.name, pk: { name: pkField.name, type: pkType }, fields }
 }
 
-const KNOWN_FIELD_TYPES: ReadonlySet<string> = new Set<FieldTypeName>(['string', 'number', 'boolean', 'array', 'object', 'date'])
+const KNOWN_FIELD_TYPES: ReadonlySet<string> = new Set<FieldTypeName>([
+	'string',
+	'number',
+	'boolean',
+	'array',
+	'object',
+	'date',
+])
 
 function inferFieldType(pipe: any): FieldTypeName {
 	if (!pipe) return 'string'
@@ -156,8 +163,8 @@ export function diffSchemas(
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { InMemoryAdapter } = await import('../adapters/in-memory')
-	const { Schema } = await import('../schema')
+	const { InMemoryAdapter } = await import('../adapters/in-memory/index.js')
+	const { Schema } = await import('../schema.js')
 
 	describe('diffSchemas', () => {
 		function makeAdapter() {
@@ -170,13 +177,15 @@ if (import.meta.vitest) {
 				.pk('id', v.string(), () => 'x')
 				.field('email', v.string())
 				.build()
-			const current: DiscoveredSchema[] = [{
-				name: 'users',
-				pk: { name: 'id', type: 'string' },
-				fields: [{ name: 'email', type: 'string', nullable: false }],
-				indexes: [],
-				foreignKeys: [],
-			}]
+			const current: DiscoveredSchema[] = [
+				{
+					name: 'users',
+					pk: { name: 'id', type: 'string' },
+					fields: [{ name: 'email', type: 'string', nullable: false }],
+					indexes: [],
+					foreignKeys: [],
+				},
+			]
 			const result = diffSchemas(adapter, [UserSchema], current)
 			expect(result).toEqual([])
 		})
@@ -208,13 +217,15 @@ if (import.meta.vitest) {
 				.field('email', v.string())
 				.field('age', v.number())
 				.build()
-			const current: DiscoveredSchema[] = [{
-				name: 'users',
-				pk: { name: 'id', type: 'string' },
-				fields: [{ name: 'email', type: 'string', nullable: false }],
-				indexes: [],
-				foreignKeys: [],
-			}]
+			const current: DiscoveredSchema[] = [
+				{
+					name: 'users',
+					pk: { name: 'id', type: 'string' },
+					fields: [{ name: 'email', type: 'string', nullable: false }],
+					indexes: [],
+					foreignKeys: [],
+				},
+			]
 			const result = diffSchemas(adapter, [UserSchema], current)
 			expect(result).toHaveLength(1)
 			expect(result[0]).toEqual({
@@ -230,16 +241,18 @@ if (import.meta.vitest) {
 				.pk('id', v.string(), () => 'x')
 				.field('email', v.string())
 				.build()
-			const current: DiscoveredSchema[] = [{
-				name: 'users',
-				pk: { name: 'id', type: 'string' },
-				fields: [
-					{ name: 'email', type: 'string', nullable: false },
-					{ name: 'age', type: 'number', nullable: false },
-				],
-				indexes: [],
-				foreignKeys: [],
-			}]
+			const current: DiscoveredSchema[] = [
+				{
+					name: 'users',
+					pk: { name: 'id', type: 'string' },
+					fields: [
+						{ name: 'email', type: 'string', nullable: false },
+						{ name: 'age', type: 'number', nullable: false },
+					],
+					indexes: [],
+					foreignKeys: [],
+				},
+			]
 			const result = diffSchemas(adapter, [UserSchema], current)
 			expect(result).toHaveLength(1)
 			expect(result[0]).toEqual({
@@ -255,13 +268,15 @@ if (import.meta.vitest) {
 				.pk('id', v.string(), () => 'x')
 				.field('age', v.string())
 				.build()
-			const current: DiscoveredSchema[] = [{
-				name: 'users',
-				pk: { name: 'id', type: 'string' },
-				fields: [{ name: 'age', type: 'number', nullable: false }],
-				indexes: [],
-				foreignKeys: [],
-			}]
+			const current: DiscoveredSchema[] = [
+				{
+					name: 'users',
+					pk: { name: 'id', type: 'string' },
+					fields: [{ name: 'age', type: 'number', nullable: false }],
+					indexes: [],
+					foreignKeys: [],
+				},
+			]
 			const result = diffSchemas(adapter, [UserSchema], current)
 			expect(result).toHaveLength(1)
 			expect(result[0]).toEqual({
@@ -274,13 +289,17 @@ if (import.meta.vitest) {
 
 		test('drop table detected when current has table absent from target', () => {
 			const adapter = makeAdapter()
-			const current: DiscoveredSchema[] = [{
-				name: 'posts',
-				pk: { name: 'id', type: 'string' },
-				fields: [{ name: 'title', type: 'string', nullable: false }],
-				indexes: [{ name: 'posts_title_idx', on: ['title'], unique: false }],
-				foreignKeys: [{ name: 'posts_author_fk', on: 'authorId', references: { table: 'users', column: 'id' } }],
-			}]
+			const current: DiscoveredSchema[] = [
+				{
+					name: 'posts',
+					pk: { name: 'id', type: 'string' },
+					fields: [{ name: 'title', type: 'string', nullable: false }],
+					indexes: [{ name: 'posts_title_idx', on: ['title'], unique: false }],
+					foreignKeys: [
+						{ name: 'posts_author_fk', on: 'authorId', references: { table: 'users', column: 'id' } },
+					],
+				},
+			]
 			const result = diffSchemas(adapter, [], current)
 			const kinds = result.map((c) => c.kind)
 			expect(kinds).toContain('dropForeignKey')
@@ -294,13 +313,15 @@ if (import.meta.vitest) {
 				.pk('id', v.string(), () => 'x')
 				.field('fullName', v.string())
 				.build()
-			const current: DiscoveredSchema[] = [{
-				name: 'users',
-				pk: { name: 'id', type: 'string' },
-				fields: [{ name: 'name', type: 'string', nullable: false }],
-				indexes: [],
-				foreignKeys: [],
-			}]
+			const current: DiscoveredSchema[] = [
+				{
+					name: 'users',
+					pk: { name: 'id', type: 'string' },
+					fields: [{ name: 'name', type: 'string', nullable: false }],
+					indexes: [],
+					foreignKeys: [],
+				},
+			]
 			const result = diffSchemas(adapter, [UserSchema], current)
 			expect(result).toHaveLength(2)
 			const kinds = result.map((c) => c.kind)
@@ -345,15 +366,19 @@ if (import.meta.vitest) {
 		})
 
 		test('adapter-aware filtering removes unsupported variants', async () => {
-			const { OrmAdapter } = await import('../orm-adapter')
+			const { OrmAdapter } = await import('../orm-adapter.js')
 			class IndexOnlyAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({ table: v.string() })
 				readonly supportedFieldTypes = ['string', 'number'] as const
 				async applyAddIndex() {}
 				async applyDropIndex() {}
-				async loadMigrations() { return [] }
+				async loadMigrations() {
+					return []
+				}
 				async recordMigration() {}
-				async introspect() { return [] }
+				async introspect() {
+					return []
+				}
 			}
 			const adapter = new (IndexOnlyAdapter as any)() as IndexOnlyAdapter
 			const UserSchema = Schema.from('users')
@@ -374,19 +399,22 @@ if (import.meta.vitest) {
 				.pk('id', v.string(), () => 'x')
 				.field('title', v.string())
 				.build()
-			const current: DiscoveredSchema[] = [{
-				name: 'users',
-				pk: { name: 'id', type: 'string' },
-				fields: [{ name: 'email', type: 'string', nullable: false }],
-				indexes: [],
-				foreignKeys: [],
-			}, {
-				name: 'comments',
-				pk: { name: 'id', type: 'string' },
-				fields: [],
-				indexes: [],
-				foreignKeys: [],
-			}]
+			const current: DiscoveredSchema[] = [
+				{
+					name: 'users',
+					pk: { name: 'id', type: 'string' },
+					fields: [{ name: 'email', type: 'string', nullable: false }],
+					indexes: [],
+					foreignKeys: [],
+				},
+				{
+					name: 'comments',
+					pk: { name: 'id', type: 'string' },
+					fields: [],
+					indexes: [],
+					foreignKeys: [],
+				},
+			]
 			const result = diffSchemas(adapter, [UserSchema, PostSchema], current)
 			const kinds = result.map((c) => c.kind)
 			expect(kinds).toContain('dropTable')
@@ -398,13 +426,15 @@ if (import.meta.vitest) {
 		})
 
 		test('Mongo-style adapter with only index ops: field-bearing target returns empty diff', async () => {
-			const { OrmAdapter } = await import('../orm-adapter')
+			const { OrmAdapter } = await import('../orm-adapter.js')
 			class MongoStyleAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({ table: v.string() })
 				readonly supportedFieldTypes = ['string', 'number', 'object', 'array'] as const
 				async applyAddIndex() {}
 				async applyDropIndex() {}
-				async loadMigrations() { return [] }
+				async loadMigrations() {
+					return []
+				}
 				async recordMigration() {}
 			}
 			const adapter = new (MongoStyleAdapter as any)() as MongoStyleAdapter
@@ -413,13 +443,15 @@ if (import.meta.vitest) {
 				.field('email', v.string())
 				.field('age', v.number())
 				.build()
-			const current: DiscoveredSchema[] = [{
-				name: 'users',
-				pk: { name: 'id', type: 'string' },
-				fields: [],
-				indexes: [{ name: 'users_email_idx', on: ['email'], unique: true }],
-				foreignKeys: [],
-			}]
+			const current: DiscoveredSchema[] = [
+				{
+					name: 'users',
+					pk: { name: 'id', type: 'string' },
+					fields: [],
+					indexes: [{ name: 'users_email_idx', on: ['email'], unique: true }],
+					foreignKeys: [],
+				},
+			]
 			const result = diffSchemas(adapter, [UserSchema], current)
 			const kinds = result.map((c) => c.kind)
 			expect(kinds.every((k) => k === 'addIndex' || k === 'dropIndex')).toBe(true)
@@ -427,13 +459,17 @@ if (import.meta.vitest) {
 
 		test('drop index and drop FK emitted when table is dropped', () => {
 			const adapter = makeAdapter()
-			const current: DiscoveredSchema[] = [{
-				name: 'posts',
-				pk: { name: 'id', type: 'string' },
-				fields: [],
-				indexes: [{ name: 'posts_title_idx', on: ['title'], unique: false }],
-				foreignKeys: [{ name: 'posts_author_fk', on: 'authorId', references: { table: 'users', column: 'id' } }],
-			}]
+			const current: DiscoveredSchema[] = [
+				{
+					name: 'posts',
+					pk: { name: 'id', type: 'string' },
+					fields: [],
+					indexes: [{ name: 'posts_title_idx', on: ['title'], unique: false }],
+					foreignKeys: [
+						{ name: 'posts_author_fk', on: 'authorId', references: { table: 'users', column: 'id' } },
+					],
+				},
+			]
 			const result = diffSchemas(adapter, [], current)
 			expect(result).toHaveLength(3)
 			expect(result[0].kind).toBe('dropForeignKey')
@@ -447,13 +483,15 @@ if (import.meta.vitest) {
 				.pk('id', v.string(), () => 'x')
 				.field('email', v.optional(v.string()), { onCreate: () => undefined })
 				.build()
-			const current: DiscoveredSchema[] = [{
-				name: 'users',
-				pk: { name: 'id', type: 'string' },
-				fields: [{ name: 'email', type: 'string', nullable: false }],
-				indexes: [],
-				foreignKeys: [],
-			}]
+			const current: DiscoveredSchema[] = [
+				{
+					name: 'users',
+					pk: { name: 'id', type: 'string' },
+					fields: [{ name: 'email', type: 'string', nullable: false }],
+					indexes: [],
+					foreignKeys: [],
+				},
+			]
 			const result = diffSchemas(adapter, [UserSchema], current)
 			expect(result).toHaveLength(1)
 			expect(result[0].kind).toBe('modifyField')

@@ -29,7 +29,7 @@ import {
 	type RouterConfig,
 	type routeContractSymbol,
 	type routeRegistrySymbol,
-} from './types'
+} from './types.js'
 
 const cleanPath = (path: string) => {
 	let cleaned = path.replace(/(\/\s*)+/g, '/')
@@ -68,7 +68,10 @@ function mergeSchemas(...schemas: RouteDef[]) {
 	) as RouteDef
 }
 
-type RouteConfigInput<Schema extends RouteDef, Hide extends boolean | undefined> = Omit<RouteConfig<Schema>, 'schema' | 'hide'> & {
+type RouteConfigInput<Schema extends RouteDef, Hide extends boolean | undefined> = Omit<
+	RouteConfig<Schema>,
+	'schema' | 'hide'
+> & {
 	schema?: Schema
 	hide?: Hide
 }
@@ -93,8 +96,7 @@ export class Router<
 	PublicContract = {},
 	Registry = PublicContract,
 	Hide = undefined,
-> implements RouteContractHost<PublicContract, Registry>
-{
+> implements RouteContractHost<PublicContract, Registry> {
 	declare readonly [routeContractSymbol]?: PublicContract
 	declare readonly [routeRegistrySymbol]?: Registry
 
@@ -102,20 +104,30 @@ export class Router<
 	#routes: Route<any>[] = []
 	#children: Router<any, any, any, any, any>[] = []
 
-	constructor(config: (RouterConfig<T, Path> & { hide?: Hide }) = { path: '' as Path }) {
+	constructor(config: RouterConfig<T, Path> & { hide?: Hide } = { path: '' as Path }) {
 		this.#config = config
 	}
 
 	#wrap<const Method extends MethodsEnum>(method: Method) {
-		return <const RoutePath extends string, const Schema extends RouteDef = {}, const RouteHide extends boolean | undefined = undefined>(
-			path: RoutePath & RejectDuplicateRoute<Registry, Method, JoinPath<Path, RoutePath>>,
-			config: RouteConfigInput<Schema, RouteHide> = {} as RouteConfigInput<Schema, RouteHide>,
-		) =>
+		return <
+				const RoutePath extends string,
+				const Schema extends RouteDef = {},
+				const RouteHide extends boolean | undefined = undefined,
+			>(
+				path: RoutePath & RejectDuplicateRoute<Registry, Method, JoinPath<Path, RoutePath>>,
+				config: RouteConfigInput<Schema, RouteHide> = {} as RouteConfigInput<Schema, RouteHide>,
+			) =>
 			(handler: RouteDefHandler<MergeRouteDefs<T, Schema>>) => {
 				type EffectiveDef = MergeRouteDefs<T, Schema>
 				type FullPath = JoinPath<Path, RoutePath>
 				type Entry = RouteDefToContractEntry<Method, EffectiveDef>
-				type EffectivePublic = AddRouteToPublicContract<PublicContract, Method, FullPath, Entry, OverrideHide<Hide, RouteHide>>
+				type EffectivePublic = AddRouteToPublicContract<
+					PublicContract,
+					Method,
+					FullPath,
+					Entry,
+					OverrideHide<Hide, RouteHide>
+				>
 				type EffectiveRegistry = AddRouteToContract<Registry, Method, FullPath, Entry>
 				const route = groupRoutes(this.#config, [{ ...config, path, method, handler: handler as any }])[0]
 				this.#routes.push(route)
@@ -137,7 +149,13 @@ export class Router<
 		type ChildPublic = PrefixRouteContract<RouteContractOf<Child>, Path>
 		type ChildRegistry = PrefixRouteContract<RouteRegistryOf<Child>, Path>
 		this.#children.push(router)
-		return this as unknown as Router<T, Path, MergeRouteContracts<PublicContract, ChildPublic>, MergeRouteContracts<Registry, ChildRegistry>, Hide>
+		return this as unknown as Router<
+			T,
+			Path,
+			MergeRouteContracts<PublicContract, ChildPublic>,
+			MergeRouteContracts<Registry, ChildRegistry>,
+			Hide
+		>
 	}
 
 	get routes() {
@@ -237,8 +255,8 @@ if (import.meta.vitest) {
 
 			expectTypeOf<RouteOutput<Contract, 'delete', '/api/users/:id'>['body']>().toEqualTypeOf<undefined>()
 
-			new Router().delete('/without-body-property', { schema: { defaultStatusCode: StatusCodes.NoContent } })((req) =>
-				req.res({ status: StatusCodes.NoContent }),
+			new Router().delete('/without-body-property', { schema: { defaultStatusCode: StatusCodes.NoContent } })(
+				(req) => req.res({ status: StatusCodes.NoContent }),
 			)
 
 			new Router().delete('/bad', { schema: { defaultStatusCode: StatusCodes.NoContent } })(

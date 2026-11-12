@@ -1,8 +1,8 @@
 import type { IsInTypeList, Pipe, PipeInput, PipeOutput, Prettify } from 'valleyed'
 
-import type { RequestError } from '../errors'
-import type { Enum } from '../types'
-import type { Request, Response } from './requests'
+import type { RequestError } from '../errors/index.js'
+import type { Enum } from '../types/index.js'
+import type { Request, Response } from './requests.js'
 
 export const Methods = {
 	head: 'head',
@@ -30,7 +30,9 @@ export const StatusCodes = {
 
 export type MethodsEnum = Enum<typeof Methods>
 
-type Enumerate<N extends number, Acc extends number[] = []> = Acc['length'] extends N ? Acc[number] : Enumerate<N, [...Acc, Acc['length']]>
+type Enumerate<N extends number, Acc extends number[] = []> = Acc['length'] extends N
+	? Acc[number]
+	: Enumerate<N, [...Acc, Acc['length']]>
 type IntRange<From extends number, To extends number> = Exclude<Enumerate<To>, Enumerate<From>>
 
 export type StatusCode = IntRange<100, 600>
@@ -143,7 +145,8 @@ type PipeInputOrDefault<T, K extends keyof RouteDef, Default> = DefaultIfUnknown
 type PipeOutputOrDefault<T, K extends keyof RouteDef, Default> = DefaultIfUnknown<PipeOutput<GetApiPart<T, K>>, Default>
 type StatusCodeOf<T> = DefaultIfUnknown<GetApiPart<T, 'defaultStatusCode'>, typeof StatusCodes.Ok>
 type ContentTypeOf<T> = DefaultIfUnknown<GetApiPart<T, 'defaultContentType'>, 'application/json'>
-type ResponseBodyOf<T> = StatusCodeOf<T> extends typeof StatusCodes.NoContent ? undefined : PipeOutput<GetApiPart<T, 'response'>>
+type ResponseBodyOf<T> =
+	StatusCodeOf<T> extends typeof StatusCodes.NoContent ? undefined : PipeOutput<GetApiPart<T, 'response'>>
 
 export type RouteDefToReqRes<T> = Prettify<{
 	body: PipeOutput<GetApiPart<T, 'body'>>
@@ -192,10 +195,18 @@ export type RouteDefToContractEntry<M extends MethodsEnum, T> = RouteContractEnt
 	}>
 >
 
-type CollapseSlashes<S extends string> = S extends `${infer Head}//${infer Tail}` ? CollapseSlashes<`${Head}/${Tail}`> : S
+type CollapseSlashes<S extends string> = S extends `${infer Head}//${infer Tail}`
+	? CollapseSlashes<`${Head}/${Tail}`>
+	: S
 type EnsureLeadingSlash<S extends string> = S extends `/${string}` ? S : `/${S}`
-type RemoveTrailingSlash<S extends string> = S extends '/' ? S : S extends `${infer Rest}/` ? RemoveTrailingSlash<Rest> : S
-export type CleanPath<S extends string> = string extends S ? string : RemoveTrailingSlash<CollapseSlashes<EnsureLeadingSlash<S>>>
+type RemoveTrailingSlash<S extends string> = S extends '/'
+	? S
+	: S extends `${infer Rest}/`
+		? RemoveTrailingSlash<Rest>
+		: S
+export type CleanPath<S extends string> = string extends S
+	? string
+	: RemoveTrailingSlash<CollapseSlashes<EnsureLeadingSlash<S>>>
 export type JoinPath<A extends string, B extends string> = CleanPath<`${A}/${B}`>
 
 type MethodRecord<C, M extends MethodsEnum> = M extends keyof C ? (C[M] extends Record<string, any> ? C[M] : {}) : {}
@@ -222,22 +233,25 @@ export type PrefixRouteContract<C, Prefix extends string> = string extends Prefi
 				: C[M]
 		}>
 
-type DuplicateInMethod<A, B, M extends keyof A & keyof B> = A[M] extends Record<string, any>
-	? B[M] extends Record<string, any>
-		? Extract<keyof A[M], keyof B[M]> extends infer Path
-			? Path extends string
-				? DuplicateRouteIdentity<Extract<M, string>, Path>
+type DuplicateInMethod<A, B, M extends keyof A & keyof B> =
+	A[M] extends Record<string, any>
+		? B[M] extends Record<string, any>
+			? Extract<keyof A[M], keyof B[M]> extends infer Path
+				? Path extends string
+					? DuplicateRouteIdentity<Extract<M, string>, Path>
+					: never
 				: never
 			: never
 		: never
-	: never
 export type DuplicateRouteIdentity<Method extends string, Path extends string> = {
 	readonly __duplicateRouteIdentity__: `${Method} ${Path}`
 }
 export type DuplicateRouteIdentities<A, B> = {
 	[M in keyof A & keyof B]: DuplicateInMethod<A, B, M>
 }[keyof A & keyof B]
-export type RejectDuplicateRoutes<A, B> = [DuplicateRouteIdentities<A, B>] extends [never] ? unknown : DuplicateRouteIdentities<A, B>
+export type RejectDuplicateRoutes<A, B> = [DuplicateRouteIdentities<A, B>] extends [never]
+	? unknown
+	: DuplicateRouteIdentities<A, B>
 export type RejectDuplicateRoute<C, M extends MethodsEnum, Path extends string> = string extends Path
 	? unknown
 	: M extends keyof C
@@ -251,7 +265,11 @@ export type RouteDefOfConfig<Cfg> = 'schema' extends keyof Cfg
 		? Extract<NonNullable<S>, RouteDef>
 		: {}
 	: {}
-export type EffectiveHide<ParentHide, Cfg> = 'hide' extends keyof Cfg ? (Cfg extends { hide?: infer Hide } ? Hide : ParentHide) : ParentHide
+export type EffectiveHide<ParentHide, Cfg> = 'hide' extends keyof Cfg
+	? Cfg extends { hide?: infer Hide }
+		? Hide
+		: ParentHide
+	: ParentHide
 export type AddRouteToPublicContract<C, M extends MethodsEnum, Path extends string, Entry, Hide> = Hide extends true
 	? C
 	: AddRouteToContract<C, M, Path, Entry>
@@ -289,13 +307,15 @@ function makeMiddlewareHandler<Cb extends Function, T extends RouteDef>(cb: Cb, 
 	return { cb, onSetup }
 }
 
-export const makeMiddleware = <Def extends RouteDef>(...args: Parameters<typeof makeMiddlewareHandler<RouteMiddlewareHandler<Def>, Def>>) =>
-	makeMiddlewareHandler(...args)
+export const makeMiddleware = <Def extends RouteDef>(
+	...args: Parameters<typeof makeMiddlewareHandler<RouteMiddlewareHandler<Def>, Def>>
+) => makeMiddlewareHandler(...args)
 export const makeResponseMiddleware = <Def extends RouteDef>(
 	...args: Parameters<typeof makeMiddlewareHandler<RouteResponseMiddlewareHandler<Def>, Def>>
 ) => makeMiddlewareHandler(...args)
-export const makeErrorMiddleware = <Def extends RouteDef>(...args: Parameters<typeof makeMiddlewareHandler<ErrorHandler<Def>, Def>>) =>
-	makeMiddlewareHandler(...args)
+export const makeErrorMiddleware = <Def extends RouteDef>(
+	...args: Parameters<typeof makeMiddlewareHandler<ErrorHandler<Def>, Def>>
+) => makeMiddlewareHandler(...args)
 
 if (import.meta.vitest) {
 	const { describe, expectTypeOf, test } = import.meta.vitest

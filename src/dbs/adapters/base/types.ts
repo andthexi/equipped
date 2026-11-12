@@ -1,6 +1,6 @@
 import { v, type PipeOutput } from 'valleyed'
 
-import { KafkaEventBus } from '../../../events/adapters/kafka'
+import { KafkaEventBus } from '../../../events/adapters/kafka/index.js'
 
 export const dbChangeConfigPipe = () =>
 	v.object({

@@ -1,9 +1,13 @@
-import type { OrmAdapterLike } from '../adapters/base'
-import type { OrmAdapter } from '../orm-adapter'
-import type { AnyChange } from './types'
-import type { Repo } from '../repo/repo'
+import type { OrmAdapterLike } from '../adapters/base.js'
+import type { OrmAdapter } from '../orm-adapter.js'
+import type { Repo } from '../repo/repo.js'
+import type { AnyChange } from './types.js'
 
-export async function applyChange(adapter: OrmAdapter, repo: Repo<OrmAdapterLike<any>>, change: AnyChange): Promise<void> {
+export async function applyChange(
+	adapter: OrmAdapter,
+	repo: Repo<OrmAdapterLike<any>>,
+	change: AnyChange,
+): Promise<void> {
 	if (change.kind === 'execute') {
 		await change.up(repo)
 		return
@@ -40,14 +44,20 @@ if (import.meta.vitest) {
 		test('throws when adapter lacks the apply method for a declarative change', async () => {
 			const adapter = {} as any
 			const repo = {} as any
-			await expect(applyChange(adapter, repo, { kind: 'addIndex', table: 't', on: ['a'] }))
-				.rejects.toThrow("Adapter does not support change kind 'addIndex'")
+			await expect(applyChange(adapter, repo, { kind: 'addIndex', table: 't', on: ['a'] })).rejects.toThrow(
+				"Adapter does not support change kind 'addIndex'",
+			)
 		})
 
 		test('routes createTable to adapter.applyCreateTable', async () => {
 			const applyCreateTable = vi.fn().mockResolvedValue(undefined)
 			const adapter = { applyCreateTable } as any
-			const change = { kind: 'createTable' as const, name: 'users', pk: { name: 'id', type: 'string' }, fields: [] }
+			const change = {
+				kind: 'createTable' as const,
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			}
 			await applyChange(adapter, {} as any, change)
 			expect(applyCreateTable).toHaveBeenCalledWith(change)
 		})
@@ -79,7 +89,12 @@ if (import.meta.vitest) {
 		test('routes modifyField to adapter.applyModifyField', async () => {
 			const applyModifyField = vi.fn().mockResolvedValue(undefined)
 			const adapter = { applyModifyField } as any
-			const change = { kind: 'modifyField' as const, table: 'users', name: 'age', to: { name: 'age', type: 'string' } }
+			const change = {
+				kind: 'modifyField' as const,
+				table: 'users',
+				name: 'age',
+				to: { name: 'age', type: 'string' },
+			}
 			await applyChange(adapter, {} as any, change)
 			expect(applyModifyField).toHaveBeenCalledWith(change)
 		})
@@ -111,7 +126,12 @@ if (import.meta.vitest) {
 		test('routes addForeignKey to adapter.applyAddForeignKey', async () => {
 			const applyAddForeignKey = vi.fn().mockResolvedValue(undefined)
 			const adapter = { applyAddForeignKey } as any
-			const change = { kind: 'addForeignKey' as const, table: 'posts', on: 'authorId', references: { table: 'users', column: 'id' } }
+			const change = {
+				kind: 'addForeignKey' as const,
+				table: 'posts',
+				on: 'authorId',
+				references: { table: 'users', column: 'id' },
+			}
 			await applyChange(adapter, {} as any, change)
 			expect(applyAddForeignKey).toHaveBeenCalledWith(change)
 		})

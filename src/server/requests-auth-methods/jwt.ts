@@ -1,10 +1,10 @@
 import type { IncomingHttpHeaders } from 'node:http2'
 
-import cookie from '@fastify/cookie'
+import { fastifyCookie } from '@fastify/cookie'
 import jwt from 'jsonwebtoken'
 
-import { BaseRequestAuthMethod } from './base'
-import { NotAuthenticatedError, TokenExpired } from '../../errors'
+import { NotAuthenticatedError, TokenExpired } from '../../errors/index.js'
+import { BaseRequestAuthMethod } from './base.js'
 
 export interface BaseJwtRequestAuthMethodOptions {
 	signingKey: string
@@ -67,7 +67,10 @@ interface BaseJwtHeaderRequestAuthMethodOptions<T extends string> extends BaseJw
 	headerName: T
 }
 
-export abstract class BaseJwtHeaderRequestAuthMethod<T extends { id: string }, Name extends string = string> extends BaseJwtRequestAuthMethod<T> {
+export abstract class BaseJwtHeaderRequestAuthMethod<
+	T extends { id: string },
+	Name extends string = string,
+> extends BaseJwtRequestAuthMethod<T> {
 	protected readonly options: BaseJwtHeaderRequestAuthMethodOptions<Name>
 
 	constructor(options: BaseJwtHeaderRequestAuthMethodOptions<Name>) {
@@ -90,7 +93,10 @@ interface BaseJwtCookieRequestAuthMethodOptions<T extends string> extends BaseJw
 	cookieName: T
 }
 
-export abstract class BaseJwtCookieRequestAuthMethod<T extends { id: string }, Name extends string = string> extends BaseJwtRequestAuthMethod<T> {
+export abstract class BaseJwtCookieRequestAuthMethod<
+	T extends { id: string },
+	Name extends string = string,
+> extends BaseJwtRequestAuthMethod<T> {
 	protected readonly options: BaseJwtCookieRequestAuthMethodOptions<Name>
 
 	constructor(options: BaseJwtCookieRequestAuthMethodOptions<Name>) {
@@ -99,7 +105,7 @@ export abstract class BaseJwtCookieRequestAuthMethod<T extends { id: string }, N
 	}
 
 	async parseHeader(headers: IncomingHttpHeaders) {
-		const cookies = cookie.parse(headers.cookie || '') ?? {}
+		const cookies = fastifyCookie.parse(headers.cookie || '') ?? {}
 		const value = cookies[this.options.cookieName]
 		if (!value || typeof value !== 'string') throw new NotAuthenticatedError()
 		return value

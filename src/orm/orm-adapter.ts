@@ -1,15 +1,27 @@
 import type { Pipe } from 'valleyed'
 
-import { EquippedError } from '../errors'
-import { Instance, type ClassRef } from '../instance'
-import type { AggregateOpName, FieldTypeName, FilterOpName, UpdateOpName } from './adapter'
-import type { OrmUse } from './adapters/base'
-import { FilterGroup } from './filter'
-import type { DiscoveredSchema } from './migrations/introspection-types'
-import type { AddFieldChange, AddForeignKeyChange, AddIndexChange, CreateTableChange, DropFieldChange, DropForeignKeyChange, DropIndexChange, DropTableChange, ModifyFieldChange, RenameFieldChange, RenameTableChange } from './migrations/types'
-import type { IterationQueryOptions, QueryOptions } from './query-options'
-import type { AnySchema } from './schema'
-import type { AnyUpdateOp } from './updates'
+import { EquippedError } from '../errors/index.js'
+import { Instance, type ClassRef } from '../instance/index.js'
+import type { AggregateOpName, FieldTypeName, FilterOpName, UpdateOpName } from './adapter.js'
+import type { OrmUse } from './adapters/base.js'
+import { FilterGroup } from './filter.js'
+import type { DiscoveredSchema } from './migrations/introspection-types.js'
+import type {
+	AddFieldChange,
+	AddForeignKeyChange,
+	AddIndexChange,
+	CreateTableChange,
+	DropFieldChange,
+	DropForeignKeyChange,
+	DropIndexChange,
+	DropTableChange,
+	ModifyFieldChange,
+	RenameFieldChange,
+	RenameTableChange,
+} from './migrations/types.js'
+import type { IterationQueryOptions, QueryOptions } from './query-options.js'
+import type { AnySchema } from './schema.js'
+import type { AnyUpdateOp } from './updates.js'
 
 export type AggregateSpec = {
 	where?: FilterGroup
@@ -34,13 +46,33 @@ export abstract class OrmAdapter {
 	disconnect?(): Promise<void>
 	findByPk?(schema: AnySchema, config: unknown, pk: unknown): Promise<Record<string, unknown> | null>
 	createMany?(schema: AnySchema, config: unknown, data: Record<string, unknown>[]): Promise<Record<string, unknown>[]>
-	updateByPk?(schema: AnySchema, config: unknown, pk: unknown, ops: AnyUpdateOp[]): Promise<Record<string, unknown> | null>
+	updateByPk?(
+		schema: AnySchema,
+		config: unknown,
+		pk: unknown,
+		ops: AnyUpdateOp[],
+	): Promise<Record<string, unknown> | null>
 	deleteByPk?(schema: AnySchema, config: unknown, pk: unknown): Promise<Record<string, unknown> | null>
 	raw?(schema: AnySchema, config: unknown, ...args: any[]): Promise<any>
-	findMany?(schema: AnySchema, config: unknown, filter: FilterGroup, options?: QueryOptions): Promise<Record<string, unknown>[]>
+	findMany?(
+		schema: AnySchema,
+		config: unknown,
+		filter: FilterGroup,
+		options?: QueryOptions,
+	): Promise<Record<string, unknown>[]>
 	count?(schema: AnySchema, config: unknown, filter: FilterGroup): Promise<number>
-	iterateMany?(schema: AnySchema, config: unknown, filter: FilterGroup, options?: IterationQueryOptions): AsyncGenerator<Record<string, unknown>, void, void>
-	updateMany?(schema: AnySchema, config: unknown, filter: FilterGroup, data: Record<string, unknown>): Promise<Record<string, unknown>[]>
+	iterateMany?(
+		schema: AnySchema,
+		config: unknown,
+		filter: FilterGroup,
+		options?: IterationQueryOptions,
+	): AsyncGenerator<Record<string, unknown>, void, void>
+	updateMany?(
+		schema: AnySchema,
+		config: unknown,
+		filter: FilterGroup,
+		data: Record<string, unknown>,
+	): Promise<Record<string, unknown>[]>
 	deleteMany?(schema: AnySchema, config: unknown, filter: FilterGroup): Promise<Record<string, unknown>[]>
 	upsertOne?(
 		schema: AnySchema,
@@ -93,7 +125,8 @@ export abstract class OrmAdapter {
 				const rows = await use.findMany(filter, { limit: 1 })
 				return rows[0] ?? null
 			},
-			count: (filter) => self.count?.(schema, config, filter) ?? Promise.reject(new Error('count not implemented')),
+			count: (filter) =>
+				self.count?.(schema, config, filter) ?? Promise.reject(new Error('count not implemented')),
 			createOne: async (d) => {
 				const rows = await use.createMany([d])
 				return rows[0]
@@ -109,7 +142,8 @@ export abstract class OrmAdapter {
 				return rows[0] ?? null
 			},
 			upsertOne: (filter, create, ops) =>
-				self.upsertOne?.(schema, config, filter, create, ops) ?? Promise.reject(new Error('upsertOne not implemented')),
+				self.upsertOne?.(schema, config, filter, create, ops) ??
+				Promise.reject(new Error('upsertOne not implemented')),
 			deleteOne: async (filter) => {
 				const row = await use.findOne(filter)
 				if (!row) return null
@@ -123,8 +157,10 @@ export abstract class OrmAdapter {
 				return row
 			},
 			deleteMany: (filter) => self.deleteMany?.(schema, config, filter) ?? Promise.resolve([]),
-			raw: (...args: any[]) => self.raw?.(schema, config, ...args) ?? Promise.reject(new Error('raw not implemented')),
-			aggregate: (spec) => self.aggregate?.(schema, config, spec) ?? Promise.reject(new Error('aggregate not implemented')),
+			raw: (...args: any[]) =>
+				self.raw?.(schema, config, ...args) ?? Promise.reject(new Error('raw not implemented')),
+			aggregate: (spec) =>
+				self.aggregate?.(schema, config, spec) ?? Promise.reject(new Error('aggregate not implemented')),
 			aggregateOps: self.aggregateOps ?? [],
 		}
 		return use
@@ -137,7 +173,7 @@ if (import.meta.vitest) {
 
 	describe('OrmAdapter', () => {
 		test('subclass with connect/disconnect auto-registers Instance hooks', async () => {
-			const { Instance: Inst } = await import('../instance')
+			const { Instance: Inst } = await import('../instance/index.js')
 			const onSpy = vi.spyOn(Inst, 'on').mockImplementation(() => {})
 
 			class TestAdapter extends OrmAdapter {
@@ -149,14 +185,22 @@ if (import.meta.vitest) {
 
 			new (TestAdapter as any)()
 
-			expect(onSpy).toHaveBeenCalledWith('start', expect.any(Function), expect.objectContaining({ class: TestAdapter }))
-			expect(onSpy).toHaveBeenCalledWith('close', expect.any(Function), expect.objectContaining({ class: TestAdapter }))
+			expect(onSpy).toHaveBeenCalledWith(
+				'start',
+				expect.any(Function),
+				expect.objectContaining({ class: TestAdapter }),
+			)
+			expect(onSpy).toHaveBeenCalledWith(
+				'close',
+				expect.any(Function),
+				expect.objectContaining({ class: TestAdapter }),
+			)
 
 			onSpy.mockRestore()
 		})
 
 		test('subclass without connect/disconnect does not register hooks', async () => {
-			const { Instance: Inst } = await import('../instance')
+			const { Instance: Inst } = await import('../instance/index.js')
 			const onSpy = vi.spyOn(Inst, 'on').mockImplementation(() => {})
 
 			class MinimalAdapter extends OrmAdapter {
@@ -170,7 +214,7 @@ if (import.meta.vitest) {
 		})
 
 		test('capability declarations default to empty arrays', async () => {
-			const { Instance: Inst } = await import('../instance')
+			const { Instance: Inst } = await import('../instance/index.js')
 			vi.spyOn(Inst, 'on').mockImplementation(() => {})
 
 			class DefaultAdapter extends OrmAdapter {
@@ -186,7 +230,7 @@ if (import.meta.vitest) {
 		})
 
 		test('onFatalError wraps non-EquippedError and calls Instance.crash', async () => {
-			const { Instance: Inst } = await import('../instance')
+			const { Instance: Inst } = await import('../instance/index.js')
 			vi.spyOn(Inst, 'on').mockImplementation(() => {})
 			const crashSpy = vi.spyOn(Inst, 'crash').mockImplementation((() => {
 				throw new Error('crash')
@@ -207,7 +251,7 @@ if (import.meta.vitest) {
 		})
 
 		test('onFatalError passes through EquippedError directly', async () => {
-			const { Instance: Inst } = await import('../instance')
+			const { Instance: Inst } = await import('../instance/index.js')
 			vi.spyOn(Inst, 'on').mockImplementation(() => {})
 			let crashedWith: unknown
 			vi.spyOn(Inst, 'crash').mockImplementation(((err: any) => {
@@ -231,8 +275,8 @@ if (import.meta.vitest) {
 		})
 
 		test('use() creates OrmUse bridge that delegates to flat methods', async () => {
-			const { Instance: Inst } = await import('../instance')
-			const { Schema } = await import('./schema')
+			const { Instance: Inst } = await import('../instance/index.js')
+			const { Schema } = await import('./schema.js')
 			vi.spyOn(Inst, 'on').mockImplementation(() => {})
 
 			class BridgeAdapter extends OrmAdapter {
@@ -275,8 +319,8 @@ if (import.meta.vitest) {
 		})
 
 		test('use() bridge delegates updateMany to flat method', async () => {
-			const { Instance: Inst } = await import('../instance')
-			const { Schema } = await import('./schema')
+			const { Instance: Inst } = await import('../instance/index.js')
+			const { Schema } = await import('./schema.js')
 			vi.spyOn(Inst, 'on').mockImplementation(() => {})
 
 			class UpdateAdapter extends OrmAdapter {
@@ -307,8 +351,8 @@ if (import.meta.vitest) {
 		})
 
 		test('use().iterateMany does not fall back to findMany when adapter omits iterateMany', async () => {
-			const { Instance: Inst } = await import('../instance')
-			const { Schema } = await import('./schema')
+			const { Instance: Inst } = await import('../instance/index.js')
+			const { Schema } = await import('./schema.js')
 			vi.spyOn(Inst, 'on').mockImplementation(() => {})
 
 			let findManyCalls = 0
@@ -326,7 +370,10 @@ if (import.meta.vitest) {
 				.build()
 			const adapter = new (FindOnlyAdapter as any)() as FindOnlyAdapter
 			const rows: Record<string, unknown>[] = []
-			for await (const row of adapter.use(TestSchema, { table: 'iter_no_fallback' }).iterateMany(FilterGroup.create())) rows.push(row)
+			for await (const row of adapter
+				.use(TestSchema, { table: 'iter_no_fallback' })
+				.iterateMany(FilterGroup.create()))
+				rows.push(row)
 
 			expect(rows).toEqual([])
 			expect(findManyCalls).toBe(0)
@@ -335,8 +382,8 @@ if (import.meta.vitest) {
 		})
 
 		test('use() bridge delegates deleteByPk via deleteOne', async () => {
-			const { Instance: Inst } = await import('../instance')
-			const { Schema } = await import('./schema')
+			const { Instance: Inst } = await import('../instance/index.js')
+			const { Schema } = await import('./schema.js')
 			vi.spyOn(Inst, 'on').mockImplementation(() => {})
 
 			let deletedPk: unknown = null
@@ -367,7 +414,7 @@ if (import.meta.vitest) {
 		})
 
 		test('use() bridge delegates session to flat method', async () => {
-			const { Instance: Inst } = await import('../instance')
+			const { Instance: Inst } = await import('../instance/index.js')
 			vi.spyOn(Inst, 'on').mockImplementation(() => {})
 
 			let sessionRan = false
@@ -388,7 +435,7 @@ if (import.meta.vitest) {
 		})
 
 		test('type-level: subclass method override enforces canonical signature', async () => {
-			const { Instance: Inst } = await import('../instance')
+			const { Instance: Inst } = await import('../instance/index.js')
 			vi.spyOn(Inst, 'on').mockImplementation(() => {})
 
 			class CorrectAdapter extends OrmAdapter {

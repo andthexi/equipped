@@ -2,10 +2,10 @@ import { convert } from '@openapi-contrib/json-schema-to-openapi-schema'
 import type { OpenAPIV3_1 } from 'openapi-types'
 import { capitalize, type JsonSchema } from 'valleyed'
 
-import { Instance } from '../instance'
-import type { ServerConfig } from './adapters/base'
-import { Router } from './routes'
-import { StatusCodes, type Route } from './types'
+import { Instance } from '../instance/index.js'
+import type { ServerConfig } from './adapters/base.js'
+import { Router } from './routes.js'
+import { StatusCodes, type Route } from './types.js'
 
 declare module 'openapi-types' {
 	namespace OpenAPIV3 {
@@ -20,7 +20,9 @@ declare module 'openapi-types' {
 
 export type OpenApiSchemaDef = {
 	request: Partial<Record<'body' | 'query' | 'params' | 'headers' | 'response', JsonSchema>>
-	response: Partial<Record<'response' | 'responseHeaders', { status: number; schema: JsonSchema; contentType: string }[]>>
+	response: Partial<
+		Record<'response' | 'responseHeaders', { status: number; schema: JsonSchema; contentType: string }[]>
+	>
 }
 
 export const openapi = (config: ServerConfig) => {
@@ -109,7 +111,12 @@ export const openapi = (config: ServerConfig) => {
 		return name
 	}
 
-	const addRouteToOpenApiDoc = async (path: string, method: string, def: OpenApiSchemaDef, methodObj: OpenAPIV3_1.OperationObject) => {
+	const addRouteToOpenApiDoc = async (
+		path: string,
+		method: string,
+		def: OpenApiSchemaDef,
+		methodObj: OpenAPIV3_1.OperationObject,
+	) => {
 		if (def.response.response?.length) {
 			methodObj.responses ??= {}
 			for (const resp of def.response.response) {

@@ -69,7 +69,7 @@ surface for an ergonomic problem solvable by handler discipline.
 ### Registry shape
 
 - **Declarative builder step `.handler(name, def)` returning a `{ builder,
-  fire }` tuple.** Type-safe replay-by-construction. Rejected: forces every
+fire }` tuple.** Type-safe replay-by-construction. Rejected: forces every
   handler def into one assembly site; cross-cutting modules can't register
   via side-effect imports; awkward tuple return.
 - **`log.fire(name, payload)` (no per-handler fire fn).** Rejected: less
@@ -103,7 +103,7 @@ surface for an ergonomic problem solvable by handler discipline.
   concrete need surfaces.
 - **Atomic event in one session (picked).** `fire(payload)` wraps
   `repo.session(async () => { create event row; run handle })`. Failure
-  rolls everything back. Replay is for re-deriving state from *successful*
+  rolls everything back. Replay is for re-deriving state from _successful_
   events only — not for retrying failed ones. Matches the orm's session
   contract and §13 #6 fail-loud rule.
 
@@ -116,7 +116,7 @@ surface for an ergonomic problem solvable by handler discipline.
   `rerun(key)` calls in their own try/catch loop.
 - **Stop-on-first-failure (picked).** Throw with the offending event's
   `key` in the error; caller fixes and re-runs `replay({ from:
-  lastSuccessTs + 1 })`.
+lastSuccessTs + 1 })`.
 
 ### Replay session boundary
 

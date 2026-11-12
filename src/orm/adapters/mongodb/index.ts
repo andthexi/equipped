@@ -3,16 +3,22 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { MongoClient, type ClientSession, type MongoClientOptions, type OptionalUnlessRequiredId } from 'mongodb'
 import { v, type PipeOutput } from 'valleyed'
 
-import { compileMongoAggregate, compileMongoFilter, compileMongoOps, compileMongoQuery, compileMongoUpdate } from './query'
-import { EquippedError } from '../../../errors'
-import { configurable } from '../../../utilities/configurable'
-import type { FilterGroup } from '../../filter'
-import type { DiscoveredSchema } from '../../migrations/introspection-types'
-import type { AddIndexChange, DropIndexChange } from '../../migrations/types'
-import { OrmAdapter, type AggregateSpec } from '../../orm-adapter'
-import type { IterationQueryOptions, QueryOptions } from '../../query-options'
-import type { AnySchema } from '../../schema'
-import type { AnyUpdateOp } from '../../updates'
+import { EquippedError } from '../../../errors/index.js'
+import { configurable } from '../../../utilities/configurable.js'
+import type { FilterGroup } from '../../filter.js'
+import type { DiscoveredSchema } from '../../migrations/introspection-types.js'
+import type { AddIndexChange, DropIndexChange } from '../../migrations/types.js'
+import { OrmAdapter, type AggregateSpec } from '../../orm-adapter.js'
+import type { IterationQueryOptions, QueryOptions } from '../../query-options.js'
+import type { AnySchema } from '../../schema.js'
+import type { AnyUpdateOp } from '../../updates.js'
+import {
+	compileMongoAggregate,
+	compileMongoFilter,
+	compileMongoOps,
+	compileMongoQuery,
+	compileMongoUpdate,
+} from './query.js'
 
 const mongoSchemaConfigPipe = () => v.object({ db: v.string(), col: v.string() })
 export type MongoDbRepoConfig = PipeOutput<ReturnType<typeof mongoSchemaConfigPipe>>
@@ -27,7 +33,21 @@ const MIGRATION_TRACKER_COLLECTION = 'equipped_migrations'
 export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter) {
 	readonly schemaConfigPipe = mongoSchemaConfigPipe()
 
-	readonly queryableOps = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'notIn', 'like', 'exists', 'notExists', 'contains', 'notContains'] as const
+	readonly queryableOps = [
+		'eq',
+		'ne',
+		'gt',
+		'gte',
+		'lt',
+		'lte',
+		'in',
+		'notIn',
+		'like',
+		'exists',
+		'notExists',
+		'contains',
+		'notContains',
+	] as const
 	readonly updateOps = ['set', 'inc', 'mul', 'min', 'max', 'unset', 'push', 'pull', 'patch'] as const
 	readonly aggregateOps = ['count', 'countDistinct', 'sum', 'avg', 'min', 'max'] as const
 	readonly supportedFieldTypes = ['string', 'number', 'boolean', 'null', 'object', 'array', 'date'] as const
@@ -68,10 +88,7 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 		try {
 			const pkName = schema.pkField.name
 			const collection = this.#getCollection(schemaCfg)
-			const doc = await collection.findOne(
-				{ [pkName]: pk },
-				{ session: this.#sessionStore.getStore() },
-			)
+			const doc = await collection.findOne({ [pkName]: pk }, { session: this.#sessionStore.getStore() })
 			return doc as Record<string, unknown> | null
 		} catch (error) {
 			throw new EquippedError(
@@ -105,13 +122,15 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 			const collection = this.#getCollection(schemaCfg)
 			const update = compileMongoOps(ops)
 			if (Object.keys(update).length === 0) {
-				return await collection.findOne({ [pkName]: pk }, { session: this.#sessionStore.getStore() }) as Record<string, unknown> | null
+				return (await collection.findOne(
+					{ [pkName]: pk },
+					{ session: this.#sessionStore.getStore() },
+				)) as Record<string, unknown> | null
 			}
-			return await collection.findOneAndUpdate(
-				{ [pkName]: pk },
-				update,
-				{ returnDocument: 'after', session: this.#sessionStore.getStore() },
-			) as Record<string, unknown> | null
+			return (await collection.findOneAndUpdate({ [pkName]: pk }, update, {
+				returnDocument: 'after',
+				session: this.#sessionStore.getStore(),
+			})) as Record<string, unknown> | null
 		} catch (error) {
 			throw new EquippedError(
 				'MongoDB updateByPk failed',
@@ -126,10 +145,10 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 		try {
 			const pkName = schema.pkField.name
 			const collection = this.#getCollection(schemaCfg)
-			return await collection.findOneAndDelete(
+			return (await collection.findOneAndDelete(
 				{ [pkName]: pk },
 				{ session: this.#sessionStore.getStore() },
-			) as Record<string, unknown> | null
+			)) as Record<string, unknown> | null
 		} catch (error) {
 			throw new EquippedError(
 				'MongoDB deleteByPk failed',
@@ -203,7 +222,9 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 		try {
 			const pk = schema.pkField.name
 			const collection = this.#getCollection(schemaCfg)
-			return await collection.countDocuments(compileMongoFilter(filter, pk), { session: this.#sessionStore.getStore() })
+			return await collection.countDocuments(compileMongoFilter(filter, pk), {
+				session: this.#sessionStore.getStore(),
+			})
 		} catch (error) {
 			throw new EquippedError(
 				'MongoDB count failed',
@@ -293,7 +314,13 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 		}
 	}
 
-	async upsertOne(schema: AnySchema, config: unknown, filter: FilterGroup, create: Record<string, unknown>, ops: AnyUpdateOp[]) {
+	async upsertOne(
+		schema: AnySchema,
+		config: unknown,
+		filter: FilterGroup,
+		create: Record<string, unknown>,
+		ops: AnyUpdateOp[],
+	) {
 		const schemaCfg = config as MongoDbRepoConfig
 		try {
 			const pk = schema.pkField.name
@@ -384,7 +411,7 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 				.map((idx) => ({
 					name: idx.name as string,
 					on: Object.keys(idx.key as Record<string, unknown>) as ReadonlyArray<string>,
-					unique: !!(idx.unique),
+					unique: !!idx.unique,
 				}))
 			schemas.push({
 				name: col.name,
@@ -422,17 +449,31 @@ if (import.meta.vitest) {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 
 			expect(adapter.supportedFieldTypes).toEqual([
-				'string', 'number', 'boolean', 'null', 'object', 'array', 'date',
+				'string',
+				'number',
+				'boolean',
+				'null',
+				'object',
+				'array',
+				'date',
 			])
 			expect(adapter.queryableOps).toEqual([
-				'eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'notIn', 'like', 'exists', 'notExists', 'contains', 'notContains',
+				'eq',
+				'ne',
+				'gt',
+				'gte',
+				'lt',
+				'lte',
+				'in',
+				'notIn',
+				'like',
+				'exists',
+				'notExists',
+				'contains',
+				'notContains',
 			])
-			expect(adapter.updateOps).toEqual([
-				'set', 'inc', 'mul', 'min', 'max', 'unset', 'push', 'pull', 'patch',
-			])
-			expect(adapter.aggregateOps).toEqual([
-				'count', 'countDistinct', 'sum', 'avg', 'min', 'max',
-			])
+			expect(adapter.updateOps).toEqual(['set', 'inc', 'mul', 'min', 'max', 'unset', 'push', 'pull', 'patch'])
+			expect(adapter.aggregateOps).toEqual(['count', 'countDistinct', 'sum', 'avg', 'min', 'max'])
 		})
 
 		test('underlying MongoClient exposed as readonly instance field', () => {
@@ -441,9 +482,11 @@ if (import.meta.vitest) {
 		})
 
 		test('adapter.use returns OrmUse-shaped object', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
-			const schema = Schema.from('test').pk('id', v.string(), () => 'x').build()
+			const schema = Schema.from('test')
+				.pk('id', v.string(), () => 'x')
+				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			const use = adapter.use(schema, { db: 'testdb', col: 'testcol' })
 
@@ -481,17 +524,35 @@ if (import.meta.vitest) {
 			const _adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			type Ops = typeof _adapter.queryableOps
 			expectTypeOf<Ops>().toEqualTypeOf<
-				readonly ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'notIn', 'like', 'exists', 'notExists', 'contains', 'notContains']
+				readonly [
+					'eq',
+					'ne',
+					'gt',
+					'gte',
+					'lt',
+					'lte',
+					'in',
+					'notIn',
+					'like',
+					'exists',
+					'notExists',
+					'contains',
+					'notContains',
+				]
 			>()
 		})
 
 		test('type-level: Repo.from with MongoDbAdapter enables all builder methods', async () => {
-			const { Repo } = await import('../../repo/repo')
-			const { Schema } = await import('../../schema')
+			const { Repo } = await import('../../repo/repo.js')
+			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
-			const repo = Repo.from(adapter).resolve(() => ({ db: 'test', col: 'test' })).build()
-			const _TestSchema = Schema.from('test').pk('id', v.string(), () => 'x').build()
+			const repo = Repo.from(adapter)
+				.resolve(() => ({ db: 'test', col: 'test' }))
+				.build()
+			const _TestSchema = Schema.from('test')
+				.pk('id', v.string(), () => 'x')
+				.build()
 
 			const _one = repo.on(_TestSchema).one()
 			const _all = repo.on(_TestSchema).all()
@@ -511,34 +572,45 @@ if (import.meta.vitest) {
 		})
 
 		test('type-level: raw arg-tuple infers (pipeline: Record<string, unknown>[]) from MongoDbAdapter', async () => {
-			const { Repo } = await import('../../repo/repo')
-			const { Schema } = await import('../../schema')
+			const { Repo } = await import('../../repo/repo.js')
+			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
-			const repo = Repo.from(adapter).resolve(() => ({ db: 'test', col: 'test' })).build()
-			const _TestSchema = Schema.from('test').pk('id', v.string(), () => 'x').build()
+			const repo = Repo.from(adapter)
+				.resolve(() => ({ db: 'test', col: 'test' }))
+				.build()
+			const _TestSchema = Schema.from('test')
+				.pk('id', v.string(), () => 'x')
+				.build()
 			const _ref = repo.on(_TestSchema)
 
 			expectTypeOf(_ref.raw).parameters.toEqualTypeOf<[pipeline: Record<string, unknown>[]]>()
 		})
 
 		test('type-level: per-call <T> override narrows MongoDbAdapter raw return type', async () => {
-			const { Repo } = await import('../../repo/repo')
-			const { Schema } = await import('../../schema')
+			const { Repo } = await import('../../repo/repo.js')
+			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
-			const repo = Repo.from(adapter).resolve(() => ({ db: 'test', col: 'test' })).build()
-			const _TestSchema = Schema.from('test').pk('id', v.string(), () => 'x').build()
+			const repo = Repo.from(adapter)
+				.resolve(() => ({ db: 'test', col: 'test' }))
+				.build()
+			const _TestSchema = Schema.from('test')
+				.pk('id', v.string(), () => 'x')
+				.build()
 			const _ref = repo.on(_TestSchema)
 
 			expectTypeOf(_ref.raw<{ total: number }[]>).returns.toEqualTypeOf<Promise<{ total: number }[]>>()
 		})
 
 		test('count forwards compiled filter to collection.countDocuments', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
-			const { FilterGroup } = await import('../../filter')
-			const schema = Schema.from('mongo_count').pk('_id', v.string(), () => 'x').field('name', v.string()).build()
+			const { FilterGroup } = await import('../../filter.js')
+			const schema = Schema.from('mongo_count')
+				.pk('_id', v.string(), () => 'x')
+				.field('name', v.string())
+				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			let capturedFilter: unknown
 			;(adapter.client as any).db = () => ({
@@ -550,15 +622,21 @@ if (import.meta.vitest) {
 				}),
 			})
 
-			const result = await adapter.count(schema, { db: 'testdb', col: 'things' }, FilterGroup.create().eq('name', 'Alice'))
+			const result = await adapter.count(
+				schema,
+				{ db: 'testdb', col: 'things' },
+				FilterGroup.create().eq('name', 'Alice'),
+			)
 			expect(capturedFilter).toEqual({ name: { $eq: 'Alice' } })
 			expect(result).toBe(7)
 		})
 
 		test('raw forwards pipeline to collection.aggregate at runtime', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
-			const schema = Schema.from('mongo_raw').pk('id', v.string(), () => 'x').build()
+			const schema = Schema.from('mongo_raw')
+				.pk('id', v.string(), () => 'x')
+				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			let capturedPipeline: unknown
 			const mockResults = [{ total: 42 }]
@@ -576,11 +654,14 @@ if (import.meta.vitest) {
 		})
 
 		test('iterateMany forwards batchSize and closes cursor on early return', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
-			const { FilterGroup } = await import('../../filter')
-			const { OrderBy } = await import('../../query-options')
-			const schema = Schema.from('mongo_iter').pk('_id', v.string(), () => 'x').field('age', v.number()).build()
+			const { FilterGroup } = await import('../../filter.js')
+			const { OrderBy } = await import('../../query-options.js')
+			const schema = Schema.from('mongo_iter')
+				.pk('_id', v.string(), () => 'x')
+				.field('age', v.number())
+				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			let capturedFindFilter: unknown
 			let capturedFindOptions: unknown
@@ -625,12 +706,14 @@ if (import.meta.vitest) {
 			})
 
 			const rows: Record<string, unknown>[] = []
-			for await (const row of adapter.use(schema, { db: 'testdb', col: 'people' }).iterateMany(FilterGroup.create().gt('age', 19), {
-				orderBy: [new OrderBy('age', 'desc')],
-				offset: 1,
-				limit: 2,
-				batchSize: 25,
-			})) {
+			for await (const row of adapter
+				.use(schema, { db: 'testdb', col: 'people' })
+				.iterateMany(FilterGroup.create().gt('age', 19), {
+					orderBy: [new OrderBy('age', 'desc')],
+					offset: 1,
+					limit: 2,
+					batchSize: 25,
+				})) {
 				rows.push(row)
 				break
 			}
@@ -646,10 +729,13 @@ if (import.meta.vitest) {
 		})
 
 		test('iterateMany closes cursor on normal completion', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
-			const { FilterGroup } = await import('../../filter')
-			const schema = Schema.from('mongo_iter_complete').pk('_id', v.string(), () => 'x').field('age', v.number()).build()
+			const { FilterGroup } = await import('../../filter.js')
+			const schema = Schema.from('mongo_iter_complete')
+				.pk('_id', v.string(), () => 'x')
+				.field('age', v.number())
+				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			let closeCalls = 0
 			const cursor = {
@@ -668,11 +754,16 @@ if (import.meta.vitest) {
 			})
 
 			const rows: Record<string, unknown>[] = []
-			for await (const row of adapter.use(schema, { db: 'testdb', col: 'people' }).iterateMany(FilterGroup.create())) {
+			for await (const row of adapter
+				.use(schema, { db: 'testdb', col: 'people' })
+				.iterateMany(FilterGroup.create())) {
 				rows.push(row)
 			}
 
-			expect(rows).toEqual([{ _id: 'u1', age: 30 }, { _id: 'u2', age: 40 }])
+			expect(rows).toEqual([
+				{ _id: 'u1', age: 30 },
+				{ _id: 'u2', age: 40 },
+			])
 			expect(closeCalls).toBe(1)
 		})
 
@@ -684,26 +775,31 @@ if (import.meta.vitest) {
 		test('type-level: adapter declares all 6 canonical aggregate ops', () => {
 			const _adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			type Ops = typeof _adapter.aggregateOps
-			expectTypeOf<Ops>().toEqualTypeOf<
-				readonly ['count', 'countDistinct', 'sum', 'avg', 'min', 'max']
-			>()
+			expectTypeOf<Ops>().toEqualTypeOf<readonly ['count', 'countDistinct', 'sum', 'avg', 'min', 'max']>()
 		})
 
 		test('type-level: Repo.from with MongoDbAdapter enables aggregate method', async () => {
-			const { Repo } = await import('../../repo/repo')
-			const { Schema } = await import('../../schema')
+			const { Repo } = await import('../../repo/repo.js')
+			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
-			const repo = Repo.from(adapter).resolve(() => ({ db: 'test', col: 'test' })).build()
-			const _TestSchema = Schema.from('test').pk('id', v.string(), () => 'x').build()
+			const repo = Repo.from(adapter)
+				.resolve(() => ({ db: 'test', col: 'test' }))
+				.build()
+			const _TestSchema = Schema.from('test')
+				.pk('id', v.string(), () => 'x')
+				.build()
 			const _ref = repo.on(_TestSchema)
 			expectTypeOf(_ref.aggregate).toBeFunction()
 		})
 
 		test('aggregate forwards compiled pipeline to collection.aggregate', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
-			const schema = Schema.from('mongo_agg').pk('_id', v.string(), () => 'x').field('amount', v.number()).build()
+			const schema = Schema.from('mongo_agg')
+				.pk('_id', v.string(), () => 'x')
+				.field('amount', v.number())
+				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			let capturedPipeline: unknown
 			const mockResults = [{ total: 3, revenue: 150 }]
@@ -715,13 +811,17 @@ if (import.meta.vitest) {
 					},
 				}),
 			})
-			const result = await adapter.aggregate(schema, { db: 'testdb', col: 'orders' }, {
-				aggregates: [
-					{ fn: 'count', alias: 'total' },
-					{ fn: 'sum', field: 'amount', alias: 'revenue' },
-				],
-				groupBy: [],
-			})
+			const result = await adapter.aggregate(
+				schema,
+				{ db: 'testdb', col: 'orders' },
+				{
+					aggregates: [
+						{ fn: 'count', alias: 'total' },
+						{ fn: 'sum', field: 'amount', alias: 'revenue' },
+					],
+					groupBy: [],
+				},
+			)
 			expect(capturedPipeline).toEqual([
 				{ $group: { _id: null, total: { $sum: 1 }, revenue: { $sum: '$amount' } } },
 				{ $project: { _id: 0, total: 1, revenue: 1 } },
@@ -730,10 +830,14 @@ if (import.meta.vitest) {
 		})
 
 		test('aggregate with where and groupBy produces correct pipeline', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
-			const { FilterGroup } = await import('../../filter')
-			const schema = Schema.from('mongo_agg2').pk('_id', v.string(), () => 'x').field('region', v.string()).field('amount', v.number()).build()
+			const { FilterGroup } = await import('../../filter.js')
+			const schema = Schema.from('mongo_agg2')
+				.pk('_id', v.string(), () => 'x')
+				.field('region', v.string())
+				.field('amount', v.number())
+				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			let capturedPipeline: unknown
 			;(adapter.client as any).db = () => ({
@@ -744,11 +848,15 @@ if (import.meta.vitest) {
 					},
 				}),
 			})
-			await adapter.aggregate(schema, { db: 'testdb', col: 'orders' }, {
-				where: FilterGroup.create().gt('amount', 10),
-				aggregates: [{ fn: 'count', alias: 'total' }],
-				groupBy: ['region'],
-			})
+			await adapter.aggregate(
+				schema,
+				{ db: 'testdb', col: 'orders' },
+				{
+					where: FilterGroup.create().gt('amount', 10),
+					aggregates: [{ fn: 'count', alias: 'total' }],
+					groupBy: ['region'],
+				},
+			)
 			expect(capturedPipeline).toEqual([
 				{ $match: { amount: { $gt: 10 } } },
 				{ $group: { _id: { region: '$region' }, total: { $sum: 1 } } },
@@ -757,14 +865,22 @@ if (import.meta.vitest) {
 		})
 
 		test('auto-wires Instance hooks for connect/disconnect', async () => {
-			const { Instance: Inst } = await import('../../../instance')
+			const { Instance: Inst } = await import('../../../instance/index.js')
 			const { vi } = await import('vitest')
 			const onSpy = vi.spyOn(Inst, 'on').mockImplementation(() => {})
 
 			MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 
-			expect(onSpy).toHaveBeenCalledWith('start', expect.any(Function), expect.objectContaining({ class: MongoDbAdapter }))
-			expect(onSpy).toHaveBeenCalledWith('close', expect.any(Function), expect.objectContaining({ class: MongoDbAdapter }))
+			expect(onSpy).toHaveBeenCalledWith(
+				'start',
+				expect.any(Function),
+				expect.objectContaining({ class: MongoDbAdapter }),
+			)
+			expect(onSpy).toHaveBeenCalledWith(
+				'close',
+				expect.any(Function),
+				expect.objectContaining({ class: MongoDbAdapter }),
+			)
 
 			onSpy.mockRestore()
 		})
@@ -774,7 +890,10 @@ if (import.meta.vitest) {
 		function mockMongoDb(adapter: MongoDbAdapter) {
 			const state = {
 				migrations: new Map<string, { _id: string; appliedAt: number }>(),
-				collections: new Map<string, { indexes: Array<{ name: string; key: Record<string, number>; unique?: boolean }> }>(),
+				collections: new Map<
+					string,
+					{ indexes: Array<{ name: string; key: Record<string, number>; unique?: boolean }> }
+				>(),
 			}
 
 			const getCol = (name: string) => {
@@ -796,17 +915,17 @@ if (import.meta.vitest) {
 					}
 					const col = getCol(name)
 					return {
-						createIndex: async (fields: Record<string, number>, opts: { unique?: boolean; name: string }) => {
+						createIndex: async (
+							fields: Record<string, number>,
+							opts: { unique?: boolean; name: string },
+						) => {
 							col.indexes.push({ name: opts.name, key: fields, unique: opts.unique })
 						},
 						dropIndex: async (indexName: string) => {
 							col.indexes = col.indexes.filter((i) => i.name !== indexName)
 						},
 						listIndexes: () => ({
-							toArray: async () => [
-								{ name: '_id_', key: { _id: 1 } },
-								...col.indexes,
-							],
+							toArray: async () => [{ name: '_id_', key: { _id: 1 } }, ...col.indexes],
 						}),
 					}
 				},
@@ -853,7 +972,13 @@ if (import.meta.vitest) {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
 			const state = mockMongoDb(adapter)
 
-			await adapter.applyAddIndex({ kind: 'addIndex', table: 'users', on: ['email'], unique: true, name: 'users_email_unique' })
+			await adapter.applyAddIndex({
+				kind: 'addIndex',
+				table: 'users',
+				on: ['email'],
+				unique: true,
+				name: 'users_email_unique',
+			})
 
 			const col = state.collections.get('users')!
 			expect(col.indexes).toHaveLength(1)
@@ -975,7 +1100,7 @@ if (import.meta.vitest) {
 		})
 
 		test('type-level: ChangeFor<MongoDbAdapter> excludes DDL variants', () => {
-			type Changes = import('../../migrations/types').ChangeFor<MongoDbAdapter>
+			type Changes = import('../../migrations/types.js').ChangeFor<MongoDbAdapter>
 
 			expectTypeOf<Extract<Changes, { kind: 'addIndex' }>>().not.toBeNever()
 			expectTypeOf<Extract<Changes, { kind: 'dropIndex' }>>().not.toBeNever()
@@ -993,11 +1118,13 @@ if (import.meta.vitest) {
 		})
 
 		test('type-level: Migrator.from(repo, adapter).build() works without withoutLock', async () => {
-			const { Migrator } = await import('../../migrations/migrator')
-			const { Repo } = await import('../../repo/repo')
+			const { Migrator } = await import('../../migrations/migrator.js')
+			const { Repo } = await import('../../repo/repo.js')
 
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
-			const repo = Repo.from(adapter).resolve(() => ({ db: 'test', col: 'test' })).build()
+			const repo = Repo.from(adapter)
+				.resolve(() => ({ db: 'test', col: 'test' }))
+				.build()
 			const step = Migrator.from(repo, adapter).migrations([])
 
 			expectTypeOf(step).toHaveProperty('build')
@@ -1005,46 +1132,51 @@ if (import.meta.vitest) {
 		})
 
 		test('type-level: Migrator.from(repo, adapter).withoutLock().build() also works', async () => {
-			const { Migrator } = await import('../../migrations/migrator')
-			const { Repo } = await import('../../repo/repo')
+			const { Migrator } = await import('../../migrations/migrator.js')
+			const { Repo } = await import('../../repo/repo.js')
 
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
-			const repo = Repo.from(adapter).resolve(() => ({ db: 'test', col: 'test' })).build()
+			const repo = Repo.from(adapter)
+				.resolve(() => ({ db: 'test', col: 'test' }))
+				.build()
 			const migrator = Migrator.from(repo, adapter).migrations([]).withoutLock().build()
 			expect(migrator).toBeDefined()
 		})
 
 		test('end-to-end: Migrator runs addIndex + dropIndex + execute changes', async () => {
-			const { Migrator } = await import('../../migrations/migrator')
-			const { Repo } = await import('../../repo/repo')
+			const { Migrator } = await import('../../migrations/migrator.js')
+			const { Repo } = await import('../../repo/repo.js')
 
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
 			const state = mockMongoDb(adapter)
-			const repo = Repo.from(adapter).resolve(() => ({ db: 'test', col: 'test' })).build()
+			const repo = Repo.from(adapter)
+				.resolve(() => ({ db: 'test', col: 'test' }))
+				.build()
 
 			let executeRan = false
-			type M = import('../../migrations/types').Migration<typeof adapter>
+			type M = import('../../migrations/types.js').Migration<typeof adapter>
 			const migrations: M[] = [
 				{
 					id: '0001-add-idx',
 					tx: false,
-					changes: [
-						{ kind: 'addIndex', table: 'users', on: ['email'], unique: true },
-					],
+					changes: [{ kind: 'addIndex', table: 'users', on: ['email'], unique: true }],
 				},
 				{
 					id: '0002-backfill',
 					tx: false,
 					changes: [
-						{ kind: 'execute', up: async () => { executeRan = true } },
+						{
+							kind: 'execute',
+							up: async () => {
+								executeRan = true
+							},
+						},
 					],
 				},
 				{
 					id: '0003-drop-idx',
 					tx: false,
-					changes: [
-						{ kind: 'dropIndex', name: 'users_email_idx' },
-					],
+					changes: [{ kind: 'dropIndex', name: 'users_email_idx' }],
 				},
 			]
 
@@ -1072,31 +1204,33 @@ if (import.meta.vitest) {
 			expect(schemas[0].pk).toBeUndefined()
 			expect(schemas[0].fields).toEqual([])
 			expect(schemas[0].foreignKeys).toEqual([])
-			expect(schemas[0].indexes).toEqual([
-				{ name: 'users_email_idx', on: ['email'], unique: true },
-			])
+			expect(schemas[0].indexes).toEqual([{ name: 'users_email_idx', on: ['email'], unique: true }])
 		})
 
 		test('data backfill via execute change', async () => {
-			const { Migrator } = await import('../../migrations/migrator')
-			const { Repo } = await import('../../repo/repo')
+			const { Migrator } = await import('../../migrations/migrator.js')
+			const { Repo } = await import('../../repo/repo.js')
 
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
 			mockMongoDb(adapter)
-			const repo = Repo.from(adapter).resolve(() => ({ db: 'test', col: 'test' })).build()
+			const repo = Repo.from(adapter)
+				.resolve(() => ({ db: 'test', col: 'test' }))
+				.build()
 
 			const backfilledData: string[] = []
-			type M = import('../../migrations/types').Migration<typeof adapter>
+			type M = import('../../migrations/types.js').Migration<typeof adapter>
 			const m: M = {
 				id: '0001-backfill',
 				tx: false,
-				changes: [{
-					kind: 'execute',
-					up: async () => {
-						backfilledData.push('user-1-normalized')
-						backfilledData.push('user-2-normalized')
+				changes: [
+					{
+						kind: 'execute',
+						up: async () => {
+							backfilledData.push('user-1-normalized')
+							backfilledData.push('user-2-normalized')
+						},
 					},
-				}],
+				],
 			}
 
 			const migrator = Migrator.from(repo, adapter).migrations([m]).build()

@@ -1,4 +1,4 @@
-import type { Events } from '../../types'
+import type { Events } from '../../types/index.js'
 
 export type StreamOptions = { skipScope?: boolean; fanout: boolean }
 
@@ -8,5 +8,8 @@ export type Stream<EventData> = {
 }
 
 export abstract class EventBus {
-	abstract stream<Event extends Events[keyof Events]>(topic: Event['topic'], options?: Partial<StreamOptions>): Stream<Event['data']>
+	abstract stream<Event extends Events[keyof Events]>(
+		topic: Event['topic'],
+		options?: Partial<StreamOptions>,
+	): Stream<Event['data']>
 }

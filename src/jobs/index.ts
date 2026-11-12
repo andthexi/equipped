@@ -1,1 +1,1 @@
-export * from './adapters/base'
+export * from './adapters/base.js'

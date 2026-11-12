@@ -1,7 +1,13 @@
-import { Collection } from 'mongodb'
+import type { Collection } from 'mongodb'
 
-import { QueryKeys, type QueryParamsBase, type QueryResults, type QueryWhereBlock, type QueryWhereClause } from '../../pipes'
-import * as core from '../base/core'
+import {
+	QueryKeys,
+	type QueryParamsBase,
+	type QueryResults,
+	type QueryWhereBlock,
+	type QueryWhereClause,
+} from '../../pipes.js'
+import type * as core from '../base/core.js'
 
 export const parseMongodbQueryParams = async <Model extends core.Model<{ _id: string }>>(
 	collection: Collection<Model>,
@@ -59,7 +65,10 @@ function isWhereBlock(param: QueryWhereClause): param is QueryWhereBlock {
 	return Object.values(QueryKeys).includes(param.condition as QueryKeys)
 }
 
-const buildWhereQuery = (params: QueryWhereClause[], key: QueryKeys = QueryKeys.and): Record<string, Record<string, any>> | null => {
+const buildWhereQuery = (
+	params: QueryWhereClause[],
+	key: QueryKeys = QueryKeys.and,
+): Record<string, Record<string, any>> | null => {
 	const where = (Array.isArray(params) ? params : [])
 		.map((param) => {
 			if (isWhereBlock(param)) return buildWhereQuery(param.value, param.condition)

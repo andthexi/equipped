@@ -50,7 +50,9 @@ describe.skipIf(skipIfNoDb())('PostgresAdapter: real PG integration', () => {
 			password: parsed.password,
 			database: parsed.pathname.slice(1),
 		})
-		repo = Repo.from(adapter).resolve((s) => ({ table: s.name })).build()
+		repo = Repo.from(adapter)
+			.resolve((s) => ({ table: s.name }))
+			.build()
 	})
 
 	afterEach(async () => {
@@ -94,7 +96,13 @@ describe.skipIf(skipIfNoDb())('PostgresAdapter: real PG integration', () => {
 						],
 					},
 					{ kind: 'addIndex', table: 'users', on: ['email'], unique: true },
-					{ kind: 'addForeignKey', table: 'posts', on: 'authorId', references: { table: 'users', column: 'id' }, onDelete: 'cascade' },
+					{
+						kind: 'addForeignKey',
+						table: 'posts',
+						on: 'authorId',
+						references: { table: 'users', column: 'id' },
+						onDelete: 'cascade',
+					},
 				],
 			},
 			{
@@ -102,7 +110,12 @@ describe.skipIf(skipIfNoDb())('PostgresAdapter: real PG integration', () => {
 				changes: [
 					{ kind: 'addField', table: 'users', field: { name: 'bio', type: 'string', nullable: true } },
 					{ kind: 'renameField', table: 'users', from: 'email', to: 'emailAddress' },
-					{ kind: 'modifyField', table: 'users', name: 'age', to: { name: 'age', type: 'string', nullable: true } },
+					{
+						kind: 'modifyField',
+						table: 'users',
+						name: 'age',
+						to: { name: 'age', type: 'string', nullable: true },
+					},
 					{ kind: 'renameTable', from: 'posts', to: 'articles' },
 				],
 			},
@@ -136,22 +149,28 @@ describe.skipIf(skipIfNoDb())('PostgresAdapter: real PG integration', () => {
 		const migrations: Migration<typeof adapter>[] = [
 			{
 				id: '0001-slow',
-				changes: [{
-					kind: 'execute',
-					up: async () => {
-						order.push('0001-start')
-						await new Promise((r) => setTimeout(r, 100))
-						order.push('0001-end')
+				changes: [
+					{
+						kind: 'execute',
+						up: async () => {
+							order.push('0001-start')
+							await new Promise((r) => setTimeout(r, 100))
+							order.push('0001-end')
+						},
 					},
-				}],
+				],
 				tx: false,
 			},
 			{
 				id: '0002-fast',
-				changes: [{
-					kind: 'execute',
-					up: async () => { order.push('0002') },
-				}],
+				changes: [
+					{
+						kind: 'execute',
+						up: async () => {
+							order.push('0002')
+						},
+					},
+				],
 				tx: false,
 			},
 		]
@@ -166,9 +185,17 @@ describe.skipIf(skipIfNoDb())('PostgresAdapter: real PG integration', () => {
 	})
 
 	test('tx:true rollback leaves no partial state', async () => {
-		const UserSchema = Schema.from('users').pk('id', v.string(), () => 'u1').field('name', v.string()).build()
+		const UserSchema = Schema.from('users')
+			.pk('id', v.string(), () => 'u1')
+			.field('name', v.string())
+			.build()
 
-		await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'name', type: 'string' }] })
+		await adapter.applyCreateTable({
+			kind: 'createTable',
+			name: 'users',
+			pk: { name: 'id', type: 'string' },
+			fields: [{ name: 'name', type: 'string' }],
+		})
 
 		const migrations: Migration<typeof adapter>[] = [
 			{
@@ -196,18 +223,27 @@ describe.skipIf(skipIfNoDb())('PostgresAdapter: real PG integration', () => {
 	})
 
 	test('tx:false migration does not error for non-transactional ops', async () => {
-		await adapter.applyCreateTable({ kind: 'createTable', name: 'items', pk: { name: 'id', type: 'string' }, fields: [{ name: 'name', type: 'string' }] })
+		await adapter.applyCreateTable({
+			kind: 'createTable',
+			name: 'items',
+			pk: { name: 'id', type: 'string' },
+			fields: [{ name: 'name', type: 'string' }],
+		})
 
 		const migrations: Migration<typeof adapter>[] = [
 			{
 				id: '0001-concurrent-idx',
 				tx: false,
-				changes: [{
-					kind: 'execute',
-					up: async () => {
-						await adapter.pool.query('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_items_name ON items (name)')
+				changes: [
+					{
+						kind: 'execute',
+						up: async () => {
+							await adapter.pool.query(
+								'CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_items_name ON items (name)',
+							)
+						},
 					},
-				}],
+				],
 			},
 		]
 

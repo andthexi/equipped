@@ -81,10 +81,10 @@ library.
 - New artifact `MigrationCodegen` in `src/orm/migrations/` joins
   `Migrator` from the runtime ADR. Builder-chain shape per §2.2.
 - New optional adapter capability `introspect?():
-  Promise<DiscoveredSchema[]>`. In-tree adapters: PostgreSQL implements
+Promise<DiscoveredSchema[]>`. In-tree adapters: PostgreSQL implements
   via `information_schema.columns` + `pg_indexes` +
   `information_schema.table_constraints`; SQLite via `PRAGMA
-  table_info(...)` etc.; MongoDB via `db.listCollections()` +
+table_info(...)` etc.; MongoDB via `db.listCollections()` +
   per-collection `listIndexes()`; in-memory walks the internal Map
   state.
 - New error class `OrmIntrospectionError extends EquippedError`,

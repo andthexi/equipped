@@ -43,6 +43,7 @@ keyed by event. Hooks for an event run when that event fires:
   handler installed at `Instance` construction.
 
 Each hook has:
+
 - A **callback** (`HookCb`) — `() => void | Promise<void | unknown>` (or a
   raw promise; see §2.4).
 - An optional **owner class** (`class: ClassRef`) — see §1.3.
@@ -98,13 +99,13 @@ in **parallel** via `Promise.all`. Hooks at different depths run
 
 This is the partial-order model the previous numeric-`order` system
 poorly approximated. `Instance.on(event, cb, 1)` would have run `cb` "early"
-without specifying *what* `cb` actually depends on; the DAG model expresses
+without specifying _what_ `cb` actually depends on; the DAG model expresses
 the dependency directly and lets the runtime compute the order.
 
 ### 2.2 Close-event inversion rule
 
 The `close` event runs the DAG **inverted**: a hook that declared
-`after: [X]` for start runs *before* `X` on close. So `DbChange after [Mongo, Kafka]`
+`after: [X]` for start runs _before_ `X` on close. So `DbChange after [Mongo, Kafka]`
 declared once gives:
 
 - start order: `Mongo` ‖ `Kafka` → `DbChange`
@@ -182,14 +183,14 @@ The pattern: the base constructor inspects `this.connect` / `this.disconnect`
 
 ```ts
 abstract class OrmAdapter {
-  constructor() {
-    const cls = this.constructor as ClassRef
-    if (this.connect)    Instance.on('start', () => this.connect!(),    { class: cls })
-    if (this.disconnect) Instance.on('close', () => this.disconnect!(), { class: cls })
-  }
-  protected onFatalError(err: unknown): never {
-    Instance.crash(new EquippedError(`${this.constructor.name} fatal error`, {}, err as Error))
-  }
+	constructor() {
+		const cls = this.constructor as ClassRef
+		if (this.connect) Instance.on('start', () => this.connect!(), { class: cls })
+		if (this.disconnect) Instance.on('close', () => this.disconnect!(), { class: cls })
+	}
+	protected onFatalError(err: unknown): never {
+		Instance.crash(new EquippedError(`${this.constructor.name} fatal error`, {}, err as Error))
+	}
 }
 ```
 
@@ -273,7 +274,7 @@ finishes" patterns.
 - **No-ordering-for-anonymous-hooks rule.** Anonymous hooks (no `class:`)
   run at the deepest level of the topo sort by default — they have no
   dependents, so they can't constrain anything else's ordering. They can
-  declare `after:` to constrain *themselves* relative to named hooks.
+  declare `after:` to constrain _themselves_ relative to named hooks.
 - **No-cross-event-dependencies rule.** A hook for `start` cannot
   `after:` a `close`-event hook or vice versa. Dependencies are scoped to
   the event the hook is registered against.

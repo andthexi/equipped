@@ -1,12 +1,12 @@
 import { match as Match } from 'path-to-regexp'
 import type { Server } from 'socket.io'
 
-import type { Entity } from '../dbs/adapters/base/core'
-import { Instance } from '../instance'
-import type { AuthUser } from '../types'
-import type { ServerConfig } from './adapters/base'
-import { BaseRequestAuthMethod } from './requests-auth-methods'
-import { StatusCodes, type StatusCode } from './types'
+import type { Entity } from '../dbs/adapters/base/core.js'
+import { Instance } from '../instance/index.js'
+import type { AuthUser } from '../types/index.js'
+import type { ServerConfig } from './adapters/base.js'
+import { BaseRequestAuthMethod } from './requests-auth-methods/index.js'
+import { StatusCodes, type StatusCode } from './types.js'
 
 enum EmitTypes {
 	created = 'created',
@@ -60,7 +60,11 @@ export class SocketEmitter {
 		await this.#emit(channels, EmitTypes.created, { after: data.toJSON(), before: null }, to)
 	}
 
-	async updated<T extends Entity>(channels: string[], { after, before }: { after: T; before: T }, to: string | string[] | null) {
+	async updated<T extends Entity>(
+		channels: string[],
+		{ after, before }: { after: T; before: T },
+		to: string | string[] | null,
+	) {
 		await this.#emit(channels, EmitTypes.updated, { after: after.toJSON(), before: before.toJSON() }, to)
 	}
 
@@ -68,7 +72,12 @@ export class SocketEmitter {
 		await this.#emit(channels, EmitTypes.deleted, { before: data.toJSON(), after: null }, to)
 	}
 
-	async #emit(channels: string[], type: EmitTypes, { before, after }: { after: any; before: any }, to: string | string[] | null) {
+	async #emit(
+		channels: string[],
+		type: EmitTypes,
+		{ before, after }: { after: any; before: any },
+		to: string | string[] | null,
+	) {
 		const toArray = Array.isArray(to) ? to : [to ?? defaultTo]
 		const channelMap = channels.flatMap((c) => toArray.map((to) => `${to}:${c}`))
 		await Promise.all(channelMap.map(async (channel) => this.#publish({ channel, type, before, after })))
@@ -101,7 +110,10 @@ export class SocketEmitter {
 		this.socketInstance.removeAllListeners('connection')
 		this.socketInstance.on('connection', async (socket) => {
 			const socketId = socket.id
-			const user = await BaseRequestAuthMethod.process(this.config.socketsAuthMethods, socket.handshake.headers).catch(() => null)
+			const user = await BaseRequestAuthMethod.process(
+				this.config.socketsAuthMethods,
+				socket.handshake.headers,
+			).catch(() => null)
 			socket.on('leave', async (data: LeaveRoomParams, callback: Callback) => {
 				if (!data.channel)
 					return (

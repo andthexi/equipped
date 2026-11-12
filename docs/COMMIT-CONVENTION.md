@@ -24,7 +24,7 @@ than relying on the hook to catch mistakes.
   ("add", "fix", "update" — not "added", "fixes", "updated"). Lowercase
   first letter. No trailing period.
 - **`<body>`** — optional. Free-form prose, separated from the subject
-  line by a blank line. Use for the *why* of the change when non-obvious.
+  line by a blank line. Use for the _why_ of the change when non-obvious.
 - **`<footer>`** — optional. Used for breaking-change markers and issue
   references.
 
@@ -32,19 +32,19 @@ than relying on the hook to catch mistakes.
 
 The conventional-config ruleset accepts exactly these types:
 
-| Type | When to use |
-|---|---|
-| `feat` | A new feature (user-facing or API-surface addition). |
-| `fix` | A bug fix. |
-| `docs` | Documentation-only changes (CONTEXT.md, ADRs, READMEs, code comments). |
-| `style` | Formatting, whitespace, import ordering — no logic change. |
-| `refactor` | Code change that neither fixes a bug nor adds a feature. |
-| `perf` | A performance improvement. |
-| `test` | Adding or updating tests. |
-| `build` | Changes to the build system or external dependencies (npm, package.json). |
-| `ci` | Changes to CI configuration files and scripts. |
-| `chore` | Other repo-maintenance changes that don't fit elsewhere. |
-| `revert` | Reverts a previous commit. |
+| Type       | When to use                                                               |
+| ---------- | ------------------------------------------------------------------------- |
+| `feat`     | A new feature (user-facing or API-surface addition).                      |
+| `fix`      | A bug fix.                                                                |
+| `docs`     | Documentation-only changes (CONTEXT.md, ADRs, READMEs, code comments).    |
+| `style`    | Formatting, whitespace, import ordering — no logic change.                |
+| `refactor` | Code change that neither fixes a bug nor adds a feature.                  |
+| `perf`     | A performance improvement.                                                |
+| `test`     | Adding or updating tests.                                                 |
+| `build`    | Changes to the build system or external dependencies (npm, package.json). |
+| `ci`       | Changes to CI configuration files and scripts.                            |
+| `chore`    | Other repo-maintenance changes that don't fit elsewhere.                  |
+| `revert`   | Reverts a previous commit.                                                |
 
 When in doubt between two types, prefer the more specific one (e.g.
 `refactor` over `chore` for a code restructure that's not user-facing).
@@ -57,7 +57,7 @@ When in doubt between two types, prefer the more specific one (e.g.
 - **Concise.** Aim for ≤72 characters in the header (`type(scope): subject`).
 - **Subject describes the change, not the area.** "fix off-by-one in
   pagination" is better than "fix pagination" — the scope already says
-  *where*, the subject should say *what*.
+  _where_, the subject should say _what_.
 
 ## Breaking changes
 
@@ -67,15 +67,15 @@ Breaking changes are marked **two ways**:
    or `refactor(orm)!: replace Adapter.from with class-based shape`.
 2. Add a `BREAKING CHANGE:` footer with details:
 
-   ```
-   refactor(orm)!: replace Adapter.from with class-based shape
+    ```
+    refactor(orm)!: replace Adapter.from with class-based shape
 
-   Adapters now extend `configurable(pipe, OrmAdapter)` instead of
-   the builder chain. See ADR 2026-05-06.
+    Adapters now extend `configurable(pipe, OrmAdapter)` instead of
+    the builder chain. See ADR 2026-05-06.
 
-   BREAKING CHANGE: out-of-tree adapter authors must rewrite adapters
-   from `Adapter.from<Config>().build()` to class-based form.
-   ```
+    BREAKING CHANGE: out-of-tree adapter authors must rewrite adapters
+    from `Adapter.from<Config>().build()` to class-based form.
+    ```
 
 Either signal alone is enough to trigger major-version bumps; using both
 is conventional for clarity.

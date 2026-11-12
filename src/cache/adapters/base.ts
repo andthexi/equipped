@@ -1,4 +1,4 @@
-import { Instance } from '../../instance'
+import { Instance } from '../../instance/index.js'
 
 export abstract class Cache {
 	abstract set(key: string, data: string, ttlInSecs?: number): Promise<void>

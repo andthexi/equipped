@@ -158,7 +158,7 @@ set), §5.1 (gated-verb table), §5.8 (the aggregation surface),
   Kysely / Prisma all type having clauses; matching that bar is cheap.
 - **`.having()` typing: skip `.having()` entirely; punt post-filter to
   client-side after `.run()`.** Simple. Rejected: the no-emulation rule
-  (§3.4) cuts the other way for *server-side* push-down. SQL/Mongo
+  (§3.4) cuts the other way for _server-side_ push-down. SQL/Mongo
   over-fetch (return all groups, even ones the user wants discarded);
   group cardinality can be unbounded. Aggregations are exactly where
   over-fetch hurts most.

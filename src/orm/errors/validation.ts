@@ -1,6 +1,14 @@
-import { EquippedError } from '../../errors'
+import { EquippedError } from '../../errors/index.js'
 
-export type OrmValidationErrorKind = 'validation' | 'conflicting-ops' | 'empty-group' | 'undeclared-op' | 'upsert-filter-incompatible' | 'aggregate' | 'query-shape' | 'changes'
+export type OrmValidationErrorKind =
+	| 'validation'
+	| 'conflicting-ops'
+	| 'empty-group'
+	| 'undeclared-op'
+	| 'upsert-filter-incompatible'
+	| 'aggregate'
+	| 'query-shape'
+	| 'changes'
 
 export type OrmValidationFailure = {
 	opIndex?: number
@@ -31,7 +39,7 @@ export class OrmValidationError extends EquippedError {
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
-	const { EquippedError } = await import('../../errors')
+	const { EquippedError } = await import('../../errors/index.js')
 
 	describe('OrmValidationError', () => {
 		test('constructs with aggregate kind', () => {
@@ -44,18 +52,14 @@ if (import.meta.vitest) {
 		})
 
 		test('failure carries alias through to context', () => {
-			const failures: OrmValidationFailure[] = [
-				{ alias: 'total_price', cause: 'alias collision' },
-			]
+			const failures: OrmValidationFailure[] = [{ alias: 'total_price', cause: 'alias collision' }]
 			const err = new OrmValidationError('aggregate', 'orders', 'aggregate', failures)
 			expect(err.failures[0].alias).toBe('total_price')
 			expect((err.context as any).failures[0].alias).toBe('total_price')
 		})
 
 		test('failure without alias still works', () => {
-			const failures: OrmValidationFailure[] = [
-				{ field: 'amount', cause: 'invalid field' },
-			]
+			const failures: OrmValidationFailure[] = [{ field: 'amount', cause: 'invalid field' }]
 			const err = new OrmValidationError('validation', 'orders', 'createOne', failures)
 			expect(err.failures[0].alias).toBeUndefined()
 			expect(err.failures[0].field).toBe('amount')
