@@ -18,13 +18,66 @@ export async function applyChange(
 	if (typeof method !== 'function') {
 		throw new Error(`Adapter does not support change kind '${change.kind}'`)
 	}
-	await method.call(adapter, change)
+	if (change.kind === 'renameTable') {
+		if (typeof repo.resolveConfig !== 'function') {
+			await method.call(adapter, change)
+			return
+		}
+		const from = repo.resolveConfig(change.from)
+		const to = repo.resolveConfig(change.to)
+		await method.call(adapter, change, from, to)
+		return
+	}
+
+	const resolvesTarget = ['createTable', 'dropTable', 'addField', 'dropField', 'modifyField', 'renameField'].includes(
+		change.kind,
+	)
+	if (!resolvesTarget || typeof repo.resolveConfig !== 'function') {
+		await method.call(adapter, change)
+		return
+	}
+
+	const logicalTable =
+		change.kind === 'createTable' || change.kind === 'dropTable'
+			? change.name
+			: 'table' in change
+				? change.table
+				: undefined
+	await method.call(adapter, change, repo.resolveConfig(logicalTable!))
 }
 
 if (import.meta.vitest) {
 	const { describe, test, expect, vi } = import.meta.vitest
 
 	describe('applyChange', () => {
+		test('resolves table and field targets without mutating the historical change', async () => {
+			const applyAddField = vi.fn().mockResolvedValue(undefined)
+			const adapter = { applyAddField } as any
+			const change = { kind: 'addField' as const, table: 'users', field: { name: 'age', type: 'number' } }
+			const repo = { resolveConfig: vi.fn(() => ({ table: 'tenant_users' })) } as any
+
+			await applyChange(adapter, repo, change)
+
+			expect(applyAddField).toHaveBeenCalledWith(change, { table: 'tenant_users' })
+			expect(change.table).toBe('users')
+		})
+
+		test('resolves both rename-table endpoints independently', async () => {
+			const applyRenameTable = vi.fn().mockResolvedValue(undefined)
+			const adapter = { applyRenameTable } as any
+			const change = { kind: 'renameTable' as const, from: 'users', to: 'accounts' }
+			const repo = { resolveConfig: vi.fn((name: string) => ({ table: `tenant_${name}` })) } as any
+
+			await applyChange(adapter, repo, change)
+
+			expect(applyRenameTable).toHaveBeenCalledWith(
+				change,
+				{ table: 'tenant_users' },
+				{ table: 'tenant_accounts' },
+			)
+			expect(repo.resolveConfig.mock.calls).toEqual([['users'], ['accounts']])
+		})
+
 		test('routes addIndex to adapter.applyAddIndex', async () => {
 			const applyAddIndex = vi.fn().mockResolvedValue(undefined)
 			const adapter = { applyAddIndex } as any

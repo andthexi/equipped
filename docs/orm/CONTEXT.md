@@ -2406,6 +2406,12 @@ Vocabulary:
 - A **logical name** in `Change` (`table`, `field.name`, `on[*]`,
   `references.column`) is the schema-declared name. Adapter does
   physical mapping (same convention as §11.4 filter logical names).
+- Table and field declarative changes receive the historical `Change` payload
+  unchanged plus the Repo's validated effective schema config for the logical
+  table name. Resolution occurs when `.up()` runs, inside the active
+  `repo.resolve(...)` scope. `renameTable` resolves `from` and `to`
+  independently; adapters reject unsupported cross-namespace renames before
+  issuing the rename and do not provision namespaces.
 - **Long-tail features** — partial indexes, functional indexes, GIN/GIST,
   TTL, text indexes, CHECK constraints, triggers, views, sequences,
   composite PKs/FKs — are explicitly out of the canonical algebra. They

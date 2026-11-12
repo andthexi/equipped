@@ -87,13 +87,13 @@ export abstract class OrmAdapter {
 	loadMigrations?(): Promise<{ id: string; appliedAt: number }[]>
 	recordMigration?(id: string, appliedAt: number): Promise<void>
 	acquireMigrationLock?<T>(fn: () => Promise<T>): Promise<T>
-	applyCreateTable?(change: CreateTableChange<any>): Promise<void>
-	applyDropTable?(change: DropTableChange): Promise<void>
-	applyAddField?(change: AddFieldChange<any>): Promise<void>
-	applyDropField?(change: DropFieldChange): Promise<void>
-	applyModifyField?(change: ModifyFieldChange<any>): Promise<void>
-	applyRenameTable?(change: RenameTableChange): Promise<void>
-	applyRenameField?(change: RenameFieldChange): Promise<void>
+	applyCreateTable?(change: CreateTableChange<any>, target: unknown): Promise<void>
+	applyDropTable?(change: DropTableChange, target: unknown): Promise<void>
+	applyAddField?(change: AddFieldChange<any>, target: unknown): Promise<void>
+	applyDropField?(change: DropFieldChange, target: unknown): Promise<void>
+	applyModifyField?(change: ModifyFieldChange<any>, target: unknown): Promise<void>
+	applyRenameTable?(change: RenameTableChange, from: unknown, to: unknown): Promise<void>
+	applyRenameField?(change: RenameFieldChange, target: unknown): Promise<void>
 	applyAddIndex?(change: AddIndexChange): Promise<void>
 	applyDropIndex?(change: DropIndexChange): Promise<void>
 	applyAddForeignKey?(change: AddForeignKeyChange): Promise<void>
