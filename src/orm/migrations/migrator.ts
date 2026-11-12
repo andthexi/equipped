@@ -11,20 +11,26 @@ type RunResult = { ran: string[]; skipped: string[] }
 export type StatusEntry = { id: string; applied: boolean; appliedAt?: number }
 
 type HasAcquireMigrationLock<A> = 'acquireMigrationLock' extends keyof A
-	? A['acquireMigrationLock'] extends <T>(fn: () => Promise<T>) => Promise<T>
+	? A['acquireMigrationLock'] extends <T>(config: any, fn: () => Promise<T>) => Promise<T>
 		? true
 		: false
 	: false
 
-type HasMethod<A, K extends PropertyKey> = K extends keyof A
-	? A[K] extends (...args: any[]) => any
-		? true
+type HasHistoryMethod<A, K extends 'loadMigrations' | 'recordMigration'> = K extends keyof A
+	? A[K] extends (...args: infer Args) => any
+		? K extends 'loadMigrations'
+			? Args extends [config: any]
+				? true
+				: false
+			: Args extends [config: any, id: string, appliedAt: number]
+				? true
+				: false
 		: false
 	: false
 type MigratorSurface<A extends OrmAdapterLike<any>> = Migrator<A> &
-	(HasMethod<A, 'loadMigrations'> extends true ? {} : { status: never; dry: never }) &
-	(HasMethod<A, 'loadMigrations'> extends true
-		? HasMethod<A, 'recordMigration'> extends true
+	(HasHistoryMethod<A, 'loadMigrations'> extends true ? {} : { status: never; dry: never }) &
+	(HasHistoryMethod<A, 'loadMigrations'> extends true
+		? HasHistoryMethod<A, 'recordMigration'> extends true
 			? {}
 			: { up: never }
 		: { up: never })
@@ -60,22 +66,26 @@ export class Migrator<A extends OrmAdapterLike<any>> {
 	async up(opts?: PendingOpts): Promise<RunResult> {
 		this.#requireMethod('loadMigrations')
 		this.#requireMethod('recordMigration')
+		const historyConfig = this.#repo.resolveConfig('_equipped_migrations')
 
 		const useLock = !this.#withoutLock && typeof this.#adapter.acquireMigrationLock === 'function'
 		if (useLock) {
 			try {
-				return await this.#adapter.acquireMigrationLock!(() => this.#runPending(opts))
+				return await this.#adapter.acquireMigrationLock!(historyConfig, () =>
+					this.#runPending(historyConfig, opts),
+				)
 			} catch (err) {
 				if (err instanceof OrmMigrationError) throw err
 				throw new OrmMigrationError({ id: '', phase: 'lock', cause: err })
 			}
 		}
-		return this.#runPending(opts)
+		return this.#runPending(historyConfig, opts)
 	}
 
 	async status(): Promise<StatusEntry[]> {
 		this.#requireMethod('loadMigrations')
-		const applied = await this.#adapter.loadMigrations!()
+		const historyConfig = this.#repo.resolveConfig('_equipped_migrations')
+		const applied = await this.#adapter.loadMigrations!(historyConfig)
 		const appliedMap = new Map(applied.map((a) => [a.id, a.appliedAt]))
 		const sorted = [...this.#migrations].sort((a, b) => a.id.localeCompare(b.id))
 		return sorted.map((m) => {
@@ -87,15 +97,16 @@ export class Migrator<A extends OrmAdapterLike<any>> {
 
 	async dry(opts?: PendingOpts): Promise<{ would: string[] }> {
 		this.#requireMethod('loadMigrations')
-		const applied = await this.#adapter.loadMigrations!()
+		const historyConfig = this.#repo.resolveConfig('_equipped_migrations')
+		const applied = await this.#adapter.loadMigrations!(historyConfig)
 		const { pending } = computePending(this.#migrations as unknown as ReadonlyArray<AnyMigration>, applied, opts)
 		return { would: pending.map((m) => m.id) }
 	}
 
-	async #runPending(opts?: PendingOpts): Promise<RunResult> {
+	async #runPending(historyConfig: unknown, opts?: PendingOpts): Promise<RunResult> {
 		let applied: { id: string; appliedAt: number }[]
 		try {
-			applied = await this.#adapter.loadMigrations!()
+			applied = await this.#adapter.loadMigrations!(historyConfig)
 		} catch (err) {
 			throw new OrmMigrationError({ id: '', phase: 'load', cause: err })
 		}
@@ -121,7 +132,7 @@ export class Migrator<A extends OrmAdapterLike<any>> {
 					}
 				}
 				try {
-					await this.#adapter.recordMigration!(m.id, Date.now())
+					await this.#adapter.recordMigration!(historyConfig, m.id, Date.now())
 				} catch (err) {
 					throw new OrmMigrationError({ id: m.id, phase: 'record', cause: err })
 				}
@@ -184,7 +195,65 @@ if (import.meta.vitest) {
 		return { adapter, repo }
 	}
 
+	const historyConfig = { table: '_equipped_migrations' }
+
 	describe('Migrator', () => {
+		test('partitions history across repos and runtime scopes on one adapter', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const repoA = new Repo({ adapter, resolve: (name) => ({ table: `a_${name}` }) })
+			const repoB = new Repo({ adapter, resolve: (name) => ({ table: `b_${name}` }) })
+			let runs = 0
+			const migration = { id: 'same-id', changes: [{ kind: 'execute' as const, up: async () => void runs++ }] }
+			const a = Migrator.from(repoA).withLock().migrations([migration]).build()
+			const b = Migrator.from(repoB).withLock().migrations([migration]).build()
+
+			await a.up()
+			await a.up()
+			await b.up()
+			await repoA.resolve(
+				(config) => ({ table: `scoped_${config.table}` }),
+				() => a.up(),
+			)
+
+			expect(runs).toBe(3)
+			expect(await a.dry()).toEqual({ would: [] })
+			expect(await b.status()).toEqual([{ id: 'same-id', applied: true, appliedAt: expect.any(Number) }])
+		})
+
+		test('resolves history once per operation without leaking transforms across repos', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const seenA: string[] = []
+			const seenB: string[] = []
+			const repoA = new Repo({
+				adapter,
+				resolve: (name) => {
+					seenA.push(name)
+					return { table: `a_${name}` }
+				},
+			})
+			const repoB = new Repo({
+				adapter,
+				resolve: (name) => {
+					seenB.push(name)
+					return { table: `b_${name}` }
+				},
+			})
+			const migration = { id: '0001', changes: [] }
+			const a = Migrator.from(repoA).withLock().migrations([migration]).build()
+			const b = Migrator.from(repoB).withLock().migrations([migration]).build()
+
+			await repoA.resolve(
+				(config) => ({ table: `tenant_${config.table}` }),
+				async () => {
+					await a.status()
+					await b.dry()
+				},
+			)
+
+			expect(seenA).toEqual(['_equipped_migrations'])
+			expect(seenB).toEqual(['_equipped_migrations'])
+		})
+
 		test('addIndex migration applies and is recorded', async () => {
 			const { adapter, repo } = makeEnv()
 			const m: Migration<typeof adapter> = {
@@ -202,7 +271,7 @@ if (import.meta.vitest) {
 			expect(idx.on).toEqual(['email'])
 			expect(idx.unique).toBe(true)
 
-			const recorded = await adapter.loadMigrations()
+			const recorded = await adapter.loadMigrations(historyConfig)
 			expect(recorded).toHaveLength(1)
 			expect(recorded[0].id).toBe('0001-add-email-idx')
 		})
@@ -291,7 +360,7 @@ if (import.meta.vitest) {
 				changes: [{ kind: 'addIndex', table: 'users', on: ['email'] }],
 			}
 
-			await adapter.recordMigration('0001', Date.now())
+			await adapter.recordMigration(historyConfig, '0001', Date.now())
 
 			const migrator = Migrator.from(repo).withLock().migrations([m1, m2]).build()
 			const result = await migrator.up()
@@ -301,7 +370,7 @@ if (import.meta.vitest) {
 
 		test('up() returns empty ran when all applied', async () => {
 			const { adapter, repo } = makeEnv()
-			await adapter.recordMigration('0001', Date.now())
+			await adapter.recordMigration(historyConfig, '0001', Date.now())
 			const migrator = Migrator.from(repo)
 				.withLock()
 				.migrations([{ id: '0001', changes: [] }])
@@ -331,7 +400,7 @@ if (import.meta.vitest) {
 			const migrator = Migrator.from(repo).withLock().migrations([m1, m2]).build()
 			await expect(migrator.up()).rejects.toThrow(OrmMigrationError)
 
-			const recorded = await adapter.loadMigrations()
+			const recorded = await adapter.loadMigrations(historyConfig)
 			expect(recorded.map((r) => r.id)).toEqual(['0001'])
 		})
 
@@ -655,7 +724,7 @@ if (import.meta.vitest) {
 			const migrator = Migrator.from(repo).withLock().migrations([m]).build()
 			await expect(migrator.up()).rejects.toThrow(OrmMigrationError)
 
-			const recorded = await adapter.loadMigrations()
+			const recorded = await adapter.loadMigrations(historyConfig)
 			expect(recorded).toHaveLength(0)
 			expect(adapter.indexes.size).toBe(0)
 			const row = await repo.on(UserSchema).one().id('partial').find()
@@ -681,7 +750,7 @@ if (import.meta.vitest) {
 			const migrator = Migrator.from(repo).withLock().migrations([m]).build()
 			await expect(migrator.up()).rejects.toThrow(OrmMigrationError)
 
-			const recorded = await adapter.loadMigrations()
+			const recorded = await adapter.loadMigrations(historyConfig)
 			expect(recorded).toHaveLength(0)
 			expect(adapter.indexes.has('users_email_idx')).toBe(true)
 			const row = await repo.on(UserSchema).one().id('durable').find()
@@ -709,7 +778,7 @@ if (import.meta.vitest) {
 			const migrator = Migrator.from(repo).withLock().migrations([m1, m2]).build()
 			await expect(repo.session(() => migrator.up())).rejects.toThrow()
 
-			const recorded = await adapter.loadMigrations()
+			const recorded = await adapter.loadMigrations(historyConfig)
 			expect(recorded).toHaveLength(0)
 			expect(adapter.indexes.size).toBe(0)
 		})
@@ -807,10 +876,10 @@ if (import.meta.vitest) {
 			class NoLockAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({ table: v.string() })
 				readonly supportedFieldTypes = ['string'] as const
-				async loadMigrations() {
+				async loadMigrations(_config: unknown) {
 					return []
 				}
-				async recordMigration() {}
+				async recordMigration(_config: unknown, _id: string, _appliedAt: number) {}
 				async session<T>(fn: () => Promise<T>): Promise<T> {
 					return fn()
 				}
@@ -836,7 +905,7 @@ if (import.meta.vitest) {
 			expectTypeOf(built.up).toBeNever()
 
 			class ReadOnlyHistoryAdapter extends UnsupportedAdapter {
-				async loadMigrations() {
+				async loadMigrations(_config: unknown) {
 					return []
 				}
 			}
@@ -898,8 +967,8 @@ if (import.meta.vitest) {
 
 		test('up({ to }) is a no-op when target already applied', async () => {
 			const { adapter, repo } = makeEnv()
-			await adapter.recordMigration('m-001', Date.now())
-			await adapter.recordMigration('m-002', Date.now())
+			await adapter.recordMigration(historyConfig, 'm-001', Date.now())
+			await adapter.recordMigration(historyConfig, 'm-002', Date.now())
 			const migrations: Migration<typeof adapter>[] = [
 				{ id: 'm-001', changes: [] },
 				{ id: 'm-002', changes: [] },
@@ -952,7 +1021,7 @@ if (import.meta.vitest) {
 		test('status() returns sorted entries with correct applied/pending flags', async () => {
 			const { adapter, repo } = makeEnv()
 			const now = Date.now()
-			await adapter.recordMigration('0002', now)
+			await adapter.recordMigration(historyConfig, '0002', now)
 			const migrations: Migration<typeof adapter>[] = [
 				{ id: '0003', changes: [] },
 				{ id: '0001', changes: [] },
@@ -969,7 +1038,7 @@ if (import.meta.vitest) {
 
 		test('dry() returns the same plan up() would execute, without executing', async () => {
 			const { adapter, repo } = makeEnv()
-			await adapter.recordMigration('0001', Date.now())
+			await adapter.recordMigration(historyConfig, '0001', Date.now())
 			let executed = false
 			const migrations: Migration<typeof adapter>[] = [
 				{ id: '0001', changes: [] },
@@ -1006,7 +1075,7 @@ if (import.meta.vitest) {
 
 		test('orphan migration in tracker throws OrmMigrationError with phase load', async () => {
 			const { adapter, repo } = makeEnv()
-			await adapter.recordMigration('ghost-001', Date.now())
+			await adapter.recordMigration(historyConfig, 'ghost-001', Date.now())
 			const migrations: Migration<typeof adapter>[] = [{ id: '0001', changes: [] }]
 			const migrator = Migrator.from(repo).withLock().migrations(migrations).build()
 			try {
@@ -1046,9 +1115,9 @@ if (import.meta.vitest) {
 		test('failing recordMigration throws OrmMigrationError with phase record', async () => {
 			const { adapter, repo } = makeEnv()
 			const origRecord = adapter.recordMigration.bind(adapter)
-			adapter.recordMigration = async (id: string, at: number) => {
+			adapter.recordMigration = async (_config: unknown, id: string, at: number) => {
 				if (id === '0001') throw new Error('record boom')
-				return origRecord(id, at)
+				return origRecord(historyConfig, id, at)
 			}
 			const m: Migration<typeof adapter> = { id: '0001', changes: [] }
 			const migrator = Migrator.from(repo).withLock().migrations([m]).build()

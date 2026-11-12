@@ -28,7 +28,7 @@ const mongoConnectionPipe = () =>
 		uri: v.string(),
 	})
 
-const MIGRATION_TRACKER_COLLECTION = 'equipped_migrations'
+const MIGRATION_TRACKER_COLLECTION = '_equipped_migrations'
 
 export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter) {
 	readonly schemaConfigPipe = mongoSchemaConfigPipe()
@@ -366,15 +366,15 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 		}
 	}
 
-	async loadMigrations(): Promise<{ id: string; appliedAt: number }[]> {
-		const db = this.client.db()
-		const docs = await db.collection(MIGRATION_TRACKER_COLLECTION).find({}).toArray()
+	async loadMigrations(config: MongoDbRepoConfig): Promise<{ id: string; appliedAt: number }[]> {
+		const db = this.client.db(config.db)
+		const docs = await db.collection(config.col).find({}).toArray()
 		return docs.map((d) => ({ id: String(d._id), appliedAt: d.appliedAt as number }))
 	}
 
-	async recordMigration(id: string, appliedAt: number): Promise<void> {
-		const db = this.client.db()
-		await db.collection(MIGRATION_TRACKER_COLLECTION).insertOne({ _id: id as any, appliedAt })
+	async recordMigration(config: MongoDbRepoConfig, id: string, appliedAt: number): Promise<void> {
+		const db = this.client.db(config.db)
+		await db.collection(config.col).insertOne({ _id: id as any, appliedAt })
 	}
 
 	async applyAddIndex(change: AddIndexChange, target?: unknown): Promise<void> {
@@ -988,7 +988,7 @@ if (import.meta.vitest) {
 			state.migrations.set('0001', { _id: '0001', appliedAt: 1000 })
 			state.migrations.set('0002', { _id: '0002', appliedAt: 2000 })
 
-			const result = await adapter.loadMigrations()
+			const result = await adapter.loadMigrations({ db: 'testdb', col: '_equipped_migrations' })
 			expect(result).toEqual([
 				{ id: '0001', appliedAt: 1000 },
 				{ id: '0002', appliedAt: 2000 },
@@ -999,7 +999,7 @@ if (import.meta.vitest) {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
 			mockMongoDb(adapter)
 
-			const result = await adapter.loadMigrations()
+			const result = await adapter.loadMigrations({ db: 'testdb', col: '_equipped_migrations' })
 			expect(result).toEqual([])
 		})
 
@@ -1007,7 +1007,7 @@ if (import.meta.vitest) {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
 			const state = mockMongoDb(adapter)
 
-			await adapter.recordMigration('0001', 1234)
+			await adapter.recordMigration({ db: 'testdb', col: '_equipped_migrations' }, '0001', 1234)
 
 			expect(state.migrations.has('0001')).toBe(true)
 			expect(state.migrations.get('0001')).toEqual({ _id: '0001', appliedAt: 1234 })
@@ -1266,7 +1266,7 @@ if (import.meta.vitest) {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
 			mockMongoDb(adapter)
 			const repo = Repo.from(adapter)
-				.resolve(() => ({ db: 'test', col: 'test' }))
+				.resolve((name) => ({ db: 'test', col: name }))
 				.build()
 
 			const backfilledData: string[] = []
