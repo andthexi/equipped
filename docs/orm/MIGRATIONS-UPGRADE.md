@@ -85,9 +85,10 @@ PG_TEST_URL='postgresql://user:password@127.0.0.1:5432/equipped_test' \
 ```
 
 The URL must name a test-owned database, never a shared development or production
-database. The suite requires PostgreSQL 13 or newer (the minimum PostgreSQL
-version supported by Equipped). It exercises identity, mapped base and scoped table routing,
-PostgreSQL namespaces, migration-time Repo writes, independently resolved rename
+database. Because `PG_TEST_URL` gates the live suite, confirm that the command
+reports all three tests as passed and none as skipped before treating database
+verification as complete. The suite exercises identity, mapped base and scoped
+table routing, PostgreSQL namespaces, migration-time Repo writes, independently resolved rename
 and foreign-key endpoints, owning-table index changes, and targeted codegen
 round trips. Fixtures use unique owned schemas and migration ids; teardown checks
 that pre-existing public tables remain untouched.
