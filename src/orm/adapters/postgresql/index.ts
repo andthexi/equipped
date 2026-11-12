@@ -777,7 +777,7 @@ if (import.meta.vitest) {
 
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const repo = Repo.from(adapter)
-				.resolve(() => ({ table: 'test' }))
+				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
 				.pk('id', v.string(), () => 'x')
@@ -806,7 +806,7 @@ if (import.meta.vitest) {
 
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const repo = Repo.from(adapter)
-				.resolve(() => ({ table: 'test' }))
+				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
 				.pk('id', v.string(), () => 'x')
@@ -822,7 +822,7 @@ if (import.meta.vitest) {
 
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const repo = Repo.from(adapter)
-				.resolve(() => ({ table: 'test' }))
+				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
 				.pk('id', v.string(), () => 'x')
@@ -1164,7 +1164,7 @@ if (import.meta.vitest) {
 
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const repo = Repo.from(adapter)
-				.resolve(() => ({ table: 'test' }))
+				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
 				.pk('id', v.string(), () => 'x')
@@ -1520,7 +1520,7 @@ if (import.meta.vitest) {
 		test('type-level: Migrator.from rejects withoutLock for PostgresAdapter', async () => {
 			const { Repo } = await import('../../repo/repo')
 			const { Migrator } = await import('../../migrations/migrator')
-			const repo = Repo.from(adapter).resolve(() => ({ table: 'test' })).build()
+			const repo = Repo.from(adapter).resolve(() => ({ table: 'test', schema: undefined })).build()
 			const step = Migrator.from(repo, adapter).migrations([])
 			expectTypeOf(step).toHaveProperty('build')
 			expectTypeOf(step).not.toHaveProperty('withoutLock')
@@ -1584,7 +1584,7 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema')
 
 			Schema.from('users').pk('id', v.string(), () => 'x').field('email', v.string()).build()
-			const repo = Repo.from(adapter).resolve(() => ({ table: 'test' })).build()
+			const repo = Repo.from(adapter).resolve(() => ({ table: 'test', schema: undefined })).build()
 
 			let loadCalls = 0
 			const mockClient = {
