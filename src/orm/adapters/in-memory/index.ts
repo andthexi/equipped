@@ -267,7 +267,12 @@ function applyOps(doc: Record<string, unknown>, ops: AnyUpdateOp[]): Record<stri
 	return updated
 }
 
-const sessionActiveStore = new AsyncLocalStorage<boolean>()
+type SessionContext = {
+	admissionOwners: Set<InMemoryAdapter>
+	activeTransactions: Set<InMemoryAdapter>
+}
+
+const sessionContextStore = new AsyncLocalStorage<SessionContext>()
 
 export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAdapter) {
 	readonly schemaConfigPipe = v.object({ table: v.string() })
@@ -298,6 +303,7 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	readonly foreignKeys = new Map<string, ForeignKeyMeta>()
 
 	#migrationLock: Promise<void> = Promise.resolve()
+	#sessionAdmission: Promise<void> = Promise.resolve()
 
 	protected constructor(config: typeof InMemoryAdapter.Config) {
 		super(config)
@@ -732,13 +738,35 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async session<T>(fn: () => Promise<T>): Promise<T> {
-		if (sessionActiveStore.getStore()) return fn()
-		const snap = this.#snapshot()
+		const current = sessionContextStore.getStore()
+		if (current?.activeTransactions.has(this)) return fn()
+
+		let releaseAdmission!: () => void
+		const admitted = new Promise<void>((resolve) => {
+			releaseAdmission = resolve
+		})
+		const preceding = this.#sessionAdmission
+		this.#sessionAdmission = preceding.then(() => admitted)
+		await preceding
+
+		const context: SessionContext = {
+			admissionOwners: current ? new Set(current.admissionOwners) : new Set(),
+			activeTransactions: current ? new Set(current.activeTransactions) : new Set(),
+		}
+		context.admissionOwners.add(this)
+		context.activeTransactions.add(this)
 		try {
-			return await sessionActiveStore.run(true, fn)
-		} catch (error) {
-			this.#restore(snap)
-			throw error
+			const snap = this.#snapshot()
+			try {
+				return await sessionContextStore.run(context, fn)
+			} catch (error) {
+				this.#restore(snap)
+				throw error
+			}
+		} finally {
+			context.activeTransactions.delete(this)
+			context.admissionOwners.delete(this)
+			releaseAdmission()
 		}
 	}
 }
@@ -753,7 +781,177 @@ if (import.meta.vitest) {
 
 	const { v } = await import('valleyed')
 
+	const deferred = () => {
+		let resolve!: () => void
+		const promise = new Promise<void>((done) => {
+			resolve = done
+		})
+		return { promise, resolve }
+	}
+
 	describe('in-memory adapter', () => {
+		test('serializes the issue #148 insert case at the root-session admission boundary', async () => {
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'users' })
+			const firstInserted = deferred()
+			const releaseFirst = deferred()
+
+			const first = adapter.session(async () => {
+				await use.createMany([{ id: 'u1' }])
+				firstInserted.resolve()
+				await releaseFirst.promise
+			})
+			await firstInserted.promise
+			const second = adapter.session(async () => {
+				await use.createMany([{ id: 'u2' }])
+			})
+			releaseFirst.resolve()
+			await Promise.all([first, second])
+
+			expect(await use.findMany(FilterGroup.create())).toEqual([{ id: 'u1' }, { id: 'u2' }])
+		})
+
+		test('a queued root sees a preceding successful update and preserves it', async () => {
+			const schema = Schema.from('docs')
+				.pk('id', v.string(), () => 'd')
+				.field('count', v.number())
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'docs' })
+			await use.createMany([{ id: 'd1', count: 0 }])
+			const updated = deferred()
+			const releaseFirst = deferred()
+
+			const first = adapter.session(async () => {
+				await use.updateOne(FilterGroup.create().eq('id', 'd1'), { count: 1 })
+				updated.resolve()
+				await releaseFirst.promise
+			})
+			await updated.promise
+			const second = adapter.session(async () => {
+				expect(await use.findOne(FilterGroup.create().eq('id', 'd1'))).toEqual({ id: 'd1', count: 1 })
+				await use.updateOne(FilterGroup.create().eq('id', 'd1'), { count: 2 })
+			})
+			releaseFirst.resolve()
+			await Promise.all([first, second])
+
+			expect(await use.findOne(FilterGroup.create().eq('id', 'd1'))).toEqual({ id: 'd1', count: 2 })
+		})
+
+		test('serializes roots across unrelated schemas on one adapter', async () => {
+			const schema = Schema.from('items')
+				.pk('id', v.string(), () => 'i')
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const firstUse = adapter.use(schema, { table: 'first' })
+			const secondUse = adapter.use(schema, { table: 'second' })
+			const entered = deferred()
+			const releaseFirst = deferred()
+			const order: string[] = []
+
+			const first = adapter.session(async () => {
+				order.push('first')
+				entered.resolve()
+				await releaseFirst.promise
+				await firstUse.createMany([{ id: 'i1' }])
+			})
+			await entered.promise
+			const second = adapter.session(async () => {
+				order.push('second')
+				await secondUse.createMany([{ id: 'i2' }])
+			})
+			await Promise.resolve()
+			expect(order).toEqual(['first'])
+			releaseFirst.resolve()
+			await Promise.all([first, second])
+			expect(order).toEqual(['first', 'second'])
+		})
+
+		test('admits independent root sessions in FIFO call order', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const firstEntered = deferred()
+			const releaseFirst = deferred()
+			const order: number[] = []
+
+			const first = adapter.session(async () => {
+				order.push(1)
+				firstEntered.resolve()
+				await releaseFirst.promise
+			})
+			await firstEntered.promise
+			const second = adapter.session(async () => void order.push(2))
+			const third = adapter.session(async () => void order.push(3))
+			releaseFirst.resolve()
+			await Promise.all([first, second, third])
+
+			expect(order).toEqual([1, 2, 3])
+		})
+
+		test('restores a failed root before admitting a later successful root', async () => {
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'users' })
+			const inserted = deferred()
+			const releaseFailure = deferred()
+
+			const failed = adapter.session(async () => {
+				await use.createMany([{ id: 'rolled-back' }])
+				inserted.resolve()
+				await releaseFailure.promise
+				throw new Error('rollback')
+			})
+			await inserted.promise
+			const succeeded = adapter.session(async () => {
+				expect(await use.findMany(FilterGroup.create())).toEqual([])
+				await use.createMany([{ id: 'committed' }])
+			})
+			releaseFailure.resolve()
+			await expect(failed).rejects.toThrow('rollback')
+			await succeeded
+
+			expect(await use.findMany(FilterGroup.create())).toEqual([{ id: 'committed' }])
+		})
+
+		test('same-instance nested sessions join without waiting for admission', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const order: string[] = []
+
+			await adapter.session(async () => {
+				order.push('outer-before')
+				await adapter.session(async () => void order.push('nested'))
+				order.push('outer-after')
+			})
+
+			expect(order).toEqual(['outer-before', 'nested', 'outer-after'])
+		})
+
+		test('different adapters admit independent roots and allow acyclic nesting', async () => {
+			const first = InMemoryAdapter.create({})
+			const second = InMemoryAdapter.create({})
+			const secondEntered = deferred()
+			const releaseSecond = deferred()
+			const order: string[] = []
+
+			await first.session(async () => {
+				const independent = second.session(async () => {
+					order.push('second')
+					secondEntered.resolve()
+					await releaseSecond.promise
+					await first.session(async () => void order.push('first-nested'))
+				})
+				await secondEntered.promise
+				order.push('first')
+				releaseSecond.resolve()
+				await independent
+			})
+
+			expect(order).toEqual(['second', 'first', 'first-nested'])
+		})
 		test('targeted introspection uses the resolved physical table and reports absence', async () => {
 			const adapter = InMemoryAdapter.create({})
 			await adapter.applyCreateTable({
