@@ -1,5 +1,5 @@
-import type { StatusCode } from '../server'
-import { EquippedError } from './equippedError'
+import type { StatusCode } from '../server/index.js'
+import { EquippedError } from './equippedError.js'
 
 export abstract class RequestError extends EquippedError {
 	protected constructor(

@@ -1,14 +1,28 @@
-import { planSelection } from './computeds'
-import { assertNormalisedFindReadShape, normaliseAllFindReadShape, normaliseAllIterateReadShape, normaliseAllPaginateReadShape, type ReadLimitSource, type ReadOffsetSource } from './query-shape'
-import type { Paginated, SelectedWithPreloads } from './types'
-import { assertNormalisedAggregate, assertNormalisedFilter, type FilterGroup } from '../../filter'
-import type { AggregateSpec } from '../../orm-adapter'
-import type { IterationOptions, OrderBy } from '../../query-options'
-import type { AnyPreloadDef } from '../../relations'
-import type { AnySchema } from '../../schema'
-import { validateCreate, validateCreateMany, validateUpdate, validateUpsertConflicts, type SchemaCreateInput, type SchemaUpdateInput } from '../../schema-validations'
-import { SetOp, isUpdateOp, type AnyUpdateOp } from '../../updates'
-import type { SchemaContext, UpsertInput } from '../builders'
+import { assertNormalisedAggregate, assertNormalisedFilter, type FilterGroup } from '../../filter.js'
+import type { AggregateSpec } from '../../orm-adapter.js'
+import type { IterationOptions, OrderBy } from '../../query-options.js'
+import type { AnyPreloadDef } from '../../relations.js'
+import {
+	validateCreate,
+	validateCreateMany,
+	validateUpdate,
+	validateUpsertConflicts,
+	type SchemaCreateInput,
+	type SchemaUpdateInput,
+} from '../../schema-validations.js'
+import type { AnySchema } from '../../schema.js'
+import { SetOp, isUpdateOp, type AnyUpdateOp } from '../../updates.js'
+import type { SchemaContext, UpsertInput } from '../builders.js'
+import { planSelection } from './computeds.js'
+import {
+	assertNormalisedFindReadShape,
+	normaliseAllFindReadShape,
+	normaliseAllIterateReadShape,
+	normaliseAllPaginateReadShape,
+	type ReadLimitSource,
+	type ReadOffsetSource,
+} from './query-shape.js'
+import type { Paginated, SelectedWithPreloads } from './types.js'
 
 export async function runOneRead<S extends AnySchema, Sel extends string, P extends readonly AnyPreloadDef[]>(
 	context: SchemaContext<S>,

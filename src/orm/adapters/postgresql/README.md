@@ -9,16 +9,16 @@ import { PostgresAdapter } from 'equipped/orm/adapters/postgresql'
 import { Repo } from 'equipped/orm'
 
 const adapter = PostgresAdapter.create({
-  host: 'localhost',
-  port: 5432,
-  username: 'admin',
-  password: 'secret',
-  database: 'myapp',
+	host: 'localhost',
+	port: 5432,
+	username: 'admin',
+	password: 'secret',
+	database: 'myapp',
 })
 
 const repo = Repo.from(adapter)
-  .resolve((name) => ({ table: name }))
-  .build()
+	.resolve((name) => ({ table: name }))
+	.build()
 ```
 
 SSL connections are enabled via the `ssl` option (defaults to `false`):
@@ -37,12 +37,12 @@ const result = await adapter.pool.query('SELECT NOW()')
 
 ## Capabilities
 
-| Category | Declared |
-|----------|----------|
-| `supportedFieldTypes` | `string`, `number`, `boolean`, `null`, `object`, `array`, `date` |
-| `queryableOps` | all 13 canonical ops |
-| `updateOps` | `set`, `inc`, `mul`, `min`, `max`, `unset`, `push`, `pull`, `patch` |
-| `schemaConfigPipe` | `{ schema?: string, table: string }` |
+| Category              | Declared                                                            |
+| --------------------- | ------------------------------------------------------------------- |
+| `supportedFieldTypes` | `string`, `number`, `boolean`, `null`, `object`, `array`, `date`    |
+| `queryableOps`        | all 13 canonical ops                                                |
+| `updateOps`           | `set`, `inc`, `mul`, `min`, `max`, `unset`, `push`, `pull`, `patch` |
+| `schemaConfigPipe`    | `{ schema?: string, table: string }`                                |
 
 ## Session nesting behaviour
 
@@ -55,15 +55,26 @@ PostgreSQL upsert uses `INSERT ... ON CONFLICT (col) DO UPDATE SET ...`, which r
 The adapter enforces this at the filter level: the filter passed to `upsertOne` must be a **single `eq` filter on one field** (the UNIQUE-indexed column). Any other filter shape throws `OrmValidationError { kind: 'upsert-filter-incompatible' }` with a message describing the received filter shape.
 
 Valid:
+
 ```ts
-repo.on(Schema).one().where((q) => q.eq('email', 'a@b.com')).upsert({ create })
+repo.on(Schema)
+	.one()
+	.where((q) => q.eq('email', 'a@b.com'))
+	.upsert({ create })
 ```
 
 Invalid (throws):
+
 ```ts
-repo.on(Schema).one().where((q) => q.eq('a', 1).eq('b', 2)).upsert({ create })  // multiple filters
-repo.on(Schema).one().where((q) => q.gt('age', 10)).upsert({ create })            // non-eq filter
-repo.on(Schema).one().upsert({ create })                                           // empty filter
+repo.on(Schema)
+	.one()
+	.where((q) => q.eq('a', 1).eq('b', 2))
+	.upsert({ create }) // multiple filters
+repo.on(Schema)
+	.one()
+	.where((q) => q.gt('age', 10))
+	.upsert({ create }) // non-eq filter
+repo.on(Schema).one().upsert({ create }) // empty filter
 ```
 
 The adapter does not validate that the filter field has a UNIQUE index — that responsibility lies with the database schema design. Without a unique constraint on the conflict column, the `ON CONFLICT` clause will fail at the database level.
@@ -91,31 +102,31 @@ CREATE TABLE IF NOT EXISTS equipped_migrations (
 
 All 11 `apply*` methods are implemented:
 
-| Method | SQL generated |
-|--------|--------------|
-| `applyCreateTable` | `CREATE TABLE` with typed columns |
-| `applyDropTable` | `DROP TABLE` |
-| `applyAddField` | `ALTER TABLE ADD COLUMN` |
-| `applyDropField` | `ALTER TABLE DROP COLUMN` |
-| `applyModifyField` | `ALTER COLUMN TYPE/NULL/DEFAULT` (multiple statements) |
-| `applyRenameTable` | `ALTER TABLE RENAME TO` |
-| `applyRenameField` | `ALTER TABLE RENAME COLUMN` |
-| `applyAddIndex` | `CREATE [UNIQUE] INDEX` |
-| `applyDropIndex` | `DROP INDEX` |
-| `applyAddForeignKey` | `ALTER TABLE ADD CONSTRAINT ... FOREIGN KEY` |
-| `applyDropForeignKey` | `ALTER TABLE DROP CONSTRAINT` |
+| Method                | SQL generated                                          |
+| --------------------- | ------------------------------------------------------ |
+| `applyCreateTable`    | `CREATE TABLE` with typed columns                      |
+| `applyDropTable`      | `DROP TABLE`                                           |
+| `applyAddField`       | `ALTER TABLE ADD COLUMN`                               |
+| `applyDropField`      | `ALTER TABLE DROP COLUMN`                              |
+| `applyModifyField`    | `ALTER COLUMN TYPE/NULL/DEFAULT` (multiple statements) |
+| `applyRenameTable`    | `ALTER TABLE RENAME TO`                                |
+| `applyRenameField`    | `ALTER TABLE RENAME COLUMN`                            |
+| `applyAddIndex`       | `CREATE [UNIQUE] INDEX`                                |
+| `applyDropIndex`      | `DROP INDEX`                                           |
+| `applyAddForeignKey`  | `ALTER TABLE ADD CONSTRAINT ... FOREIGN KEY`           |
+| `applyDropForeignKey` | `ALTER TABLE DROP CONSTRAINT`                          |
 
 ### Type mapping
 
-| FieldType | PostgreSQL type |
-|-----------|----------------|
-| `string` | `text` |
-| `number` | `double precision` |
-| `boolean` | `boolean` |
-| `date` | `timestamptz` |
-| `null` | `text` |
-| `object` | `jsonb` |
-| `array` | `jsonb` |
+| FieldType | PostgreSQL type    |
+| --------- | ------------------ |
+| `string`  | `text`             |
+| `number`  | `double precision` |
+| `boolean` | `boolean`          |
+| `date`    | `timestamptz`      |
+| `null`    | `text`             |
+| `object`  | `jsonb`            |
+| `array`   | `jsonb`            |
 
 ### Auto-derived names
 

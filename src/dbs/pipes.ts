@@ -1,7 +1,7 @@
 import { type ConditionalObjectKeys, type Pipe, type PipeInput, type PipeOutput, v } from 'valleyed'
 
-import { Instance } from '../instance'
-import type { Select } from './adapters/base/core'
+import { Instance } from '../instance/index.js'
+import type { Select } from './adapters/base/core.js'
 
 export enum QueryKeys {
 	and = 'and',

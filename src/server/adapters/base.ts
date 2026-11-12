@@ -3,21 +3,20 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { type FastifyCorsOptions } from '@fastify/cors'
 import { type CorsOptions } from 'cors'
 import { Server as SocketServer } from 'socket.io'
-import supertest from 'supertest'
-import type TestAgent from 'supertest/lib/agent'
+import supertest, { type Agent } from 'supertest'
 import { PipeError, v, type Pipe, type PipeOutput } from 'valleyed'
 
-import { EquippedError, NotFoundError, RequestError } from '../../errors'
-import { EventBus } from '../../events'
-import { Instance } from '../../instance'
-import type { AuthUser } from '../../types'
-import { pipeErrorToValidationError } from '../../validations'
-import { requestLocalStorage, responseLocalStorage } from '../../validations/valleyed'
-import { openapi, type OpenApiSchemaDef } from '../openapi'
-import { Request, Response } from '../requests'
-import { BaseRequestAuthMethod } from '../requests-auth-methods'
-import { Router } from '../routes'
-import { SocketEmitter } from '../sockets'
+import { EquippedError, NotFoundError, RequestError } from '../../errors/index.js'
+import { EventBus } from '../../events/index.js'
+import { Instance } from '../../instance/index.js'
+import type { AuthUser } from '../../types/index.js'
+import { pipeErrorToValidationError } from '../../validations/index.js'
+import { requestLocalStorage, responseLocalStorage } from '../../validations/valleyed.js'
+import { openapi, type OpenApiSchemaDef } from '../openapi.js'
+import { BaseRequestAuthMethod } from '../requests-auth-methods/index.js'
+import { Request, Response } from '../requests.js'
+import { Router } from '../routes.js'
+import { SocketEmitter } from '../sockets.js'
 import {
 	makeErrorMiddleware,
 	Methods,
@@ -33,7 +32,7 @@ import {
 	type RouteOutput,
 	type RouteRegistryOf,
 	type routeRegistrySymbol,
-} from '../types'
+} from '../types.js'
 
 export const serverConfigPipe = () =>
 	v.object({
@@ -119,7 +118,10 @@ function writeRawHandlerError(response: ServerResponse, error: unknown) {
 
 const errorResponsePipe = v.array(v.object({ message: v.string(), field: v.optional(v.string()) })) as Pipe<any, any>
 
-export abstract class Server<PublicContract = {}, Registry = PublicContract> implements RouteContractHost<PublicContract, Registry> {
+export abstract class Server<PublicContract = {}, Registry = PublicContract> implements RouteContractHost<
+	PublicContract,
+	Registry
+> {
 	declare readonly [routeContractSymbol]?: PublicContract
 	declare readonly [routeRegistrySymbol]?: Registry
 	socket!: SocketEmitter
@@ -146,7 +148,9 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 		this.#serverConfig = config
 		this.cors = {
 			origin: config.cors?.origin ? (_, cb) => cb(null, true) : config.cors?.origin,
-			methods: (config.cors?.methods ?? Object.values(Methods)).filter((m) => m !== Methods.options).map((m) => m.toUpperCase()),
+			methods: (config.cors?.methods ?? Object.values(Methods))
+				.filter((m) => m !== Methods.options)
+				.map((m) => m.toUpperCase()),
 			credentials: config.cors?.credentials,
 		}
 		this.#oai = openapi(config)
@@ -157,7 +161,10 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 
 	addRouter<R extends Router<any, any, any, any, any>>(
 		router: R & RejectDuplicateRoutes<Registry, RouteRegistryOf<R>>,
-	): Server<MergeRouteContracts<PublicContract, RouteContractOf<R>>, MergeRouteContracts<Registry, RouteRegistryOf<R>>> {
+	): Server<
+		MergeRouteContracts<PublicContract, RouteContractOf<R>>,
+		MergeRouteContracts<Registry, RouteRegistryOf<R>>
+	> {
 		this.addRoute(...router.routes)
 		return this as unknown as Server<
 			MergeRouteContracts<PublicContract, RouteContractOf<R>>,
@@ -173,18 +180,26 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 
 				const key = `(${method.toUpperCase()}) ${this.#oai.cleanPath(path)}`
 				if (this.#routesByKey.has(key))
-					throw new EquippedError(`Route key ${key} already registered. All route keys must be unique`, { route, key })
+					throw new EquippedError(`Route key ${key} already registered. All route keys must be unique`, {
+						route,
+						key,
+					})
 
 				middlewares.forEach((m) => m.onSetup?.(route as any))
 				onError?.onSetup?.(route as any)
 				responseMiddlewares.forEach((m) => m.onSetup?.(route as any))
 
-				const { validateRequest, validateResponse, jsonSchema, responseDefaults } = this.#resolveSchema(method, schema)
+				const { validateRequest, validateResponse, jsonSchema, responseDefaults } = this.#resolveSchema(
+					method,
+					schema,
+				)
 
 				this.#routesByKey.add(key)
 				await this.#oai.register(route, jsonSchema)
 				this.registerRoute(method, this.#oai.cleanPath(path), async (req, res) => {
-					const request = await validateRequest((await this.parseRequest(req)).setResponseDefaults(responseDefaults))
+					const request = await validateRequest(
+						(await this.parseRequest(req)).setResponseDefaults(responseDefaults),
+					)
 					try {
 						for (const middleware of middlewares) await middleware.cb(request)
 						const rawRes = await route.handler(request)
@@ -236,7 +251,7 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 		return this
 	}
 
-	test(): TestAgent {
+	test(): Agent {
 		return supertest(this.#httpServer)
 	}
 
@@ -263,7 +278,8 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 
 		this.registerNotFoundHandler(async (req, res) => await this.#handleNotFound(req, res))
 		this.registerErrorHandler(async (error, _, res) => {
-			if (!(error instanceof EquippedError)) Instance.get().log.error({ error }, 'Uncaught error in route handler')
+			if (!(error instanceof EquippedError))
+				Instance.get().log.error({ error }, 'Uncaught error in route handler')
 			const response =
 				error instanceof RequestError
 					? new Response<any>({
@@ -291,7 +307,8 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 			return await this.handleResponse(res, response)
 		})
 
-		for (const handler of this.#beforeListenHandlers) await handler({ httpServer: this.#httpServer, port: config.port })
+		for (const handler of this.#beforeListenHandlers)
+			await handler({ httpServer: this.#httpServer, port: config.port })
 
 		const started = await this.startServer(config.port)
 		if (started) Instance.get().log.info(`${instance.id}(${app.name}) service listening on port ${config.port}`)
@@ -347,7 +364,11 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 			{ key: 'headers', type: 'request' },
 			{ key: 'cookies', type: 'request' },
 			{ key: 'query', type: 'request' },
-			{ key: 'body', type: 'request', skip: !(<MethodsEnum[]>[Methods.post, Methods.put, Methods.patch]).includes(method) },
+			{
+				key: 'body',
+				type: 'request',
+				skip: !(<MethodsEnum[]>[Methods.post, Methods.put, Methods.patch]).includes(method),
+			},
 			{ key: 'response', type: 'response' },
 			{ key: 'responseHeaders', type: 'response' },
 			{ key: 'responseCookies', type: 'response' },
@@ -419,7 +440,9 @@ export abstract class Server<PublicContract = {}, Registry = PublicContract> imp
 			const validity = responseLocalStorage.run(response, () =>
 				v.validate(responsePipe, {
 					responseHeaders: response.headers,
-					responseCookies: Object.fromEntries(Object.entries(response.cookies).map(([key, val]) => [key, val.value] as const)),
+					responseCookies: Object.fromEntries(
+						Object.entries(response.cookies).map(([key, val]) => [key, val.value] as const),
+					),
 					response: response.body,
 				}),
 			)
@@ -445,7 +468,8 @@ if (import.meta.vitest) {
 	const testInstanceState = globalThis as typeof globalThis & { __equippedTestInstanceAliased?: boolean }
 
 	function ensureTestInstance() {
-		const instance = Instance.maybeGet() ?? Instance.create({ app: { name: 'equipped-test' }, log: { level: 'silent' } })
+		const instance =
+			Instance.maybeGet() ?? Instance.create({ app: { name: 'equipped-test' }, log: { level: 'silent' } })
 		if (!testInstanceState.__equippedTestInstanceAliased) {
 			instance.alias('equipped-test')
 			testInstanceState.__equippedTestInstanceAliased = true
@@ -679,7 +703,9 @@ if (import.meta.vitest) {
 			const server = new TestServer()
 			await server.start()
 
-			expect(() => server.onBeforeListen(() => {})).toThrow('Cannot add before-listen handler after server has started')
+			expect(() => server.onBeforeListen(() => {})).toThrow(
+				'Cannot add before-listen handler after server has started',
+			)
 		})
 	})
 
@@ -750,7 +776,9 @@ if (import.meta.vitest) {
 			server.setNotFoundHandler((() => undefined) as unknown as ServerNotFoundHandler)
 			await server.start()
 
-			await expect(server.dispatchNotFound('/bad')).rejects.toThrow('Not-found handler must return a Response or respondWithRaw(...)')
+			await expect(server.dispatchNotFound('/bad')).rejects.toThrow(
+				'Not-found handler must return a Response or respondWithRaw(...)',
+			)
 		})
 
 		test('rejects setting the custom not-found handler after server startup', async () => {

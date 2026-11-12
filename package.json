@@ -1,6 +1,6 @@
 {
 	"name": "equipped",
-	"version": "5.3.3",
+	"version": "5.3.6",
 	"private": false,
 	"description": "",
 	"type": "module",
@@ -9,283 +9,315 @@
 	"devEngines": {
 		"runtime": {
 			"name": "node",
-			"version": "24.5.0",
-			"onFail": "download"
+			"version": ">=24.11.0",
+			"onFail": "warn"
+		},
+		"packageManager": {
+			"name": "pnpm",
+			"version": "11.7.0",
+			"onFail": "warn"
 		}
 	},
 	"main": "./dist/cjs/index.cjs",
 	"module": "./dist/esm/index.mjs",
 	"types": "./dist/types/index.d.ts",
 	"scripts": {
-		"dev": "tsup --watch",
-		"prebuild": "tsc --noEmit",
-		"build": "NODE_OPTIONS='--max-old-space-size=16384' tsup",
+		"dev": "tsdown --watch --concurrency 1",
+		"build": "NODE_OPTIONS=--max-old-space-size=4096 tsc -p tsconfig.build.json && node scripts/copy-cjs-declarations.mjs && tsdown --concurrency 1",
 		"lint": "eslint --fix src",
 		"test": "vitest run",
-		"release": "standard-version",
-		"prepare": "husky"
+		"release": "commit-and-tag-version",
+		"prepare": "husky",
+		"typecheck": "tsc --noEmit",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
+		"prerelease": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
 	},
 	"exports": {
 		".": {
-			"types": "./dist/types/index.d.ts",
 			"require": {
+				"types": "./dist/types/index.d.cts",
 				"min": "./dist/cjs/index.min.cjs",
 				"default": "./dist/cjs/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/index.d.ts",
 				"min": "./dist/esm/index.min.mjs",
 				"default": "./dist/esm/index.mjs"
 			}
 		},
 		"./cache": {
-			"types": "./dist/types/cache/index.d.ts",
 			"require": {
+				"types": "./dist/types/cache/index.d.cts",
 				"min": "./dist/cjs/cache/index.min.cjs",
 				"default": "./dist/cjs/cache/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/cache/index.d.ts",
 				"min": "./dist/esm/cache/index.min.mjs",
 				"default": "./dist/esm/cache/index.mjs"
 			}
 		},
 		"./cache/adapters/in-memory": {
-			"types": "./dist/types/cache/adapters/in-memory/index.d.ts",
 			"require": {
+				"types": "./dist/types/cache/adapters/in-memory/index.d.cts",
 				"min": "./dist/cjs/cache/adapters/in-memory/index.min.cjs",
 				"default": "./dist/cjs/cache/adapters/in-memory/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/cache/adapters/in-memory/index.d.ts",
 				"min": "./dist/esm/cache/adapters/in-memory/index.min.mjs",
 				"default": "./dist/esm/cache/adapters/in-memory/index.mjs"
 			}
 		},
 		"./cache/adapters/json": {
-			"types": "./dist/types/cache/adapters/json/index.d.ts",
 			"require": {
+				"types": "./dist/types/cache/adapters/json/index.d.cts",
 				"min": "./dist/cjs/cache/adapters/json/index.min.cjs",
 				"default": "./dist/cjs/cache/adapters/json/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/cache/adapters/json/index.d.ts",
 				"min": "./dist/esm/cache/adapters/json/index.min.mjs",
 				"default": "./dist/esm/cache/adapters/json/index.mjs"
 			}
 		},
 		"./cache/adapters/redis": {
-			"types": "./dist/types/cache/adapters/redis/index.d.ts",
 			"require": {
+				"types": "./dist/types/cache/adapters/redis/index.d.cts",
 				"min": "./dist/cjs/cache/adapters/redis/index.min.cjs",
 				"default": "./dist/cjs/cache/adapters/redis/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/cache/adapters/redis/index.d.ts",
 				"min": "./dist/esm/cache/adapters/redis/index.min.mjs",
 				"default": "./dist/esm/cache/adapters/redis/index.mjs"
 			}
 		},
 		"./dbs": {
-			"types": "./dist/types/dbs/index.d.ts",
 			"require": {
+				"types": "./dist/types/dbs/index.d.cts",
 				"min": "./dist/cjs/dbs/index.min.cjs",
 				"default": "./dist/cjs/dbs/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/dbs/index.d.ts",
 				"min": "./dist/esm/dbs/index.min.mjs",
 				"default": "./dist/esm/dbs/index.mjs"
 			}
 		},
 		"./dbs/adapters/mongodb": {
-			"types": "./dist/types/dbs/adapters/mongodb/index.d.ts",
 			"require": {
+				"types": "./dist/types/dbs/adapters/mongodb/index.d.cts",
 				"min": "./dist/cjs/dbs/adapters/mongodb/index.min.cjs",
 				"default": "./dist/cjs/dbs/adapters/mongodb/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/dbs/adapters/mongodb/index.d.ts",
 				"min": "./dist/esm/dbs/adapters/mongodb/index.min.mjs",
 				"default": "./dist/esm/dbs/adapters/mongodb/index.mjs"
 			}
 		},
 		"./errors": {
-			"types": "./dist/types/errors/index.d.ts",
 			"require": {
+				"types": "./dist/types/errors/index.d.cts",
 				"min": "./dist/cjs/errors/index.min.cjs",
 				"default": "./dist/cjs/errors/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/errors/index.d.ts",
 				"min": "./dist/esm/errors/index.min.mjs",
 				"default": "./dist/esm/errors/index.mjs"
 			}
 		},
 		"./events": {
-			"types": "./dist/types/events/index.d.ts",
 			"require": {
+				"types": "./dist/types/events/index.d.cts",
 				"min": "./dist/cjs/events/index.min.cjs",
 				"default": "./dist/cjs/events/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/events/index.d.ts",
 				"min": "./dist/esm/events/index.min.mjs",
 				"default": "./dist/esm/events/index.mjs"
 			}
 		},
 		"./events/adapters/kafka": {
-			"types": "./dist/types/events/adapters/kafka/index.d.ts",
 			"require": {
+				"types": "./dist/types/events/adapters/kafka/index.d.cts",
 				"min": "./dist/cjs/events/adapters/kafka/index.min.cjs",
 				"default": "./dist/cjs/events/adapters/kafka/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/events/adapters/kafka/index.d.ts",
 				"min": "./dist/esm/events/adapters/kafka/index.min.mjs",
 				"default": "./dist/esm/events/adapters/kafka/index.mjs"
 			}
 		},
 		"./events/adapters/rabbitmq": {
-			"types": "./dist/types/events/adapters/rabbitmq/index.d.ts",
 			"require": {
+				"types": "./dist/types/events/adapters/rabbitmq/index.d.cts",
 				"min": "./dist/cjs/events/adapters/rabbitmq/index.min.cjs",
 				"default": "./dist/cjs/events/adapters/rabbitmq/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/events/adapters/rabbitmq/index.d.ts",
 				"min": "./dist/esm/events/adapters/rabbitmq/index.min.mjs",
 				"default": "./dist/esm/events/adapters/rabbitmq/index.mjs"
 			}
 		},
 		"./jobs": {
-			"types": "./dist/types/jobs/index.d.ts",
 			"require": {
+				"types": "./dist/types/jobs/index.d.cts",
 				"min": "./dist/cjs/jobs/index.min.cjs",
 				"default": "./dist/cjs/jobs/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/jobs/index.d.ts",
 				"min": "./dist/esm/jobs/index.min.mjs",
 				"default": "./dist/esm/jobs/index.mjs"
 			}
 		},
 		"./jobs/adapters/redis": {
-			"types": "./dist/types/jobs/adapters/redis/index.d.ts",
 			"require": {
+				"types": "./dist/types/jobs/adapters/redis/index.d.cts",
 				"min": "./dist/cjs/jobs/adapters/redis/index.min.cjs",
 				"default": "./dist/cjs/jobs/adapters/redis/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/jobs/adapters/redis/index.d.ts",
 				"min": "./dist/esm/jobs/adapters/redis/index.min.mjs",
 				"default": "./dist/esm/jobs/adapters/redis/index.mjs"
 			}
 		},
 		"./orm": {
-			"types": "./dist/types/orm/index.d.ts",
 			"require": {
+				"types": "./dist/types/orm/index.d.cts",
 				"min": "./dist/cjs/orm/index.min.cjs",
 				"default": "./dist/cjs/orm/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/orm/index.d.ts",
 				"min": "./dist/esm/orm/index.min.mjs",
 				"default": "./dist/esm/orm/index.mjs"
 			}
 		},
 		"./orm/adapters/in-memory": {
-			"types": "./dist/types/orm/adapters/in-memory/index.d.ts",
 			"require": {
+				"types": "./dist/types/orm/adapters/in-memory/index.d.cts",
 				"min": "./dist/cjs/orm/adapters/in-memory/index.min.cjs",
 				"default": "./dist/cjs/orm/adapters/in-memory/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/orm/adapters/in-memory/index.d.ts",
 				"min": "./dist/esm/orm/adapters/in-memory/index.min.mjs",
 				"default": "./dist/esm/orm/adapters/in-memory/index.mjs"
 			}
 		},
 		"./orm/adapters/json": {
-			"types": "./dist/types/orm/adapters/json/index.d.ts",
 			"require": {
+				"types": "./dist/types/orm/adapters/json/index.d.cts",
 				"min": "./dist/cjs/orm/adapters/json/index.min.cjs",
 				"default": "./dist/cjs/orm/adapters/json/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/orm/adapters/json/index.d.ts",
 				"min": "./dist/esm/orm/adapters/json/index.min.mjs",
 				"default": "./dist/esm/orm/adapters/json/index.mjs"
 			}
 		},
 		"./orm/adapters/mongodb": {
-			"types": "./dist/types/orm/adapters/mongodb/index.d.ts",
 			"require": {
+				"types": "./dist/types/orm/adapters/mongodb/index.d.cts",
 				"min": "./dist/cjs/orm/adapters/mongodb/index.min.cjs",
 				"default": "./dist/cjs/orm/adapters/mongodb/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/orm/adapters/mongodb/index.d.ts",
 				"min": "./dist/esm/orm/adapters/mongodb/index.min.mjs",
 				"default": "./dist/esm/orm/adapters/mongodb/index.mjs"
 			}
 		},
 		"./orm/adapters/postgresql": {
-			"types": "./dist/types/orm/adapters/postgresql/index.d.ts",
 			"require": {
+				"types": "./dist/types/orm/adapters/postgresql/index.d.cts",
 				"min": "./dist/cjs/orm/adapters/postgresql/index.min.cjs",
 				"default": "./dist/cjs/orm/adapters/postgresql/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/orm/adapters/postgresql/index.d.ts",
 				"min": "./dist/esm/orm/adapters/postgresql/index.min.mjs",
 				"default": "./dist/esm/orm/adapters/postgresql/index.mjs"
 			}
 		},
 		"./server": {
-			"types": "./dist/types/server/index.d.ts",
 			"require": {
+				"types": "./dist/types/server/index.d.cts",
 				"min": "./dist/cjs/server/index.min.cjs",
 				"default": "./dist/cjs/server/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/server/index.d.ts",
 				"min": "./dist/esm/server/index.min.mjs",
 				"default": "./dist/esm/server/index.mjs"
 			}
 		},
 		"./server/adapters/express": {
-			"types": "./dist/types/server/adapters/express/index.d.ts",
 			"require": {
+				"types": "./dist/types/server/adapters/express/index.d.cts",
 				"min": "./dist/cjs/server/adapters/express/index.min.cjs",
 				"default": "./dist/cjs/server/adapters/express/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/server/adapters/express/index.d.ts",
 				"min": "./dist/esm/server/adapters/express/index.min.mjs",
 				"default": "./dist/esm/server/adapters/express/index.mjs"
 			}
 		},
 		"./server/adapters/fastify": {
-			"types": "./dist/types/server/adapters/fastify/index.d.ts",
 			"require": {
+				"types": "./dist/types/server/adapters/fastify/index.d.cts",
 				"min": "./dist/cjs/server/adapters/fastify/index.min.cjs",
 				"default": "./dist/cjs/server/adapters/fastify/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/server/adapters/fastify/index.d.ts",
 				"min": "./dist/esm/server/adapters/fastify/index.min.mjs",
 				"default": "./dist/esm/server/adapters/fastify/index.mjs"
 			}
 		},
 		"./types": {
-			"types": "./dist/types/types/index.d.ts",
 			"require": {
+				"types": "./dist/types/types/index.d.cts",
 				"min": "./dist/cjs/types/index.min.cjs",
 				"default": "./dist/cjs/types/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/types/index.d.ts",
 				"min": "./dist/esm/types/index.min.mjs",
 				"default": "./dist/esm/types/index.mjs"
 			}
 		},
 		"./utilities": {
-			"types": "./dist/types/utilities/index.d.ts",
 			"require": {
+				"types": "./dist/types/utilities/index.d.cts",
 				"min": "./dist/cjs/utilities/index.min.cjs",
 				"default": "./dist/cjs/utilities/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/utilities/index.d.ts",
 				"min": "./dist/esm/utilities/index.min.mjs",
 				"default": "./dist/esm/utilities/index.mjs"
 			}
 		},
 		"./validations": {
-			"types": "./dist/types/validations/index.d.ts",
 			"require": {
+				"types": "./dist/types/validations/index.d.cts",
 				"min": "./dist/cjs/validations/index.min.cjs",
 				"default": "./dist/cjs/validations/index.cjs"
 			},
 			"import": {
+				"types": "./dist/types/validations/index.d.ts",
 				"min": "./dist/esm/validations/index.min.mjs",
 				"default": "./dist/esm/validations/index.mjs"
 			}
@@ -294,9 +326,8 @@
 	"author": "",
 	"license": "ISC",
 	"devDependencies": {
-		"@commitlint/cli": "^20.4.1",
-		"@commitlint/config-conventional": "^20.4.1",
-		"@k11/configs": "^0.1.2",
+		"@commitlint/cli": "^21.2.4",
+		"@commitlint/config-conventional": "^21.2.4",
 		"@types/amqplib": "^0.10.8",
 		"@types/bcryptjs": "^3.0.0",
 		"@types/bull": "^4.10.4",
@@ -312,14 +343,15 @@
 		"@types/pug": "^2.0.10",
 		"@types/supertest": "^6.0.3",
 		"commander": "^14.0.3",
-		"esbuild-fix-imports-plugin": "^1.0.23",
-		"eslint": "^9.39.2",
+		"commit-and-tag-version": "^13.3.0",
+		"eslint": "10.14.0",
 		"husky": "^9.1.7",
-		"standard-version": "^9.5.0",
-		"tsup": "^8.5.1",
+		"prettier": "3.10.1",
+		"tsdown": "0.23.7",
 		"tsx": "^4.22.4",
 		"typescript": "^5.9.3",
-		"vitest": "^4.1.9"
+		"vitest": "^5.1.0",
+		"xi-configs": "0.1.0"
 	},
 	"dependencies": {
 		"@confluentinc/kafka-javascript": "1.8.0",
@@ -362,10 +394,10 @@
 		"socket.io": "4.8.3",
 		"supertest": "7.2.2",
 		"ulid": "3.0.2",
-		"valleyed": "4.5.19"
+		"valleyed": "4.5.25"
 	},
 	"repository": {
-		"url": "git://github.com/kevinand11/equipped.git"
+		"url": "git+https://github.com/andthexi/equipped.git"
 	},
 	"publishConfig": {
 		"registry": "https://registry.npmjs.org/"
@@ -381,5 +413,5 @@
 		"README.md",
 		"dist"
 	],
-	"standard-version": {}
+	"commit-and-tag-version": {}
 }

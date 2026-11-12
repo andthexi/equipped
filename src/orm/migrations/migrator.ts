@@ -1,23 +1,23 @@
-import type { OrmAdapterLike } from '../adapters/base'
-import { OrmMigrationError } from '../errors/migration'
-import type { OrmAdapter } from '../orm-adapter'
-import { applyChange } from './apply'
-import { computePending, type PendingOpts } from './pending'
-import type { AnyChange, AnyMigration, Migration } from './types'
-import { assertNormalisedChanges } from './validate'
-import type { Repo } from '../repo/repo'
+import type { OrmAdapterLike } from '../adapters/base.js'
+import { OrmMigrationError } from '../errors/migration.js'
+import type { OrmAdapter } from '../orm-adapter.js'
+import type { Repo } from '../repo/repo.js'
+import { applyChange } from './apply.js'
+import { computePending, type PendingOpts } from './pending.js'
+import type { AnyChange, AnyMigration, Migration } from './types.js'
+import { assertNormalisedChanges } from './validate.js'
 
 type RunResult = { ran: string[]; skipped: string[] }
 export type StatusEntry = { id: string; applied: boolean; appliedAt?: number }
 
-type HasAcquireMigrationLock<A> =
-	'acquireMigrationLock' extends keyof A
-		? A['acquireMigrationLock'] extends (...args: any) => any ? true : false
+type HasAcquireMigrationLock<A> = 'acquireMigrationLock' extends keyof A
+	? A['acquireMigrationLock'] extends (...args: any) => any
+		? true
 		: false
+	: false
 
-type WithoutLockStep<A extends OrmAdapterLike<any>> = HasAcquireMigrationLock<A> extends true
-	? {}
-	: { withoutLock(): { build(): Migrator<A> } }
+type WithoutLockStep<A extends OrmAdapterLike<any>> =
+	HasAcquireMigrationLock<A> extends true ? {} : { withoutLock(): { build(): Migrator<A> } }
 
 export class Migrator<A extends OrmAdapterLike<any>> {
 	readonly #repo: Repo<A>
@@ -34,7 +34,7 @@ export class Migrator<A extends OrmAdapterLike<any>> {
 
 	#requireMethod(name: 'loadMigrations' | 'recordMigration'): void {
 		if (typeof this.#adapter[name] !== 'function') {
-			const phase = name === 'loadMigrations' ? 'load' : 'record' as const
+			const phase = name === 'loadMigrations' ? 'load' : ('record' as const)
 			throw new OrmMigrationError({ id: '', phase, cause: `adapter does not implement ${name}` })
 		}
 	}
@@ -82,14 +82,22 @@ export class Migrator<A extends OrmAdapterLike<any>> {
 			throw new OrmMigrationError({ id: '', phase: 'load', cause: err })
 		}
 
-		const { pending, skipped } = computePending(this.#migrations as unknown as ReadonlyArray<AnyMigration>, applied, opts)
+		const { pending, skipped } = computePending(
+			this.#migrations as unknown as ReadonlyArray<AnyMigration>,
+			applied,
+			opts,
+		)
 		const ran: string[] = []
 
 		for (const m of pending) {
 			const execute = async () => {
 				for (const c of m.changes) {
 					try {
-						await applyChange(this.#adapter, this.#repo as unknown as Repo<OrmAdapterLike<any>>, c as AnyChange)
+						await applyChange(
+							this.#adapter,
+							this.#repo as unknown as Repo<OrmAdapterLike<any>>,
+							c as AnyChange,
+						)
 					} catch (err) {
 						throw new OrmMigrationError({ id: m.id, phase: 'user', cause: err })
 					}
@@ -144,11 +152,11 @@ export class Migrator<A extends OrmAdapterLike<any>> {
 if (import.meta.vitest) {
 	const { describe, test, expect, expectTypeOf } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { InMemoryAdapter } = await import('../adapters/in-memory')
-	const { Schema } = await import('../schema')
-	const { Repo } = await import('../repo/repo')
-	const { OrmValidationError } = await import('../errors/validation')
-	const { OrmMigrationError } = await import('../errors/migration')
+	const { InMemoryAdapter } = await import('../adapters/in-memory/index.js')
+	const { Schema } = await import('../schema.js')
+	const { Repo } = await import('../repo/repo.js')
+	const { OrmValidationError } = await import('../errors/validation.js')
+	const { OrmMigrationError } = await import('../errors/migration.js')
 
 	const UserSchema = Schema.from('users')
 		.pk('id', v.string(), () => `u-${Math.random().toString(36).slice(2)}`)
@@ -188,12 +196,14 @@ if (import.meta.vitest) {
 			const { adapter, repo } = makeEnv()
 			const m: Migration<typeof adapter> = {
 				id: '0001-seed-user',
-				changes: [{
-					kind: 'execute',
-					up: async (r) => {
-						await r.on(UserSchema).one().create({ id: 'seed-1', email: 'test@example.com' })
+				changes: [
+					{
+						kind: 'execute',
+						up: async (r) => {
+							await r.on(UserSchema).one().create({ id: 'seed-1', email: 'test@example.com' })
+						},
 					},
-				}],
+				],
 			}
 			const migrator = Migrator.from(repo, adapter).migrations([m]).build()
 			await migrator.up()
@@ -245,7 +255,9 @@ if (import.meta.vitest) {
 		test('up() returns empty ran when all applied', async () => {
 			const { adapter, repo } = makeEnv()
 			await adapter.recordMigration('0001', Date.now())
-			const migrator = Migrator.from(repo, adapter).migrations([{ id: '0001', changes: [] }]).build()
+			const migrator = Migrator.from(repo, adapter)
+				.migrations([{ id: '0001', changes: [] }])
+				.build()
 			const result = await migrator.up()
 			expect(result.ran).toEqual([])
 			expect(result.skipped).toEqual(['0001'])
@@ -259,10 +271,14 @@ if (import.meta.vitest) {
 			}
 			const m2: Migration<typeof adapter> = {
 				id: '0002',
-				changes: [{
-					kind: 'execute',
-					up: async () => { throw new Error('boom') },
-				}],
+				changes: [
+					{
+						kind: 'execute',
+						up: async () => {
+							throw new Error('boom')
+						},
+					},
+				],
 			}
 			const migrator = Migrator.from(repo, adapter).migrations([m1, m2]).build()
 			await expect(migrator.up()).rejects.toThrow(OrmMigrationError)
@@ -293,11 +309,25 @@ if (import.meta.vitest) {
 			const order: string[] = []
 			const m1: Migration<typeof adapter> = {
 				id: '0002',
-				changes: [{ kind: 'execute', up: async () => { order.push('0002') } }],
+				changes: [
+					{
+						kind: 'execute',
+						up: async () => {
+							order.push('0002')
+						},
+					},
+				],
 			}
 			const m2: Migration<typeof adapter> = {
 				id: '0001',
-				changes: [{ kind: 'execute', up: async () => { order.push('0001') } }],
+				changes: [
+					{
+						kind: 'execute',
+						up: async () => {
+							order.push('0001')
+						},
+					},
+				],
 			}
 			const migrator = Migrator.from(repo, adapter).migrations([m1, m2]).build()
 			await migrator.up()
@@ -308,15 +338,17 @@ if (import.meta.vitest) {
 			const { adapter, repo } = makeEnv()
 			const m: Migration<typeof adapter> = {
 				id: '0001-create-users',
-				changes: [{
-					kind: 'createTable',
-					name: 'users',
-					pk: { name: 'id', type: 'string' },
-					fields: [
-						{ name: 'email', type: 'string', unique: true },
-						{ name: 'age', type: 'number', nullable: true },
-					],
-				}],
+				changes: [
+					{
+						kind: 'createTable',
+						name: 'users',
+						pk: { name: 'id', type: 'string' },
+						fields: [
+							{ name: 'email', type: 'string', unique: true },
+							{ name: 'age', type: 'number', nullable: true },
+						],
+					},
+				],
 			}
 			const migrator = Migrator.from(repo, adapter).migrations([m]).build()
 			await migrator.up()
@@ -331,7 +363,12 @@ if (import.meta.vitest) {
 
 		test('dropTable migration removes table metadata', async () => {
 			const { adapter, repo } = makeEnv()
-			await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [] })
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
 			const m: Migration<typeof adapter> = {
 				id: '0001-drop-users',
 				changes: [{ kind: 'dropTable', name: 'users' }],
@@ -343,7 +380,12 @@ if (import.meta.vitest) {
 
 		test('addField migration adds field to existing table', async () => {
 			const { adapter, repo } = makeEnv()
-			await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [] })
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
 			const m: Migration<typeof adapter> = {
 				id: '0001-add-email',
 				changes: [{ kind: 'addField', table: 'users', field: { name: 'email', type: 'string' } }],
@@ -355,7 +397,12 @@ if (import.meta.vitest) {
 
 		test('dropField migration removes field from table', async () => {
 			const { adapter, repo } = makeEnv()
-			await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'email', type: 'string' }] })
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [{ name: 'email', type: 'string' }],
+			})
 			const m: Migration<typeof adapter> = {
 				id: '0001-drop-email',
 				changes: [{ kind: 'dropField', table: 'users', name: 'email' }],
@@ -367,19 +414,40 @@ if (import.meta.vitest) {
 
 		test('modifyField migration updates field spec', async () => {
 			const { adapter, repo } = makeEnv()
-			await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'age', type: 'string' }] })
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [{ name: 'age', type: 'string' }],
+			})
 			const m: Migration<typeof adapter> = {
 				id: '0001-modify-age',
-				changes: [{ kind: 'modifyField', table: 'users', name: 'age', to: { name: 'age', type: 'number', nullable: true } }],
+				changes: [
+					{
+						kind: 'modifyField',
+						table: 'users',
+						name: 'age',
+						to: { name: 'age', type: 'number', nullable: true },
+					},
+				],
 			}
 			const migrator = Migrator.from(repo, adapter).migrations([m]).build()
 			await migrator.up()
-			expect(adapter.tables.get('users')!.fields.get('age')).toEqual({ name: 'age', type: 'number', nullable: true })
+			expect(adapter.tables.get('users')!.fields.get('age')).toEqual({
+				name: 'age',
+				type: 'number',
+				nullable: true,
+			})
 		})
 
 		test('renameTable migration renames the table key', async () => {
 			const { adapter, repo } = makeEnv()
-			await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [] })
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
 			const m: Migration<typeof adapter> = {
 				id: '0001-rename-users',
 				changes: [{ kind: 'renameTable', from: 'users', to: 'accounts' }],
@@ -392,7 +460,12 @@ if (import.meta.vitest) {
 
 		test('renameField migration renames a field', async () => {
 			const { adapter, repo } = makeEnv()
-			await adapter.applyCreateTable({ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'name', type: 'string' }] })
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [{ name: 'name', type: 'string' }],
+			})
 			const m: Migration<typeof adapter> = {
 				id: '0001-rename-name',
 				changes: [{ kind: 'renameField', table: 'users', from: 'name', to: 'fullName' }],
@@ -420,7 +493,14 @@ if (import.meta.vitest) {
 			const { adapter, repo } = makeEnv()
 			const m: Migration<typeof adapter> = {
 				id: '0001-add-fk',
-				changes: [{ kind: 'addForeignKey', table: 'posts', on: 'authorId', references: { table: 'users', column: 'id' } }],
+				changes: [
+					{
+						kind: 'addForeignKey',
+						table: 'posts',
+						on: 'authorId',
+						references: { table: 'users', column: 'id' },
+					},
+				],
 			}
 			const migrator = Migrator.from(repo, adapter).migrations([m]).build()
 			await migrator.up()
@@ -433,7 +513,13 @@ if (import.meta.vitest) {
 
 		test('dropForeignKey migration removes a FK entry', async () => {
 			const { adapter, repo } = makeEnv()
-			await adapter.applyAddForeignKey({ kind: 'addForeignKey', table: 'posts', on: 'authorId', references: { table: 'users', column: 'id' }, name: 'posts_authorId_fk' })
+			await adapter.applyAddForeignKey({
+				kind: 'addForeignKey',
+				table: 'posts',
+				on: 'authorId',
+				references: { table: 'users', column: 'id' },
+				name: 'posts_authorId_fk',
+			})
 			const m: Migration<typeof adapter> = {
 				id: '0001-drop-fk',
 				changes: [{ kind: 'dropForeignKey', table: 'posts', name: 'posts_authorId_fk' }],
@@ -449,10 +535,28 @@ if (import.meta.vitest) {
 				{
 					id: '0001-create',
 					changes: [
-						{ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'email', type: 'string' }] },
-						{ kind: 'createTable', name: 'posts', pk: { name: 'id', type: 'string' }, fields: [{ name: 'title', type: 'string' }, { name: 'authorId', type: 'string' }] },
+						{
+							kind: 'createTable',
+							name: 'users',
+							pk: { name: 'id', type: 'string' },
+							fields: [{ name: 'email', type: 'string' }],
+						},
+						{
+							kind: 'createTable',
+							name: 'posts',
+							pk: { name: 'id', type: 'string' },
+							fields: [
+								{ name: 'title', type: 'string' },
+								{ name: 'authorId', type: 'string' },
+							],
+						},
 						{ kind: 'addIndex', table: 'users', on: ['email'], unique: true },
-						{ kind: 'addForeignKey', table: 'posts', on: 'authorId', references: { table: 'users', column: 'id' } },
+						{
+							kind: 'addForeignKey',
+							table: 'posts',
+							on: 'authorId',
+							references: { table: 'users', column: 'id' },
+						},
 					],
 				},
 				{
@@ -545,15 +649,17 @@ if (import.meta.vitest) {
 			}
 			const m2: Migration<typeof adapter> = {
 				id: '0002',
-				changes: [{
-					kind: 'execute',
-					up: async () => { throw new Error('fail in m2') },
-				}],
+				changes: [
+					{
+						kind: 'execute',
+						up: async () => {
+							throw new Error('fail in m2')
+						},
+					},
+				],
 			}
 			const migrator = Migrator.from(repo, adapter).migrations([m1, m2]).build()
-			await expect(
-				repo.session(() => migrator.up()),
-			).rejects.toThrow()
+			await expect(repo.session(() => migrator.up())).rejects.toThrow()
 
 			const recorded = await adapter.loadMigrations()
 			expect(recorded).toHaveLength(0)
@@ -564,26 +670,34 @@ if (import.meta.vitest) {
 			const { adapter, repo } = makeEnv()
 			const order: string[] = []
 			let resolveGate!: () => void
-			const gate = new Promise<void>((r) => { resolveGate = r })
+			const gate = new Promise<void>((r) => {
+				resolveGate = r
+			})
 
 			const migrations: Migration<typeof adapter>[] = [
 				{
 					id: '0001',
-					changes: [{
-						kind: 'execute',
-						up: async () => {
-							order.push('0001-start')
-							await gate
-							order.push('0001-end')
+					changes: [
+						{
+							kind: 'execute',
+							up: async () => {
+								order.push('0001-start')
+								await gate
+								order.push('0001-end')
+							},
 						},
-					}],
+					],
 				},
 				{
 					id: '0002',
-					changes: [{
-						kind: 'execute',
-						up: async () => { order.push('0002') },
-					}],
+					changes: [
+						{
+							kind: 'execute',
+							up: async () => {
+								order.push('0002')
+							},
+						},
+					],
 				},
 			]
 
@@ -608,17 +722,19 @@ if (import.meta.vitest) {
 			const m: Migration<typeof adapter> = {
 				id: '0001-retry',
 				tx: false,
-				changes: [{
-					kind: 'execute',
-					up: async (r) => {
-						callCount++
-						if (callCount === 1) {
-							await r.on(UserSchema).one().create({ id: 'partial', email: 'p@test.com' })
-							throw new Error('first attempt fails')
-						}
-						await r.on(UserSchema).one().create({ id: 'complete', email: 'c@test.com' })
+				changes: [
+					{
+						kind: 'execute',
+						up: async (r) => {
+							callCount++
+							if (callCount === 1) {
+								await r.on(UserSchema).one().create({ id: 'partial', email: 'p@test.com' })
+								throw new Error('first attempt fails')
+							}
+							await r.on(UserSchema).one().create({ id: 'complete', email: 'c@test.com' })
+						},
 					},
-				}],
+				],
 			}
 
 			const migrator = Migrator.from(repo, adapter).migrations([m]).build()
@@ -639,13 +755,17 @@ if (import.meta.vitest) {
 		})
 
 		test('type-level: withoutLock() accepted when adapter lacks acquireMigrationLock', async () => {
-			const { OrmAdapter } = await import('../orm-adapter')
+			const { OrmAdapter } = await import('../orm-adapter.js')
 			class NoLockAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({ table: v.string() })
 				readonly supportedFieldTypes = ['string'] as const
-				async loadMigrations() { return [] }
+				async loadMigrations() {
+					return []
+				}
 				async recordMigration() {}
-				async session<T>(fn: () => Promise<T>): Promise<T> { return fn() }
+				async session<T>(fn: () => Promise<T>): Promise<T> {
+					return fn()
+				}
 			}
 			const nlAdapter = new (NoLockAdapter as any)() as NoLockAdapter
 			const nlRepo = new Repo({ adapter: nlAdapter, resolve: (name) => ({ table: name }) })
@@ -658,9 +778,39 @@ if (import.meta.vitest) {
 			const { adapter, repo } = makeEnv()
 			const order: string[] = []
 			const migrations: Migration<typeof adapter>[] = [
-				{ id: 'm-001', changes: [{ kind: 'execute', up: async () => { order.push('m-001') } }] },
-				{ id: 'm-002', changes: [{ kind: 'execute', up: async () => { order.push('m-002') } }] },
-				{ id: 'm-003', changes: [{ kind: 'execute', up: async () => { order.push('m-003') } }] },
+				{
+					id: 'm-001',
+					changes: [
+						{
+							kind: 'execute',
+							up: async () => {
+								order.push('m-001')
+							},
+						},
+					],
+				},
+				{
+					id: 'm-002',
+					changes: [
+						{
+							kind: 'execute',
+							up: async () => {
+								order.push('m-002')
+							},
+						},
+					],
+				},
+				{
+					id: 'm-003',
+					changes: [
+						{
+							kind: 'execute',
+							up: async () => {
+								order.push('m-003')
+							},
+						},
+					],
+				},
 			]
 			const migrator = Migrator.from(repo, adapter).migrations(migrations).build()
 			const result = await migrator.up({ to: 'm-002' })
@@ -686,7 +836,17 @@ if (import.meta.vitest) {
 			const { adapter, repo } = makeEnv()
 			let executed = false
 			const migrations: Migration<typeof adapter>[] = [
-				{ id: 'm-001', changes: [{ kind: 'execute', up: async () => { executed = true } }] },
+				{
+					id: 'm-001',
+					changes: [
+						{
+							kind: 'execute',
+							up: async () => {
+								executed = true
+							},
+						},
+					],
+				},
 			]
 			const migrator = Migrator.from(repo, adapter).migrations(migrations).build()
 			await expect(migrator.up({ to: 'unknown' })).rejects.toThrow(OrmMigrationError)
@@ -735,7 +895,17 @@ if (import.meta.vitest) {
 			let executed = false
 			const migrations: Migration<typeof adapter>[] = [
 				{ id: '0001', changes: [] },
-				{ id: '0002', changes: [{ kind: 'execute', up: async () => { executed = true } }] },
+				{
+					id: '0002',
+					changes: [
+						{
+							kind: 'execute',
+							up: async () => {
+								executed = true
+							},
+						},
+					],
+				},
 				{ id: '0003', changes: [] },
 			]
 			const migrator = Migrator.from(repo, adapter).migrations(migrations).build()
@@ -759,9 +929,7 @@ if (import.meta.vitest) {
 		test('orphan migration in tracker throws OrmMigrationError with phase load', async () => {
 			const { adapter, repo } = makeEnv()
 			await adapter.recordMigration('ghost-001', Date.now())
-			const migrations: Migration<typeof adapter>[] = [
-				{ id: '0001', changes: [] },
-			]
+			const migrations: Migration<typeof adapter>[] = [{ id: '0001', changes: [] }]
 			const migrator = Migrator.from(repo, adapter).migrations(migrations).build()
 			try {
 				await migrator.up()
@@ -777,7 +945,14 @@ if (import.meta.vitest) {
 			const { adapter, repo } = makeEnv()
 			const m: Migration<typeof adapter> = {
 				id: '0001',
-				changes: [{ kind: 'execute', up: async () => { throw new Error('user boom') } }],
+				changes: [
+					{
+						kind: 'execute',
+						up: async () => {
+							throw new Error('user boom')
+						},
+					},
+				],
 			}
 			const migrator = Migrator.from(repo, adapter).migrations([m]).build()
 			try {
@@ -811,7 +986,9 @@ if (import.meta.vitest) {
 
 		test('failing acquireMigrationLock throws OrmMigrationError with phase lock', async () => {
 			const { adapter, repo } = makeEnv()
-			adapter.acquireMigrationLock = async () => { throw new Error('lock boom') }
+			adapter.acquireMigrationLock = async () => {
+				throw new Error('lock boom')
+			}
 			const m: Migration<typeof adapter> = { id: '0001', changes: [] }
 			const migrator = Migrator.from(repo, adapter).migrations([m]).build()
 			try {

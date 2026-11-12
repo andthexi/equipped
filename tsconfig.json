@@ -1,6 +1,7 @@
 {
-	"extends": "@k11/configs/tsconfig/lib",
+	"extends": "xi-configs/tsconfig/node-library",
 	"compilerOptions": {
+		"noImplicitAny": false,
 		"types": ["@types/node", "vitest/importMeta"]
 	},
 	"include": ["src"],

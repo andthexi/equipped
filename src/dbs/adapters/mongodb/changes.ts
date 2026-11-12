@@ -1,15 +1,18 @@
-import { Collection, type Filter } from 'mongodb'
+import type { Collection, Filter } from 'mongodb'
 import { differ } from 'valleyed'
 
-import type { MongoDbConfig } from './pipes'
-import { EquippedError } from '../../../errors'
-import { Instance } from '../../../instance'
-import { retry } from '../../../utilities'
-import { DbChange, TopicPrefix } from '../base/changes'
-import * as core from '../base/core'
-import type { DbChangeConfig } from '../base/types'
+import { EquippedError } from '../../../errors/index.js'
+import { Instance } from '../../../instance/index.js'
+import { retry } from '../../../utilities/index.js'
+import { DbChange, TopicPrefix } from '../base/changes.js'
+import type * as core from '../base/core.js'
+import type { DbChangeConfig } from '../base/types.js'
+import type { MongoDbConfig } from './pipes.js'
 
-export class MongoDbChange<Model extends core.Model<{ _id: string }>, Entity extends core.Entity> extends DbChange<Model, Entity> {
+export class MongoDbChange<Model extends core.Model<{ _id: string }>, Entity extends core.Entity> extends DbChange<
+	Model,
+	Entity
+> {
 	#started = false
 
 	constructor(

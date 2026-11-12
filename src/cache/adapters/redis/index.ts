@@ -1,10 +1,10 @@
 import { Cluster, Redis, type RedisOptions } from 'ioredis'
 import { v } from 'valleyed'
 
-import { EquippedError } from '../../../errors'
-import { Instance } from '../../../instance'
-import { configurable } from '../../../utilities'
-import { Cache } from '../base'
+import { EquippedError } from '../../../errors/index.js'
+import { Instance } from '../../../instance/index.js'
+import { configurable } from '../../../utilities/index.js'
+import { Cache } from '../base.js'
 
 export const redisConfigPipe = () =>
 	v.meta(
@@ -76,7 +76,9 @@ if (import.meta.vitest) {
 		vi.spyOn(Instance, 'on').mockImplementation((event, _cb, options) => {
 			hookCalls.push({ event, options })
 		})
-		vi.spyOn(Instance, 'get').mockReturnValue({ getScopedName: (_name: string, _sep: string) => `test:${_name}` } as any)
+		vi.spyOn(Instance, 'get').mockReturnValue({
+			getScopedName: (_name: string, _sep: string) => `test:${_name}`,
+		} as any)
 	})
 
 	afterEach(() => {

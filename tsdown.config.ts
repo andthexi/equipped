@@ -1,7 +1,6 @@
-import { fixImportsPlugin } from 'esbuild-fix-imports-plugin'
-import { defineConfig, Options } from 'tsup'
+import { defineConfig, type UserConfig } from 'tsdown'
 
-const entry = [
+const entryFiles = [
 	'src/index.ts',
 	'src/cache/index.ts',
 	'src/cache/adapters/in-memory/index.ts',
@@ -29,54 +28,57 @@ const entry = [
 	'src/validations/index.ts',
 ]
 
-const commonOptions: Options = {
+const entry = Object.fromEntries(entryFiles.map((file) => [file.replace(/^src\//, '').replace(/\.ts$/, ''), file]))
+
+const commonOptions = {
 	entry,
-	sourcemap: true,
-	clean: true,
-	dts: false,
-	minify: false,
 	platform: 'node',
+	target: false,
+	hash: false,
+	dts: false,
+	deps: { neverBundle: true },
 	define: { 'import.meta.vitest': 'undefined' },
-	esbuildPlugins: [fixImportsPlugin()],
-	esbuildOptions(options) {
-		options.platform = 'node'
-	},
-}
+} satisfies UserConfig
 
 export default defineConfig([
 	{
 		...commonOptions,
+		name: 'esm',
 		format: 'esm',
 		outDir: 'dist/esm',
-		outExtension: () => ({ js: '.mjs' }),
+		sourcemap: true,
+		clean: true,
+		minify: false,
+		outExtensions: () => ({ js: '.mjs' }),
 	},
 	{
 		...commonOptions,
+		name: 'esm-min',
 		format: 'esm',
 		outDir: 'dist/esm',
-		minify: true,
-		outExtension: () => ({ js: '.min.mjs' }),
+		sourcemap: true,
 		clean: false,
+		minify: true,
+		outExtensions: () => ({ js: '.min.mjs' }),
 	},
 	{
 		...commonOptions,
+		name: 'cjs',
 		format: 'cjs',
 		outDir: 'dist/cjs',
-		outExtension: () => ({ js: '.cjs' }),
+		sourcemap: true,
+		clean: true,
+		minify: false,
+		outExtensions: () => ({ js: '.cjs' }),
 	},
 	{
 		...commonOptions,
+		name: 'cjs-min',
 		format: 'cjs',
 		outDir: 'dist/cjs',
-		minify: true,
-		outExtension: () => ({ js: '.min.cjs' }),
+		sourcemap: true,
 		clean: false,
-	},
-	{
-		...commonOptions,
-		format: 'esm',
-		outDir: 'dist/types',
-		sourcemap: false,
-		dts: { entry },
+		minify: true,
+		outExtensions: () => ({ js: '.min.cjs' }),
 	},
 ])

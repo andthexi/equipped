@@ -1,14 +1,14 @@
-import type { InferRawArgs, InferRawReturn } from '../adapter'
-import type { OrmUse } from '../adapters/base'
-import { OrmNotFoundError, type OrmNotFoundOperation } from '../errors'
-import { toFieldName, type AnyField, type Field } from '../fields'
-import { FilterGroup, type FilterFactory } from '../filter'
-import type { AggregateSpec } from '../orm-adapter'
-import { OrderBy, type IterationOptions } from '../query-options'
-import type { AnyPreloadDef } from '../relations'
-import type { AnySchema, SchemaOutput } from '../schema'
-import type { SchemaCreateInput, SchemaUpdateInput } from '../schema-validations'
-import { applyComputedSelection, planSelection } from './internals/computeds'
+import type { InferRawArgs, InferRawReturn } from '../adapter.js'
+import type { OrmUse } from '../adapters/base.js'
+import { OrmNotFoundError, type OrmNotFoundOperation } from '../errors/index.js'
+import { toFieldName, type AnyField, type Field } from '../fields.js'
+import { FilterGroup, type FilterFactory } from '../filter.js'
+import type { AggregateSpec } from '../orm-adapter.js'
+import { OrderBy, type IterationOptions } from '../query-options.js'
+import type { AnyPreloadDef } from '../relations.js'
+import type { SchemaCreateInput, SchemaUpdateInput } from '../schema-validations.js'
+import type { AnySchema, SchemaOutput } from '../schema.js'
+import { applyComputedSelection, planSelection } from './internals/computeds.js'
 import {
 	runAggregate,
 	runAllCount,
@@ -23,37 +23,46 @@ import {
 	runOneRead,
 	runOneUpdate,
 	runOneUpsert,
-} from './internals/executors'
-import { resolvePreloads } from './internals/preloads'
-import type { ReadLimitSource, ReadOffsetSource } from './internals/query-shape'
-import type { Paginated, SelectedWithPreloads } from './internals/types'
+} from './internals/executors.js'
+import { resolvePreloads } from './internals/preloads.js'
+import type { ReadLimitSource, ReadOffsetSource } from './internals/query-shape.js'
+import type { Paginated, SelectedWithPreloads } from './internals/types.js'
 
 export type { Paginated }
 
 type MaybeNull<T, Req extends boolean> = Req extends true ? T : T | null
 type SchemaPrimaryKeyValue<S extends AnySchema> = SchemaOutput<S>[S['pkField']['name'] & keyof SchemaOutput<S>]
-export type UpsertInput<S extends AnySchema> = { create: SchemaCreateInput<S> } | { create: SchemaCreateInput<S>; update: SchemaUpdateInput<S> }
+export type UpsertInput<S extends AnySchema> =
+	{ create: SchemaCreateInput<S> } | { create: SchemaCreateInput<S>; update: SchemaUpdateInput<S> }
 type ReadState<Sel extends string, P extends readonly AnyPreloadDef[] = readonly AnyPreloadDef[]> = {
 	where?: FilterGroup
 	select?: readonly Sel[]
 	preloads?: P
 }
 
-export type HasMethod<A, Method extends string> =
-	Method extends keyof A
-		? A[Method] extends (...args: any) => any
-			? true
-			: false
+export type HasMethod<A, Method extends string> = Method extends keyof A
+	? A[Method] extends (...args: any) => any
+		? true
 		: false
+	: false
 
-export type OneBuilderSurface<S extends AnySchema, A = unknown, Sel extends string = never, P extends readonly AnyPreloadDef[] = [], Req extends boolean = false> =
-	OneBuilder<S, A, Sel, P, Req> &
+export type OneBuilderSurface<
+	S extends AnySchema,
+	A = unknown,
+	Sel extends string = never,
+	P extends readonly AnyPreloadDef[] = [],
+	Req extends boolean = false,
+> = OneBuilder<S, A, Sel, P, Req> &
 	(HasMethod<A, 'updateMany'> extends true ? {} : { update: never }) &
 	(HasMethod<A, 'deleteMany'> extends true ? {} : { delete: never }) &
 	(HasMethod<A, 'upsertOne'> extends true ? {} : { upsert: never })
 
-export type AllBuilderSurface<S extends AnySchema, A = unknown, Sel extends string = never, P extends readonly AnyPreloadDef[] = []> =
-	AllBuilder<S, A, Sel, P> &
+export type AllBuilderSurface<
+	S extends AnySchema,
+	A = unknown,
+	Sel extends string = never,
+	P extends readonly AnyPreloadDef[] = [],
+> = AllBuilder<S, A, Sel, P> &
 	(HasMethod<A, 'iterateMany'> extends true ? {} : { iterate: never }) &
 	(HasMethod<A, 'updateMany'> extends true ? {} : { update: never }) &
 	(HasMethod<A, 'deleteMany'> extends true ? {} : { delete: never }) &
@@ -62,8 +71,7 @@ export type AllBuilderSurface<S extends AnySchema, A = unknown, Sel extends stri
 
 type HasNonEmptyAggregateOps<A> = A extends { aggregateOps: readonly [any, ...any[]] } ? true : false
 
-export type SchemaRefSurface<S extends AnySchema, A = unknown> =
-	Omit<SchemaRef<S, A>, 'raw' | 'aggregate'> &
+export type SchemaRefSurface<S extends AnySchema, A = unknown> = Omit<SchemaRef<S, A>, 'raw' | 'aggregate'> &
 	(HasMethod<A, 'raw'> extends true
 		? { raw: <T = InferRawReturn<A>>(...args: InferRawArgs<A>) => Promise<T> }
 		: { raw: never }) &
@@ -71,7 +79,13 @@ export type SchemaRefSurface<S extends AnySchema, A = unknown> =
 		? { aggregate: SchemaRef<S, A>['aggregate'] }
 		: { aggregate: never })
 
-type ReadBuilderFor<TBuilder, S extends AnySchema, A, Sel extends string, P extends readonly AnyPreloadDef[]> = TBuilder extends {
+type ReadBuilderFor<
+	TBuilder,
+	S extends AnySchema,
+	A,
+	Sel extends string,
+	P extends readonly AnyPreloadDef[],
+> = TBuilder extends {
 	_builderKind: 'one'
 	_req: infer Req extends boolean
 }
@@ -112,7 +126,12 @@ export class SchemaContext<S extends AnySchema> {
 	}
 }
 
-abstract class ReadSelectState<S extends AnySchema, A = unknown, Sel extends string = never, P extends readonly AnyPreloadDef[] = []> {
+abstract class ReadSelectState<
+	S extends AnySchema,
+	A = unknown,
+	Sel extends string = never,
+	P extends readonly AnyPreloadDef[] = [],
+> {
 	protected readonly _context: SchemaContext<S>
 	protected _where: FilterGroup
 	protected _select: readonly Sel[] | undefined
@@ -134,7 +153,9 @@ abstract class ReadSelectState<S extends AnySchema, A = unknown, Sel extends str
 		}) as unknown as this
 	}
 
-	select<NewSel extends keyof SchemaOutput<S> & string>(fields: readonly NewSel[]): ReadBuilderFor<this, S, A, NewSel, P> {
+	select<NewSel extends keyof SchemaOutput<S> & string>(
+		fields: readonly NewSel[],
+	): ReadBuilderFor<this, S, A, NewSel, P> {
 		return this._clone<NewSel, P>({ select: fields })
 	}
 
@@ -181,14 +202,24 @@ export class SchemaRef<S extends AnySchema, A = unknown> {
 	}
 }
 
-export class OneBuilder<S extends AnySchema, A = unknown, Sel extends string = never, P extends readonly AnyPreloadDef[] = [], Req extends boolean = false> extends ReadSelectState<S, A, Sel, P> {
+export class OneBuilder<
+	S extends AnySchema,
+	A = unknown,
+	Sel extends string = never,
+	P extends readonly AnyPreloadDef[] = [],
+	Req extends boolean = false,
+> extends ReadSelectState<S, A, Sel, P> {
 	declare readonly _builderKind: 'one'
 	declare readonly _req: Req
 
 	protected _required: boolean
 	protected _requiredMessage: string | undefined
 
-	constructor(context: SchemaContext<S>, state?: ReadState<Sel, P>, reqState?: { required: boolean; message?: string }) {
+	constructor(
+		context: SchemaContext<S>,
+		state?: ReadState<Sel, P>,
+		reqState?: { required: boolean; message?: string },
+	) {
 		super(context, state)
 		this._required = reqState?.required ?? false
 		this._requiredMessage = reqState?.message
@@ -204,17 +235,28 @@ export class OneBuilder<S extends AnySchema, A = unknown, Sel extends string = n
 	}
 
 	required(this: OneBuilder<S, A, Sel, P, false>, message?: string): OneBuilderSurface<S, A, Sel, P, true> {
-		return new OneBuilder<S, A, Sel, P, true>(this._context, this._readState(), { required: true, message }) as OneBuilderSurface<S, A, Sel, P, true>
+		return new OneBuilder<S, A, Sel, P, true>(this._context, this._readState(), {
+			required: true,
+			message,
+		}) as OneBuilderSurface<S, A, Sel, P, true>
 	}
 
 	private _assertFound(result: unknown, operation: OrmNotFoundOperation): void {
 		if (this._required && result === null) {
-			throw new OrmNotFoundError({ schema: this._context.schema.name, operation, where: this._where, message: this._requiredMessage })
+			throw new OrmNotFoundError({
+				schema: this._context.schema.name,
+				operation,
+				where: this._where,
+				message: this._requiredMessage,
+			})
 		}
 	}
 
 	protected _clone<NewSel extends string, NewP extends readonly AnyPreloadDef[]>(next: ReadState<NewSel, NewP>) {
-		return new OneBuilder<S, A, NewSel, NewP, Req>(this._context, this._readState(next), { required: this._required, message: this._requiredMessage }) as any
+		return new OneBuilder<S, A, NewSel, NewP, Req>(this._context, this._readState(next), {
+			required: this._required,
+			message: this._requiredMessage,
+		}) as any
 	}
 
 	create(data: SchemaCreateInput<S>) {
@@ -275,7 +317,12 @@ export class OneBuilder<S extends AnySchema, A = unknown, Sel extends string = n
 	}
 }
 
-export class AllBuilder<S extends AnySchema, A = unknown, Sel extends string = never, P extends readonly AnyPreloadDef[] = []> extends ReadSelectState<S, A, Sel, P> {
+export class AllBuilder<
+	S extends AnySchema,
+	A = unknown,
+	Sel extends string = never,
+	P extends readonly AnyPreloadDef[] = [],
+> extends ReadSelectState<S, A, Sel, P> {
 	declare readonly _builderKind: 'all'
 
 	#orderBy: OrderBy[]
@@ -293,17 +340,15 @@ export class AllBuilder<S extends AnySchema, A = unknown, Sel extends string = n
 		this.#offsetSource = queryState?.offsetSource
 	}
 
-	#withQuery(queryOverride: Partial<{ orderBy: OrderBy[]; limitSource: ReadLimitSource; offsetSource: ReadOffsetSource }>) {
+	#withQuery(
+		queryOverride: Partial<{ orderBy: OrderBy[]; limitSource: ReadLimitSource; offsetSource: ReadOffsetSource }>,
+	) {
 		const has = (key: keyof typeof queryOverride) => Object.prototype.hasOwnProperty.call(queryOverride, key)
-		return new AllBuilder<S, A, Sel, P>(
-			this._context,
-			this._readState(),
-			{
-				orderBy: has('orderBy') ? queryOverride.orderBy : [...this.#orderBy],
-				limitSource: has('limitSource') ? queryOverride.limitSource : this.#limitSource,
-				offsetSource: has('offsetSource') ? queryOverride.offsetSource : this.#offsetSource,
-			},
-		) as this
+		return new AllBuilder<S, A, Sel, P>(this._context, this._readState(), {
+			orderBy: has('orderBy') ? queryOverride.orderBy : [...this.#orderBy],
+			limitSource: has('limitSource') ? queryOverride.limitSource : this.#limitSource,
+			offsetSource: has('offsetSource') ? queryOverride.offsetSource : this.#offsetSource,
+		}) as this
 	}
 
 	protected _clone<NewSel extends string, NewP extends readonly AnyPreloadDef[]>(next: ReadState<NewSel, NewP>) {
@@ -392,14 +437,18 @@ export class AllBuilder<S extends AnySchema, A = unknown, Sel extends string = n
 	}
 
 	iterate(options?: IterationOptions) {
-		return runAllIterate(this._context, {
-			where: this._where,
-			select: this._select,
-			preloads: this._preloads,
-			orderBy: this.#orderBy,
-			limitSource: this.#limitSource,
-			offsetSource: this.#offsetSource,
-		}, options)
+		return runAllIterate(
+			this._context,
+			{
+				where: this._where,
+				select: this._select,
+				preloads: this._preloads,
+				orderBy: this.#orderBy,
+				limitSource: this.#limitSource,
+				offsetSource: this.#offsetSource,
+			},
+			options,
+		)
 	}
 }
 
@@ -426,7 +475,12 @@ export class AggregateBuilder<
 
 	constructor(
 		context: SchemaContext<S>,
-		state?: { where?: FilterGroup; having?: FilterGroup; aggregates?: readonly AggregateEntry[]; groupBy?: readonly string[] },
+		state?: {
+			where?: FilterGroup
+			having?: FilterGroup
+			aggregates?: readonly AggregateEntry[]
+			groupBy?: readonly string[]
+		},
 	) {
 		this.#context = context
 		this.#where = state?.where ? state.where.clone() : FilterGroup.create()
@@ -462,56 +516,90 @@ export class AggregateBuilder<
 	groupBy<F extends readonly Field<string | number | boolean | Date>[]>(
 		...fields: HasGroupBy extends true ? [never] : [...F]
 	): AggregateBuilder<S, A, Aggs, GroupKeys & FieldsToGroupKeys<F>, true, HasWhere, HasHaving> {
-		return new AggregateBuilder<S, A, Aggs, GroupKeys & FieldsToGroupKeys<F>, true, HasWhere, HasHaving>(this.#context, {
-			...this.#state,
-			groupBy: (fields as readonly AnyField[]).map((f) => toFieldName(f)),
-		})
+		return new AggregateBuilder<S, A, Aggs, GroupKeys & FieldsToGroupKeys<F>, true, HasWhere, HasHaving>(
+			this.#context,
+			{
+				...this.#state,
+				groupBy: (fields as readonly AnyField[]).map((f) => toFieldName(f)),
+			},
+		)
 	}
 
 	count<K extends string>(
 		...[alias]: K extends keyof Aggs ? [never] : [alias: K]
 	): AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving> {
-		return new AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(this.#context, {
-			...this.#state,
-			aggregates: [...this.#aggregates, { fn: 'count', alias: alias as string }],
-		})
+		return new AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(
+			this.#context,
+			{
+				...this.#state,
+				aggregates: [...this.#aggregates, { fn: 'count', alias: alias as string }],
+			},
+		)
 	}
 
 	countDistinct<K extends string>(
 		field: AnyField,
 		...[alias]: K extends keyof Aggs ? [never] : [alias: K]
 	): AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving> {
-		return new AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(this.#context, {
-			...this.#state,
-			aggregates: [...this.#aggregates, { fn: 'countDistinct', field: toFieldName(field), alias: alias as string }],
-		})
+		return new AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(
+			this.#context,
+			{
+				...this.#state,
+				aggregates: [
+					...this.#aggregates,
+					{ fn: 'countDistinct', field: toFieldName(field), alias: alias as string },
+				],
+			},
+		)
 	}
 
 	sum<K extends string>(
 		field: Field<number>,
 		...[alias]: K extends keyof Aggs ? [never] : [alias: K]
 	): AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving> {
-		return new AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(this.#context, {
-			...this.#state,
-			aggregates: [...this.#aggregates, { fn: 'sum', field: toFieldName(field), alias: alias as string }],
-		})
+		return new AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(
+			this.#context,
+			{
+				...this.#state,
+				aggregates: [...this.#aggregates, { fn: 'sum', field: toFieldName(field), alias: alias as string }],
+			},
+		)
 	}
 
 	avg<K extends string>(
 		field: Field<number>,
 		...[alias]: K extends keyof Aggs ? [never] : [alias: K]
 	): AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving> {
-		return new AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(this.#context, {
-			...this.#state,
-			aggregates: [...this.#aggregates, { fn: 'avg', field: toFieldName(field), alias: alias as string }],
-		})
+		return new AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(
+			this.#context,
+			{
+				...this.#state,
+				aggregates: [...this.#aggregates, { fn: 'avg', field: toFieldName(field), alias: alias as string }],
+			},
+		)
 	}
 
 	min<F extends Field<number | string | Date>, K extends string>(
 		field: F,
 		...[alias]: K extends keyof Aggs ? [never] : [alias: K]
-	): AggregateBuilder<S, A, Aggs & Record<K, F extends Field<infer V> ? V : never>, GroupKeys, HasGroupBy, HasWhere, HasHaving> {
-		return new AggregateBuilder<S, A, Aggs & Record<K, F extends Field<infer V> ? V : never>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(this.#context, {
+	): AggregateBuilder<
+		S,
+		A,
+		Aggs & Record<K, F extends Field<infer V> ? V : never>,
+		GroupKeys,
+		HasGroupBy,
+		HasWhere,
+		HasHaving
+	> {
+		return new AggregateBuilder<
+			S,
+			A,
+			Aggs & Record<K, F extends Field<infer V> ? V : never>,
+			GroupKeys,
+			HasGroupBy,
+			HasWhere,
+			HasHaving
+		>(this.#context, {
 			...this.#state,
 			aggregates: [...this.#aggregates, { fn: 'min', field: toFieldName(field), alias: alias as string }],
 		})
@@ -520,8 +608,24 @@ export class AggregateBuilder<
 	max<F extends Field<number | string | Date>, K extends string>(
 		field: F,
 		...[alias]: K extends keyof Aggs ? [never] : [alias: K]
-	): AggregateBuilder<S, A, Aggs & Record<K, F extends Field<infer V> ? V : never>, GroupKeys, HasGroupBy, HasWhere, HasHaving> {
-		return new AggregateBuilder<S, A, Aggs & Record<K, F extends Field<infer V> ? V : never>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(this.#context, {
+	): AggregateBuilder<
+		S,
+		A,
+		Aggs & Record<K, F extends Field<infer V> ? V : never>,
+		GroupKeys,
+		HasGroupBy,
+		HasWhere,
+		HasHaving
+	> {
+		return new AggregateBuilder<
+			S,
+			A,
+			Aggs & Record<K, F extends Field<infer V> ? V : never>,
+			GroupKeys,
+			HasGroupBy,
+			HasWhere,
+			HasHaving
+		>(this.#context, {
 			...this.#state,
 			aggregates: [...this.#aggregates, { fn: 'max', field: toFieldName(field), alias: alias as string }],
 		})
@@ -551,18 +655,20 @@ export class AggregateBuilder<
 if (import.meta.vitest) {
 	const { describe, test, expect, expectTypeOf, beforeEach, vi } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { InMemoryAdapter } = await import('../adapters/in-memory')
-	const { OrmValidationError } = await import('../errors')
-	const { OrmAdapter } = await import('../orm-adapter')
-	const { Relations } = await import('../relations')
-	const { Repo } = await import('./repo')
-	const { Schema } = await import('../schema')
+	const { InMemoryAdapter } = await import('../adapters/in-memory/index.js')
+	const { OrmValidationError } = await import('../errors/index.js')
+	const { OrmAdapter } = await import('../orm-adapter.js')
+	const { Relations } = await import('../relations.js')
+	const { Repo } = await import('./repo.js')
+	const { Schema } = await import('../schema.js')
 
 	describe('builders', () => {
 		let repo: any
 		beforeEach(() => {
 			const adapter = InMemoryAdapter.create({})
-			repo = Repo.from(adapter).resolve((name) => ({ table: name })).build()
+			repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
 		})
 
 		test('update() executes and returns updated row', async () => {
@@ -636,15 +742,27 @@ if (import.meta.vitest) {
 		let repo: any
 		beforeEach(() => {
 			const adapter = InMemoryAdapter.create({})
-			repo = Repo.from(adapter).resolve((name) => ({ table: name })).build()
+			repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
 		})
 
 		describe('type narrowing', () => {
 			type IsExact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
-			type TestA = { findOne: (...a: any[]) => any; createOne: (...a: any[]) => any; createMany: (...a: any[]) => any; updateMany: (...a: any[]) => any; deleteMany: (...a: any[]) => any; upsertOne: (...a: any[]) => any; findMany: (...a: any[]) => any; deleteOne: (...a: any[]) => any; updateOne: (...a: any[]) => any }
+			type TestA = {
+				findOne: (...a: any[]) => any
+				createOne: (...a: any[]) => any
+				createMany: (...a: any[]) => any
+				updateMany: (...a: any[]) => any
+				deleteMany: (...a: any[]) => any
+				upsertOne: (...a: any[]) => any
+				findMany: (...a: any[]) => any
+				deleteOne: (...a: any[]) => any
+				updateOne: (...a: any[]) => any
+			}
 			type S = typeof UserSchema
-			type Result = import('./internals/types').SelectedWithPreloads<S, never, []>
-			type NameOnly = import('./internals/types').SelectedWithPreloads<S, 'name', []>
+			type Result = import('./internals/types.js').SelectedWithPreloads<S, never, []>
+			type NameOnly = import('./internals/types.js').SelectedWithPreloads<S, 'name', []>
 
 			test('find() returns T | null without .required()', () => {
 				type R = ReturnType<OneBuilderSurface<S, TestA, never, [], false>['find']>
@@ -695,9 +813,9 @@ if (import.meta.vitest) {
 
 		describe('runtime throw behaviour', () => {
 			test('.required().find() throws OrmNotFoundError when no row matched', async () => {
-				await expect(
-					repo.on(UserSchema).one().required().id('nonexistent').find(),
-				).rejects.toThrow(OrmNotFoundError)
+				await expect(repo.on(UserSchema).one().required().id('nonexistent').find()).rejects.toThrow(
+					OrmNotFoundError,
+				)
 			})
 
 			test('.required().update() throws OrmNotFoundError when no row matched', async () => {
@@ -707,9 +825,9 @@ if (import.meta.vitest) {
 			})
 
 			test('.required().delete() throws OrmNotFoundError when no row matched', async () => {
-				await expect(
-					repo.on(UserSchema).one().required().id('nonexistent').delete(),
-				).rejects.toThrow(OrmNotFoundError)
+				await expect(repo.on(UserSchema).one().required().id('nonexistent').delete()).rejects.toThrow(
+					OrmNotFoundError,
+				)
 			})
 
 			test('thrown error carries schema, operation, and where', async () => {
@@ -848,13 +966,18 @@ if (import.meta.vitest) {
 
 		function makeRepo() {
 			const adapter = InMemoryAdapter.create({})
-			return Repo.from(adapter).resolve((name) => ({ table: name })).build()
+			return Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
 		}
 
 		async function seedItems(repo: any, count: number) {
-			await repo.on(ItemSchema).all().create(
-				Array.from({ length: count }, (_, index) => ({ position: index + 1, name: `Item ${index + 1}` })),
-			)
+			await repo
+				.on(ItemSchema)
+				.all()
+				.create(
+					Array.from({ length: count }, (_, index) => ({ position: index + 1, name: `Item ${index + 1}` })),
+				)
 		}
 
 		function expectQueryShapeError(error: unknown, field?: string) {
@@ -897,8 +1020,22 @@ if (import.meta.vitest) {
 			const repo = makeRepo()
 			await seedItems(repo, 20)
 
-			const offsetWins = await repo.on(ItemSchema).all().orderBy('position', 'asc').limit(5).page(2).offset(10).find()
-			const pageWins = await repo.on(ItemSchema).all().orderBy('position', 'asc').limit(5).offset(10).page(2).find()
+			const offsetWins = await repo
+				.on(ItemSchema)
+				.all()
+				.orderBy('position', 'asc')
+				.limit(5)
+				.page(2)
+				.offset(10)
+				.find()
+			const pageWins = await repo
+				.on(ItemSchema)
+				.all()
+				.orderBy('position', 'asc')
+				.limit(5)
+				.offset(10)
+				.page(2)
+				.find()
 
 			expect(offsetWins.map((row) => row.position)).toEqual([11, 12, 13, 14, 15])
 			expect(pageWins.map((row) => row.position)).toEqual([6, 7, 8, 9, 10])
@@ -908,10 +1045,43 @@ if (import.meta.vitest) {
 			const repo = makeRepo()
 
 			for (const [field, read] of [
-				['page', () => repo.on(ItemSchema).all().page(0 as any).find()],
-				['limit', () => repo.on(ItemSchema).all().limit(0 as any).find()],
-				['limit', () => repo.on(ItemSchema).all().limit(undefined as any).page(2).find()],
-				['offset', () => repo.on(ItemSchema).all().offset(-1 as any).find()],
+				[
+					'page',
+					() =>
+						repo
+							.on(ItemSchema)
+							.all()
+							.page(0 as any)
+							.find(),
+				],
+				[
+					'limit',
+					() =>
+						repo
+							.on(ItemSchema)
+							.all()
+							.limit(0 as any)
+							.find(),
+				],
+				[
+					'limit',
+					() =>
+						repo
+							.on(ItemSchema)
+							.all()
+							.limit(undefined as any)
+							.page(2)
+							.find(),
+				],
+				[
+					'offset',
+					() =>
+						repo
+							.on(ItemSchema)
+							.all()
+							.offset(-1 as any)
+							.find(),
+				],
 			] as const) {
 				try {
 					await read()
@@ -926,14 +1096,22 @@ if (import.meta.vitest) {
 			const repo = makeRepo()
 
 			try {
-				await repo.on(ItemSchema).one().select(['unknownField' as any]).find()
+				await repo
+					.on(ItemSchema)
+					.one()
+					.select(['unknownField' as any])
+					.find()
 				expect.unreachable('one().find() should have failed')
 			} catch (error) {
 				expectQueryShapeError(error, 'unknownField')
 			}
 
 			try {
-				await repo.on(ItemSchema).all().select(['unknownField' as any]).find()
+				await repo
+					.on(ItemSchema)
+					.all()
+					.select(['unknownField' as any])
+					.find()
 				expect.unreachable('all().find() should have failed')
 			} catch (error) {
 				expectQueryShapeError(error, 'unknownField')
@@ -944,9 +1122,19 @@ if (import.meta.vitest) {
 			const repo = makeRepo()
 
 			for (const read of [
-				() => repo.on(UserSchema).all().preload([{ def: {} as any }]).find(),
+				() =>
+					repo
+						.on(UserSchema)
+						.all()
+						.preload([{ def: {} as any }])
+						.find(),
 				() => repo.on(UserSchema).all().preload([PostRels.author]).find(),
-				() => repo.on(UserSchema).all().preload([{ def: UserRels.posts, preloads: [UserRels.posts] }]).find(),
+				() =>
+					repo
+						.on(UserSchema)
+						.all()
+						.preload([{ def: UserRels.posts, preloads: [UserRels.posts] }])
+						.find(),
 			]) {
 				try {
 					await read()
@@ -974,11 +1162,14 @@ if (import.meta.vitest) {
 				['limit', () => repo.on(ItemSchema).all().page(2).find()],
 				['limit', () => repo.on(ItemSchema).all().offset(2).find()],
 				['limit', () => repo.on(ItemSchema).all().page(2).paginate()],
-				['limit', async () => {
-					for await (const _row of repo.on(ItemSchema).all().page(2).iterate()) {
-						expect.unreachable('iterate should fail before yielding rows')
-					}
-				}],
+				[
+					'limit',
+					async () => {
+						for await (const _row of repo.on(ItemSchema).all().page(2).iterate()) {
+							expect.unreachable('iterate should fail before yielding rows')
+						}
+					},
+				],
 			] as const) {
 				try {
 					await read()
@@ -1014,7 +1205,12 @@ if (import.meta.vitest) {
 			const repo = makeRepo()
 			await seedItems(repo, 3)
 
-			const page = await repo.on(ItemSchema).all().where((q) => q.eq('name', 'missing')).limit(5).paginate()
+			const page = await repo
+				.on(ItemSchema)
+				.all()
+				.where((q) => q.eq('name', 'missing'))
+				.limit(5)
+				.paginate()
 
 			expect(page.items).toEqual([])
 			expect(page.docs).toEqual({ limit: 5, total: 0, count: 0 })
@@ -1071,7 +1267,11 @@ if (import.meta.vitest) {
 			const repo = makeRepo()
 			await seedItems(repo, 3)
 
-			const page = await repo.on(ItemSchema).all().where((q) => q.eq('name', 'missing')).paginate()
+			const page = await repo
+				.on(ItemSchema)
+				.all()
+				.where((q) => q.eq('name', 'missing'))
+				.paginate()
 
 			expect(page.items).toEqual([])
 			expect(page.docs).toEqual({ limit: 0, total: 0, count: 0 })
@@ -1080,12 +1280,15 @@ if (import.meta.vitest) {
 
 		test('.paginate() counts only the filter while page items honor limit and offset', async () => {
 			const repo = makeRepo()
-			await repo.on(ItemSchema).all().create([
-				{ position: 1, name: 'keep' },
-				{ position: 2, name: 'drop' },
-				{ position: 3, name: 'keep' },
-				{ position: 4, name: 'keep' },
-			])
+			await repo
+				.on(ItemSchema)
+				.all()
+				.create([
+					{ position: 1, name: 'keep' },
+					{ position: 2, name: 'drop' },
+					{ position: 3, name: 'keep' },
+					{ position: 4, name: 'keep' },
+				])
 
 			const page = await repo
 				.on(ItemSchema)
@@ -1132,7 +1335,12 @@ if (import.meta.vitest) {
 			await seedItems(repo, 3)
 			events.length = 0
 
-			const page = await repo.on(ItemSchema).all().where((q) => q.eq('name', 'Item 1')).limit(1).paginate()
+			const page = await repo
+				.on(ItemSchema)
+				.all()
+				.where((q) => q.eq('name', 'Item 1'))
+				.limit(1)
+				.paginate()
 
 			expect(events[0]).toBe('resolve')
 			expect(events).toContain('count:start')
@@ -1156,13 +1364,22 @@ if (import.meta.vitest) {
 			const repo = makeRepo()
 			const alice = await repo.on(UserSchema).one().create({ name: 'Alice' })
 			const bob = await repo.on(UserSchema).one().create({ name: 'Bob' })
-			await repo.on(PostSchema).all().create([
-				{ userId: alice.id, title: 'A1' },
-				{ userId: alice.id, title: 'A2' },
-				{ userId: bob.id, title: 'B1' },
-			])
+			await repo
+				.on(PostSchema)
+				.all()
+				.create([
+					{ userId: alice.id, title: 'A1' },
+					{ userId: alice.id, title: 'A2' },
+					{ userId: bob.id, title: 'B1' },
+				])
 
-			const page = await repo.on(UserSchema).all().orderBy('name', 'asc').preload([UserRels.posts]).limit(1).paginate()
+			const page = await repo
+				.on(UserSchema)
+				.all()
+				.orderBy('name', 'asc')
+				.preload([UserRels.posts])
+				.limit(1)
+				.paginate()
 
 			expect(page.items).toHaveLength(1)
 			expect(page.items[0].name).toBe('Alice')
@@ -1175,7 +1392,14 @@ if (import.meta.vitest) {
 			await seedItems(repo, 10)
 
 			const pageSource = await repo.on(ItemSchema).all().orderBy('position', 'asc').page(2).limit(3).paginate()
-			const offsetSource = await repo.on(ItemSchema).all().orderBy('position', 'asc').page(2).limit(2).offset(4).paginate()
+			const offsetSource = await repo
+				.on(ItemSchema)
+				.all()
+				.orderBy('position', 'asc')
+				.page(2)
+				.limit(2)
+				.offset(4)
+				.paginate()
 
 			expect(pageSource.items.map((row) => row.position)).toEqual([4, 5, 6])
 			expect(pageSource.pages.current).toBe(2)
@@ -1204,7 +1428,7 @@ if (import.meta.vitest) {
 		test('.paginate() is a no-argument AllBuilder terminal', () => {
 			type Adapter = { findMany: (...a: any[]) => any; count: (...a: any[]) => any }
 			type All = AllBuilderSurface<S, Adapter>
-			type Result = import('./internals/types').SelectedWithPreloads<S, never, []>
+			type Result = import('./internals/types.js').SelectedWithPreloads<S, never, []>
 
 			expectTypeOf<All['paginate']>().toBeFunction()
 			expectTypeOf<Parameters<All['paginate']>>().toEqualTypeOf<[]>()
@@ -1224,20 +1448,28 @@ if (import.meta.vitest) {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				readonly queryableOps = ['eq'] as const
-				async findMany() { return [] }
-				async count() { return 0 }
+				async findMany() {
+					return []
+				}
+				async count() {
+					return 0
+				}
 			}
 			class CountOnlyAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				readonly queryableOps = ['eq'] as const
-				async count() { return 0 }
+				async count() {
+					return 0
+				}
 			}
 			class FindOnlyAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				readonly queryableOps = ['eq'] as const
-				async findMany() { return [] }
+				async findMany() {
+					return []
+				}
 			}
 			type Full = AllBuilderSurface<S, FullAdapter>
 			type MissingFindMany = AllBuilderSurface<S, CountOnlyAdapter>

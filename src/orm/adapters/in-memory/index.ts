@@ -2,15 +2,29 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 
 import { v, differ } from 'valleyed'
 
-import { configurable } from '../../../utilities/configurable'
-import type { FieldTypeName } from '../../adapter'
-import { Filter, FilterGroup, type FilterChild } from '../../filter'
-import type { DiscoveredSchema, ForeignKeyAction } from '../../migrations/introspection-types'
-import type { AddFieldChange, AddForeignKeyChange, AddIndexChange, AnyFieldSpec, CreateTableChange, DropFieldChange, DropForeignKeyChange, DropIndexChange, DropTableChange, ModifyFieldChange, RenameFieldChange, RenameTableChange } from '../../migrations/types'
-import { OrmAdapter, type AggregateSpec } from '../../orm-adapter'
-import type { IterationQueryOptions, QueryOptions } from '../../query-options'
-import type { AnySchema } from '../../schema'
-import { IncOp, MaxOp, MinOp, MulOp, PatchOp, PullOp, PushOp, SetOp, UnsetOp, type AnyUpdateOp } from '../../updates'
+import { configurable } from '../../../utilities/configurable.js'
+import type { FieldTypeName } from '../../adapter.js'
+import { OrmValidationError } from '../../errors/validation.js'
+import { Filter, FilterGroup, type FilterChild } from '../../filter.js'
+import type { DiscoveredSchema, ForeignKeyAction } from '../../migrations/introspection-types.js'
+import type {
+	AddFieldChange,
+	AddForeignKeyChange,
+	AddIndexChange,
+	AnyFieldSpec,
+	CreateTableChange,
+	DropFieldChange,
+	DropForeignKeyChange,
+	DropIndexChange,
+	DropTableChange,
+	ModifyFieldChange,
+	RenameFieldChange,
+	RenameTableChange,
+} from '../../migrations/types.js'
+import { OrmAdapter, type AggregateSpec } from '../../orm-adapter.js'
+import type { IterationQueryOptions, QueryOptions } from '../../query-options.js'
+import type { AnySchema } from '../../schema.js'
+import { IncOp, MaxOp, MinOp, MulOp, PatchOp, PullOp, PushOp, SetOp, UnsetOp, type AnyUpdateOp } from '../../updates.js'
 
 const inMemoryConnectionPipe = () => v.object({})
 
@@ -22,7 +36,13 @@ export type InMemoryRepoConfig = {
 type MigrationRecord = { id: string; appliedAt: number }
 type TableMeta = { pk: { name: string; type: string }; fields: Map<string, AnyFieldSpec> }
 type IndexMeta = { table: string; on: readonly string[]; unique: boolean }
-type ForeignKeyMeta = { table: string; on: string; references: { table: string; column: string }; onDelete?: ForeignKeyAction; onUpdate?: ForeignKeyAction }
+type ForeignKeyMeta = {
+	table: string
+	on: string
+	references: { table: string; column: string }
+	onDelete?: ForeignKeyAction
+	onUpdate?: ForeignKeyAction
+}
 
 type Snapshot = {
 	stores: Map<string, Map<string, Record<string, unknown>>>
@@ -253,7 +273,21 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	readonly schemaConfigPipe = v.object({ table: v.string() })
 
 	readonly supportedFieldTypes = ['string', 'number', 'boolean', 'null', 'object', 'array', 'date'] as const
-	readonly queryableOps = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'notIn', 'like', 'exists', 'notExists', 'contains', 'notContains'] as const
+	readonly queryableOps = [
+		'eq',
+		'ne',
+		'gt',
+		'gte',
+		'lt',
+		'lte',
+		'in',
+		'notIn',
+		'like',
+		'exists',
+		'notExists',
+		'contains',
+		'notContains',
+	] as const
 	readonly updateOps = ['set', 'inc', 'mul', 'min', 'max', 'unset', 'push', 'pull', 'patch'] as const
 	readonly aggregateOps = ['count', 'countDistinct', 'sum', 'avg', 'min', 'max'] as const
 
@@ -269,13 +303,13 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		super(config)
 	}
 
-	#getStore(name: string) {
-		if (!this.stores.has(name)) this.stores.set(name, new Map())
-		return this.stores.get(name)!
-	}
-
-	#resolveStore(schema: AnySchema, config: unknown) {
-		return this.#getStore(resolveConfigName(schema, config as InMemoryRepoConfig))
+	#resolveStore(schema: AnySchema, config: unknown, create = false) {
+		const name = resolveConfigName(schema, config as InMemoryRepoConfig)
+		const existing = this.stores.get(name)
+		if (existing) return existing
+		const store = new Map<string, Record<string, unknown>>()
+		if (create) this.stores.set(name, store)
+		return store
 	}
 
 	#snapshot(): Snapshot {
@@ -312,8 +346,9 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async createMany(schema: AnySchema, config: unknown, data: Record<string, unknown>[]) {
+		if (data.length === 0) return []
 		const pk = schema.pkField.name
-		const store = this.#resolveStore(schema, config)
+		const store = this.#resolveStore(schema, config, true)
 		return data.map((d) => {
 			const row = clone(d)
 			store.set(String(row[pk]), row)
@@ -353,8 +388,14 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 
 	async *iterateMany(schema: AnySchema, config: unknown, group: FilterGroup, options?: IterationQueryOptions) {
 		const store = this.#resolveStore(schema, config)
-		const rows = applyOptions([...store.values()].filter((doc) => matchesFilter(doc, group)).map((doc) => clone(doc)), options)
-		const batchSize = typeof options?.batchSize === 'number' && Number.isSafeInteger(options.batchSize) && options.batchSize > 0 ? options.batchSize : 1
+		const rows = applyOptions(
+			[...store.values()].filter((doc) => matchesFilter(doc, group)).map((doc) => clone(doc)),
+			options,
+		)
+		const batchSize =
+			typeof options?.batchSize === 'number' && Number.isSafeInteger(options.batchSize) && options.batchSize > 0
+				? options.batchSize
+				: 1
 		for (let start = 0; start < rows.length; start += batchSize) {
 			for (const row of rows.slice(start, start + batchSize)) {
 				yield row
@@ -385,7 +426,13 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		return rows
 	}
 
-	async upsertOne(schema: AnySchema, config: unknown, filter: FilterGroup, create: Record<string, unknown>, ops: AnyUpdateOp[]) {
+	async upsertOne(
+		schema: AnySchema,
+		config: unknown,
+		filter: FilterGroup,
+		create: Record<string, unknown>,
+		ops: AnyUpdateOp[],
+	) {
 		const store = this.#resolveStore(schema, config)
 		const pk = schema.pkField.name
 		const rows = [...store.values()].filter((doc) => matchesFilter(doc, filter))
@@ -397,7 +444,7 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		}
 		const base = clone(create)
 		const result = ops.length > 0 ? applyOps(base, ops) : base
-		store.set(String(result[pk]), result)
+		this.#resolveStore(schema, config, true).set(String(result[pk]), result)
 		return clone(result)
 	}
 
@@ -493,7 +540,21 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async applyDropTable(change: DropTableChange): Promise<void> {
+		for (const foreignKey of this.foreignKeys.values()) {
+			if (foreignKey.table !== change.name && foreignKey.references.table === change.name) {
+				throw new OrmValidationError('changes', change.name, 'dropTable', [
+					{ cause: 'table is referenced by a foreign key' },
+				])
+			}
+		}
+		this.stores.delete(change.name)
 		this.tables.delete(change.name)
+		for (const [name, index] of this.indexes) {
+			if (index.table === change.name) this.indexes.delete(name)
+		}
+		for (const [name, foreignKey] of this.foreignKeys) {
+			if (foreignKey.table === change.name) this.foreignKeys.delete(name)
+		}
 	}
 
 	async applyAddField(change: AddFieldChange<any>): Promise<void> {
@@ -520,9 +581,36 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 
 	async applyRenameTable(change: RenameTableChange): Promise<void> {
 		const table = this.tables.get(change.from)
+		const store = this.stores.get(change.from)
+		if (!table && !store) return
+		if (change.from === change.to) return
+		if (this.tables.has(change.to) || this.stores.has(change.to)) {
+			throw new OrmValidationError('changes', change.from, 'renameTable', [
+				{ cause: `destination table '${change.to}' already exists` },
+			])
+		}
+		if (store) {
+			this.stores.delete(change.from)
+			this.stores.set(change.to, store)
+		}
 		if (table) {
 			this.tables.delete(change.from)
 			this.tables.set(change.to, table)
+		}
+		for (const [name, index] of this.indexes) {
+			if (index.table === change.from) this.indexes.set(name, { ...index, table: change.to })
+		}
+		for (const [name, foreignKey] of this.foreignKeys) {
+			if (foreignKey.table === change.from || foreignKey.references.table === change.from) {
+				this.foreignKeys.set(name, {
+					...foreignKey,
+					table: foreignKey.table === change.from ? change.to : foreignKey.table,
+					references:
+						foreignKey.references.table === change.from
+							? { ...foreignKey.references, table: change.to }
+							: foreignKey.references,
+				})
+			}
 		}
 	}
 
@@ -563,8 +651,10 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 
 	async introspect(): Promise<DiscoveredSchema[]> {
 		const schemas: DiscoveredSchema[] = []
-		for (const [name, meta] of this.tables.entries()) {
-			const fields = [...meta.fields.values()].map((f) => ({
+		const names = new Set([...this.tables.keys(), ...this.stores.keys()])
+		for (const name of names) {
+			const meta = this.tables.get(name)
+			const fields = [...(meta?.fields.values() ?? [])].map((f) => ({
 				name: f.name,
 				type: f.type as FieldTypeName,
 				nullable: f.nullable ?? false,
@@ -585,7 +675,7 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 				}))
 			schemas.push({
 				name,
-				pk: { name: meta.pk.name, type: meta.pk.type as FieldTypeName },
+				pk: meta ? { name: meta.pk.name, type: meta.pk.type as FieldTypeName } : undefined,
 				fields,
 				indexes,
 				foreignKeys,
@@ -596,7 +686,9 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 
 	async acquireMigrationLock<T>(fn: () => Promise<T>): Promise<T> {
 		let release!: () => void
-		const next = new Promise<void>((r) => { release = r })
+		const next = new Promise<void>((r) => {
+			release = r
+		})
 		const prev = this.#migrationLock
 		this.#migrationLock = next
 		await prev
@@ -621,20 +713,341 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
-	const { Field } = await import('../../fields')
-	const { FilterGroup } = await import('../../filter')
-	const { OrderBy } = await import('../../query-options')
-	const { Schema } = await import('../../schema')
-	const { IncOp, PatchOp, PullOp, PushOp } = await import('../../updates')
+	const { Field } = await import('../../fields.js')
+	const { FilterGroup } = await import('../../filter.js')
+	const { OrderBy } = await import('../../query-options.js')
+	const { Schema } = await import('../../schema.js')
+	const { IncOp, PatchOp, PullOp, PushOp } = await import('../../updates.js')
 
 	const { v } = await import('valleyed')
 
 	describe('in-memory adapter', () => {
+		test('introspect discovers lazily written stores without inventing schema metadata', async () => {
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.field('name', v.string())
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			await adapter.use(schema, { table: 'tenant_users' }).createMany([{ id: 'u1', name: 'Alice' }])
+			await adapter.applyAddIndex({ kind: 'addIndex', table: 'tenant_users', on: ['name'], name: 'users_name' })
+
+			expect(await adapter.introspect()).toEqual([
+				{
+					name: 'tenant_users',
+					pk: undefined,
+					fields: [],
+					indexes: [{ name: 'users_name', on: ['name'], unique: false }],
+					foreignKeys: [],
+				},
+			])
+		})
+
+		test('missing reads and non-inserting mutations do not create discoverable stores', async () => {
+			const schema = Schema.from('absent')
+				.pk('id', v.string(), () => 'u')
+				.field('name', v.string())
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'absent' })
+			const filter = FilterGroup.create()
+
+			expect(await adapter.findByPk(schema, { table: 'absent' }, 'missing')).toBeNull()
+			expect(await use.findMany(filter)).toEqual([])
+			expect(await use.count(filter)).toBe(0)
+			for await (const row of use.iterateMany(filter)) expect.unreachable(String(row))
+			expect(
+				await adapter.aggregate(
+					schema,
+					{ table: 'absent' },
+					{ aggregates: [{ fn: 'count', alias: 'count' }], groupBy: [] },
+				),
+			).toEqual([{ count: 0 }])
+			expect(
+				await adapter.updateByPk(schema, { table: 'absent' }, 'missing', [new SetOp({ name: 'Changed' })]),
+			).toBeNull()
+			expect(await adapter.deleteByPk(schema, { table: 'absent' }, 'missing')).toBeNull()
+			expect(await adapter.updateMany(schema, { table: 'absent' }, filter, { name: 'Changed' })).toEqual([])
+			expect(await adapter.deleteMany(schema, { table: 'absent' }, filter)).toEqual([])
+			expect(await adapter.createMany(schema, { table: 'absent' }, [])).toEqual([])
+			expect(await adapter.introspect()).toEqual([])
+		})
+
+		test('upsert insertion creates a discoverable store', async () => {
+			const schema = Schema.from('upserts')
+				.pk('id', v.string(), () => 'u')
+				.field('name', v.string())
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'upserts' })
+			await use.upsertOne(FilterGroup.create().eq('id', 'u1'), { id: 'u1', name: 'Alice' }, [])
+			expect(await use.findOne(FilterGroup.create().eq('id', 'u1'))).toEqual({ id: 'u1', name: 'Alice' })
+			expect((await adapter.introspect()).map((s) => s.name)).toEqual(['upserts'])
+		})
+
+		test.each([false, true])('dropTable removes rows and owned metadata (declared: %s)', async (declared) => {
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.field('name', v.string())
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			if (declared)
+				await adapter.applyCreateTable({
+					kind: 'createTable',
+					name: 'users',
+					pk: { name: 'id', type: 'string' },
+					fields: [{ name: 'name', type: 'string' }],
+				})
+			const use = adapter.use(schema, { table: 'users' })
+			await use.createMany([{ id: 'u1', name: 'Alice' }])
+			await adapter.applyAddIndex({ kind: 'addIndex', table: 'users', on: ['name'], name: 'users_name' })
+			await adapter.applyAddForeignKey({
+				kind: 'addForeignKey',
+				table: 'users',
+				on: 'id',
+				references: { table: 'users', column: 'id' },
+				name: 'users_self',
+			})
+			await adapter.applyDropTable({ kind: 'dropTable', name: 'users' })
+
+			expect(await use.findOne(FilterGroup.create().eq('id', 'u1'))).toBeNull()
+			expect(await adapter.introspect()).toEqual([])
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
+			expect(await adapter.introspect()).toEqual([
+				{ name: 'users', pk: { name: 'id', type: 'string' }, fields: [], indexes: [], foreignKeys: [] },
+			])
+			expect(await use.findMany(FilterGroup.create())).toEqual([])
+		})
+
+		test.each([false, true])(
+			'renameTable moves rows and rewrites table references (declared: %s)',
+			async (declared) => {
+				const schema = Schema.from('users')
+					.pk('id', v.string(), () => 'u')
+					.field('name', v.string())
+					.build()
+				const adapter = InMemoryAdapter.create({})
+				if (declared)
+					await adapter.applyCreateTable({
+						kind: 'createTable',
+						name: 'users',
+						pk: { name: 'id', type: 'string' },
+						fields: [{ name: 'name', type: 'string' }],
+					})
+				await adapter.applyCreateTable({
+					kind: 'createTable',
+					name: 'posts',
+					pk: { name: 'id', type: 'string' },
+					fields: [],
+				})
+				await adapter.use(schema, { table: 'users' }).createMany([{ id: 'u1', name: 'Alice' }])
+				await adapter.applyAddIndex({ kind: 'addIndex', table: 'users', on: ['name'], name: 'users_name' })
+				await adapter.applyAddForeignKey({
+					kind: 'addForeignKey',
+					table: 'users',
+					on: 'id',
+					references: { table: 'users', column: 'id' },
+					name: 'users_self',
+				})
+				await adapter.applyAddForeignKey({
+					kind: 'addForeignKey',
+					table: 'posts',
+					on: 'author',
+					references: { table: 'users', column: 'id' },
+					name: 'posts_author',
+				})
+				await adapter.applyRenameTable({ kind: 'renameTable', from: 'users', to: 'members' })
+
+				expect(
+					await adapter.use(schema, { table: 'members' }).findOne(FilterGroup.create().eq('id', 'u1')),
+				).toEqual({ id: 'u1', name: 'Alice' })
+				expect(await adapter.use(schema, { table: 'users' }).findMany(FilterGroup.create())).toEqual([])
+				const discovered = await adapter.introspect()
+				expect(discovered.map((s) => s.name).sort()).toEqual(['members', 'posts'])
+				const members = discovered.find((s) => s.name === 'members')!
+				expect(members.indexes).toEqual([{ name: 'users_name', on: ['name'], unique: false }])
+				expect(members.foreignKeys).toEqual([
+					{ name: 'users_self', on: 'id', references: { table: 'members', column: 'id' } },
+				])
+				expect(discovered.find((s) => s.name === 'posts')!.foreignKeys).toEqual([
+					{ name: 'posts_author', on: 'author', references: { table: 'members', column: 'id' } },
+				])
+			},
+		)
+
+		test.each(['rows', 'metadata'])('renameTable refuses an occupied destination (%s)', async (destination) => {
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const users = adapter.use(schema, { table: 'users' })
+			const members = adapter.use(schema, { table: 'members' })
+			await users.createMany([{ id: 'original' }])
+			if (destination === 'rows') await members.createMany([{ id: 'existing' }])
+			else
+				await adapter.applyCreateTable({
+					kind: 'createTable',
+					name: 'members',
+					pk: { name: 'id', type: 'string' },
+					fields: [],
+				})
+			const before = await adapter.introspect()
+
+			await expect(
+				adapter.applyRenameTable({ kind: 'renameTable', from: 'users', to: 'members' }),
+			).rejects.toThrow(OrmValidationError)
+			expect(await users.findMany(FilterGroup.create())).toEqual([{ id: 'original' }])
+			expect(await members.findMany(FilterGroup.create())).toEqual(
+				destination === 'rows' ? [{ id: 'existing' }] : [],
+			)
+			expect(await adapter.introspect()).toEqual(before)
+		})
+
+		test('dropTable refuses inbound foreign keys without deleting rows', async () => {
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'users' })
+			await use.createMany([{ id: 'u1' }])
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'posts',
+				pk: { name: 'id', type: 'string' },
+				fields: [],
+			})
+			await adapter.applyAddForeignKey({
+				kind: 'addForeignKey',
+				table: 'posts',
+				on: 'author',
+				references: { table: 'users', column: 'id' },
+				name: 'posts_author',
+			})
+			const before = await adapter.introspect()
+			await expect(adapter.applyDropTable({ kind: 'dropTable', name: 'users' })).rejects.toThrow(
+				OrmValidationError,
+			)
+			expect(await use.findMany(FilterGroup.create())).toEqual([{ id: 'u1' }])
+			expect(await adapter.introspect()).toEqual(before)
+			await adapter.applyDropForeignKey({ kind: 'dropForeignKey', table: 'posts', name: 'posts_author' })
+			await adapter.applyDropTable({ kind: 'dropTable', name: 'users' })
+			expect(await use.findMany(FilterGroup.create())).toEqual([])
+		})
+
+		test('introspect deduplicates declared stores and preserves empty declared tables', async () => {
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.field('name', v.string())
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			await adapter.applyCreateTable({
+				kind: 'createTable',
+				name: 'users',
+				pk: { name: 'id', type: 'string' },
+				fields: [{ name: 'name', type: 'string' }],
+			})
+			const expected = [
+				{
+					name: 'users',
+					pk: { name: 'id', type: 'string' },
+					fields: [{ name: 'name', type: 'string', nullable: false }],
+					indexes: [],
+					foreignKeys: [],
+				},
+			]
+			expect(await adapter.introspect()).toEqual(expected)
+			const use = adapter.use(schema, { table: 'users' })
+			await use.createMany([{ id: 'u1', name: 'Alice' }])
+			expect(await adapter.introspect()).toEqual(expected)
+			await use.deleteOne(FilterGroup.create().eq('id', 'u1'))
+			expect(await adapter.introspect()).toEqual(expected)
+		})
+
+		test('deleting the last row retains a lazily created container', async () => {
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'users' })
+			await use.createMany([{ id: 'u1' }])
+			await use.deleteOne(FilterGroup.create().eq('id', 'u1'))
+			expect((await adapter.introspect()).map((s) => s.name)).toEqual(['users'])
+		})
+
+		test.each(['rename', 'drop'])(
+			'session rollback restores table rows and metadata after %s',
+			async (operation) => {
+				const schema = Schema.from('users')
+					.pk('id', v.string(), () => 'u')
+					.build()
+				const adapter = InMemoryAdapter.create({})
+				await adapter.applyCreateTable({
+					kind: 'createTable',
+					name: 'users',
+					pk: { name: 'id', type: 'string' },
+					fields: [],
+				})
+				const use = adapter.use(schema, { table: 'users' })
+				await use.createMany([{ id: 'u1' }])
+				await adapter.applyAddIndex({ kind: 'addIndex', table: 'users', on: ['id'], name: 'users_id' })
+				await adapter.applyAddForeignKey({
+					kind: 'addForeignKey',
+					table: 'users',
+					on: 'id',
+					references: { table: 'users', column: 'id' },
+					name: 'users_self',
+				})
+				const before = await adapter.introspect()
+				await expect(
+					adapter.session(async () => {
+						if (operation === 'rename') {
+							await adapter.applyRenameTable({ kind: 'renameTable', from: 'users', to: 'members' })
+							expect(
+								await adapter.use(schema, { table: 'members' }).findMany(FilterGroup.create()),
+							).toEqual([{ id: 'u1' }])
+						} else await adapter.applyDropTable({ kind: 'dropTable', name: 'users' })
+						throw new Error('rollback table change')
+					}),
+				).rejects.toThrow('rollback table change')
+				expect(await adapter.introspect()).toEqual(before)
+				expect(await use.findMany(FilterGroup.create())).toEqual([{ id: 'u1' }])
+				expect(await adapter.use(schema, { table: 'members' }).findMany(FilterGroup.create())).toEqual([])
+				expect(await adapter.introspect()).toEqual(before)
+			},
+		)
+
+		test('session rollback removes newly discovered lazy stores', async () => {
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			await expect(
+				adapter.session(async () => {
+					await adapter.use(schema, { table: 'users' }).createMany([{ id: 'u1' }])
+					throw new Error('rollback insertion')
+				}),
+			).rejects.toThrow('rollback insertion')
+			expect(await adapter.use(schema, { table: 'users' }).findMany(FilterGroup.create())).toEqual([])
+			expect(await adapter.introspect()).toEqual([])
+		})
+
 		test('InMemoryAdapter.create({}) produces a working adapter', () => {
 			const adapter = InMemoryAdapter.create({})
 			expect(adapter).toBeInstanceOf(InMemoryAdapter)
 			expect(adapter.schemaConfigPipe).toBeDefined()
-			expect(adapter.supportedFieldTypes).toEqual(['string', 'number', 'boolean', 'null', 'object', 'array', 'date'])
+			expect(adapter.supportedFieldTypes).toEqual([
+				'string',
+				'number',
+				'boolean',
+				'null',
+				'object',
+				'array',
+				'date',
+			])
 		})
 
 		test('supports nested filters, ordering, select, offset and limit', async () => {
@@ -848,7 +1261,7 @@ if (import.meta.vitest) {
 		})
 
 		test('auto-wired Instance hooks register correctly keyed by class', async () => {
-			const { Instance: Inst } = await import('../../../instance')
+			const { Instance: Inst } = await import('../../../instance/index.js')
 			const onSpy = (await import('vitest')).vi.spyOn(Inst, 'on').mockImplementation(() => {})
 
 			InMemoryAdapter.create({})
@@ -875,10 +1288,14 @@ if (import.meta.vitest) {
 				{ id: 'i2', category: 'B' },
 				{ id: 'i3', category: 'A' },
 			])
-			const result = await adapter.aggregate(schema, { table: 'items' }, {
-				aggregates: [{ fn: 'count', alias: 'total' }],
-				groupBy: [],
-			})
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'items' },
+				{
+					aggregates: [{ fn: 'count', alias: 'total' }],
+					groupBy: [],
+				},
+			)
 			expect(result).toEqual([{ total: 3 }])
 		})
 
@@ -894,11 +1311,15 @@ if (import.meta.vitest) {
 				{ id: 'i2', category: 'B' },
 				{ id: 'i3', category: 'A' },
 			])
-			const result = await adapter.aggregate(schema, { table: 'items' }, {
-				aggregates: [{ fn: 'count', alias: 'total' }],
-				groupBy: [],
-				where: FilterGroup.create().eq('category', 'A'),
-			})
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'items' },
+				{
+					aggregates: [{ fn: 'count', alias: 'total' }],
+					groupBy: [],
+					where: FilterGroup.create().eq('category', 'A'),
+				},
+			)
 			expect(result).toEqual([{ total: 2 }])
 		})
 
@@ -907,10 +1328,14 @@ if (import.meta.vitest) {
 				.pk('id', v.string(), () => 'x')
 				.build()
 			const adapter = InMemoryAdapter.create({})
-			const result = await adapter.aggregate(schema, { table: 'items' }, {
-				aggregates: [{ fn: 'count', alias: 'total' }],
-				groupBy: [],
-			})
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'items' },
+				{
+					aggregates: [{ fn: 'count', alias: 'total' }],
+					groupBy: [],
+				},
+			)
 			expect(result).toEqual([{ total: 0 }])
 		})
 
@@ -926,15 +1351,19 @@ if (import.meta.vitest) {
 				{ id: 'i2', price: 20 },
 				{ id: 'i3', price: 30 },
 			])
-			const result = await adapter.aggregate(schema, { table: 'items' }, {
-				aggregates: [
-					{ fn: 'sum', field: 'price', alias: 'total' },
-					{ fn: 'avg', field: 'price', alias: 'avg' },
-					{ fn: 'min', field: 'price', alias: 'low' },
-					{ fn: 'max', field: 'price', alias: 'high' },
-				],
-				groupBy: [],
-			})
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'items' },
+				{
+					aggregates: [
+						{ fn: 'sum', field: 'price', alias: 'total' },
+						{ fn: 'avg', field: 'price', alias: 'avg' },
+						{ fn: 'min', field: 'price', alias: 'low' },
+						{ fn: 'max', field: 'price', alias: 'high' },
+					],
+					groupBy: [],
+				},
+			)
 			expect(result).toEqual([{ total: 60, avg: 20, low: 10, high: 30 }])
 		})
 
@@ -950,10 +1379,14 @@ if (import.meta.vitest) {
 				{ id: 'i2', category: 'B' },
 				{ id: 'i3', category: 'A' },
 			])
-			const result = await adapter.aggregate(schema, { table: 'items' }, {
-				aggregates: [{ fn: 'countDistinct', field: 'category', alias: 'unique' }],
-				groupBy: [],
-			})
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'items' },
+				{
+					aggregates: [{ fn: 'countDistinct', field: 'category', alias: 'unique' }],
+					groupBy: [],
+				},
+			)
 			expect(result).toEqual([{ unique: 2 }])
 		})
 
@@ -970,13 +1403,17 @@ if (import.meta.vitest) {
 				{ id: 'o2', region: 'EU', amount: 20 },
 				{ id: 'o3', region: 'US', amount: 30 },
 			])
-			const result = await adapter.aggregate(schema, { table: 'orders' }, {
-				aggregates: [
-					{ fn: 'count', alias: 'cnt' },
-					{ fn: 'sum', field: 'amount', alias: 'total' },
-				],
-				groupBy: ['region'],
-			})
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'orders' },
+				{
+					aggregates: [
+						{ fn: 'count', alias: 'cnt' },
+						{ fn: 'sum', field: 'amount', alias: 'total' },
+					],
+					groupBy: ['region'],
+				},
+			)
 			expect(result).toHaveLength(2)
 			const us = result.find((r) => r.region === 'US')
 			const eu = result.find((r) => r.region === 'EU')
@@ -997,11 +1434,15 @@ if (import.meta.vitest) {
 				{ id: 'o2', region: 'EU', amount: 20 },
 				{ id: 'o3', region: 'US', amount: 30 },
 			])
-			const result = await adapter.aggregate(schema, { table: 'orders' }, {
-				aggregates: [{ fn: 'sum', field: 'amount', alias: 'total' }],
-				groupBy: ['region'],
-				having: FilterGroup.create().gt('total', 25),
-			})
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'orders' },
+				{
+					aggregates: [{ fn: 'sum', field: 'amount', alias: 'total' }],
+					groupBy: ['region'],
+					having: FilterGroup.create().gt('total', 25),
+				},
+			)
 			expect(result).toHaveLength(1)
 			expect(result[0]).toEqual({ region: 'US', total: 40 })
 		})

@@ -1,7 +1,7 @@
 import type { IncomingHttpHeaders } from 'node:http2'
 
-import { BaseRequestAuthMethod } from './base'
-import { NotAuthenticatedError } from '../../errors'
+import { NotAuthenticatedError } from '../../errors/index.js'
+import { BaseRequestAuthMethod } from './base.js'
 
 export abstract class BaseApiKeyRequestAuthMethod<T extends { id: string }> extends BaseRequestAuthMethod<T> {
 	protected readonly headerName: string

@@ -1,7 +1,7 @@
-import { NotAuthenticatedError } from '../../errors'
-import type { AuthUser } from '../../types'
-import { BaseRequestAuthMethod } from '../requests-auth-methods'
-import { makeMiddleware } from '../types'
+import { NotAuthenticatedError } from '../../errors/index.js'
+import type { AuthUser } from '../../types/index.js'
+import { BaseRequestAuthMethod } from '../requests-auth-methods/index.js'
+import { makeMiddleware } from '../types.js'
 
 export const requireAuthUser = (methods: BaseRequestAuthMethod<AuthUser>[]) =>
 	makeMiddleware(

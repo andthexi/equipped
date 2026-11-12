@@ -1,6 +1,6 @@
 import * as bcrypt from 'bcryptjs'
 
-import { Instance } from '../instance'
+import { Instance } from '../instance/index.js'
 
 export const hash = async (password: string) => {
 	password = password.trim()

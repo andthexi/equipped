@@ -1,12 +1,16 @@
-import { OrmValidationError, type OrmValidationFailure } from '../../errors'
-import { ManyRelation, OneRelation, type AnyPreloadDef, type AnyRelDef, type NestedPreloadDef } from '../../relations'
-import type { AnySchema } from '../../schema'
+import { OrmValidationError, type OrmValidationFailure } from '../../errors/index.js'
+import {
+	ManyRelation,
+	OneRelation,
+	type AnyPreloadDef,
+	type AnyRelDef,
+	type NestedPreloadDef,
+} from '../../relations.js'
+import type { AnySchema } from '../../schema.js'
 
 const MAX_PRELOAD_DEPTH = 5
 
-export type ReadOffsetSource =
-	| { kind: 'offset'; value: unknown }
-	| { kind: 'page'; value: unknown }
+export type ReadOffsetSource = { kind: 'offset'; value: unknown } | { kind: 'page'; value: unknown }
 
 export type ReadLimitSource = { value: unknown }
 
@@ -45,7 +49,11 @@ function isNonNegativeInteger(value: unknown): value is number {
 	return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
-function collectSelectFailures(schema: AnySchema, select: readonly string[] | undefined, failures: OrmValidationFailure[]) {
+function collectSelectFailures(
+	schema: AnySchema,
+	select: readonly string[] | undefined,
+	failures: OrmValidationFailure[],
+) {
 	if (!select || select.length === 0) return
 
 	const persistedNames = new Set(Object.keys(schema.fields))
@@ -81,7 +89,9 @@ function collectPreloadFailures(
 	for (const preload of defs) {
 		const rawDef = isRelDef(preload) ? preload : isNestedPreloadDef(preload) ? preload.def : undefined
 		if (!isRelDef(rawDef)) {
-			failures.push({ cause: 'Invalid preload definition: expected a relation definition or nested preload definition with `def`' })
+			failures.push({
+				cause: 'Invalid preload definition: expected a relation definition or nested preload definition with `def`',
+			})
 			continue
 		}
 
@@ -101,7 +111,10 @@ function collectPreloadFailures(
 		if (isNestedPreloadDef(preload)) {
 			const nested = preload.preloads ?? []
 			if (!Array.isArray(nested)) {
-				failures.push({ field: rawDef.name, cause: `Nested preloads for relation "${rawDef.name}" must be an array` })
+				failures.push({
+					field: rawDef.name,
+					cause: `Nested preloads for relation "${rawDef.name}" must be an array`,
+				})
 				continue
 			}
 			collectPreloadFailures(rawDef.target, nested, failures, depth + 1, [...path, step])
@@ -232,7 +245,11 @@ export function normaliseAllIterateReadShape(
 			if (isNonNegativeInteger(resolvedOffset)) {
 				offset = resolvedOffset
 			} else {
-				failures.push({ field: 'offset', option: 'offset', cause: 'Resolved page offset must be a non-negative safe integer' })
+				failures.push({
+					field: 'offset',
+					option: 'offset',
+					cause: 'Resolved page offset must be a non-negative safe integer',
+				})
 			}
 		}
 	}

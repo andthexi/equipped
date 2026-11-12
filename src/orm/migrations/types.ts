@@ -1,6 +1,6 @@
-import type { OrmAdapterLike } from '../adapters/base'
-import type { OrmAdapter } from '../orm-adapter'
-import type { Repo } from '../repo/repo'
+import type { OrmAdapterLike } from '../adapters/base.js'
+import type { OrmAdapter } from '../orm-adapter.js'
+import type { Repo } from '../repo/repo.js'
 
 export type FieldSpec<A extends OrmAdapter> = {
 	name: string
@@ -126,7 +126,9 @@ export type AnyChange =
 
 export type ApplyMethodKey<A> = Extract<keyof A, `apply${string}`>
 export type KindFromMethod<M> = M extends `apply${infer K}` ? Uncapitalize<K> : never
-type ConcreteApplyKey<A> = { [K in ApplyMethodKey<A>]: A[K] extends (...args: any) => any ? K : never }[ApplyMethodKey<A>]
+type ConcreteApplyKey<A> = {
+	[K in ApplyMethodKey<A>]: A[K] extends (...args: any) => any ? K : never
+}[ApplyMethodKey<A>]
 export type ChangeKindFor<A> = KindFromMethod<ConcreteApplyKey<A>> | 'execute'
 export type ChangeFor<A extends OrmAdapterLike<any>> = Extract<Change<A>, { kind: ChangeKindFor<A> }>
 

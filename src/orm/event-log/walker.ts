@@ -1,7 +1,7 @@
-import type { EventContext, HandlerDef, HandlerRegistry } from './registry'
-import { EventLogSchema } from './schema'
-import { OrmReplayError } from '../errors/replay'
-import type { Repo } from '../repo/repo'
+import { OrmReplayError } from '../errors/replay.js'
+import type { Repo } from '../repo/repo.js'
+import type { EventContext, HandlerDef, HandlerRegistry } from './registry.js'
+import { EventLogSchema } from './schema.js'
 
 const executeReplay = async (
 	repo: Repo<any>,
@@ -26,11 +26,7 @@ const executeReplay = async (
 	}
 }
 
-export async function replay(
-	repo: Repo<any>,
-	registry: HandlerRegistry,
-	opts?: { from?: Date },
-): Promise<void> {
+export async function replay(repo: Repo<any>, registry: HandlerRegistry, opts?: { from?: Date }): Promise<void> {
 	let query = repo.on(EventLogSchema).all().orderBy('ts', 'asc')
 	if (opts?.from) {
 		query = query.where((q) => q.gte('ts', opts.from!.getTime()))
@@ -42,11 +38,7 @@ export async function replay(
 	}
 }
 
-export async function rerun(
-	repo: Repo<any>,
-	registry: HandlerRegistry,
-	key: string,
-): Promise<void> {
+export async function rerun(repo: Repo<any>, registry: HandlerRegistry, key: string): Promise<void> {
 	const row = await repo.on(EventLogSchema).one().id(key).find()
 	if (!row) {
 		throw new OrmReplayError({ key, name: 'unknown', cause: new Error(`Event with key "${key}" not found`) })
@@ -57,14 +49,14 @@ export async function rerun(
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { InMemoryAdapter } = await import('../adapters/in-memory')
-	const { Schema } = await import('../schema')
-	const { Repo } = await import('../repo/repo')
-	const { OrmReplayError } = await import('../errors/replay')
-	const { HandlerRegistry } = await import('./registry')
-	const { EventLogSchema } = await import('./schema')
-	const { fire } = await import('./executor')
-	type EventContext = import('./registry').EventContext
+	const { InMemoryAdapter } = await import('../adapters/in-memory/index.js')
+	const { Schema } = await import('../schema.js')
+	const { Repo } = await import('../repo/repo.js')
+	const { OrmReplayError } = await import('../errors/replay.js')
+	const { HandlerRegistry } = await import('./registry.js')
+	const { EventLogSchema } = await import('./schema.js')
+	const { fire } = await import('./executor.js')
+	type EventContext = import('./registry.js').EventContext
 
 	const CounterSchema = Schema.from('counters')
 		.pk('id', v.string(), () => `c-${Math.random()}`)

@@ -1,14 +1,16 @@
-import type { AnyPreloadDef, PreloadedMap } from '../../relations'
-import type { AnySchema, SchemaOutput } from '../../schema'
-import type { Prettify } from '../../utils'
+import type { AnyPreloadDef, PreloadedMap } from '../../relations.js'
+import type { AnySchema, SchemaOutput } from '../../schema.js'
+import type { Prettify } from '../../utils.js'
 
 type Selected<S extends AnySchema, Sel extends string> = [Sel] extends [never]
 	? SchemaOutput<S>
 	: Pick<SchemaOutput<S>, Sel & keyof SchemaOutput<S>>
 
-export type SelectedWithPreloads<S extends AnySchema, Sel extends string, P extends readonly AnyPreloadDef[]> = Prettify<
-	Selected<S, Sel> & PreloadedMap<P>
->
+export type SelectedWithPreloads<
+	S extends AnySchema,
+	Sel extends string,
+	P extends readonly AnyPreloadDef[],
+> = Prettify<Selected<S, Sel> & PreloadedMap<P>>
 
 export type Paginated<T> = {
 	pages: {

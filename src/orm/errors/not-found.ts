@@ -1,14 +1,14 @@
-import { EquippedError } from '../../errors'
-import { Filter, FilterGroup } from '../filter'
+import { EquippedError } from '../../errors/index.js'
+import { Filter, FilterGroup } from '../filter.js'
 
 export type OrmNotFoundOperation = 'findOne' | 'updateOne' | 'deleteOne'
 
 function renderFilter(group: FilterGroup): string {
 	if (
-		group.op === 'and'
-		&& group.children.length === 1
-		&& group.children[0] instanceof Filter
-		&& group.children[0].op === 'eq'
+		group.op === 'and' &&
+		group.children.length === 1 &&
+		group.children[0] instanceof Filter &&
+		group.children[0].op === 'eq'
 	) {
 		const f = group.children[0]
 		return `${f.field}=${f.value}`
@@ -30,12 +30,7 @@ export class OrmNotFoundError extends EquippedError {
 	readonly operation: OrmNotFoundOperation
 	readonly where: FilterGroup
 
-	constructor(opts: {
-		schema: string
-		operation: OrmNotFoundOperation
-		where: FilterGroup
-		message?: string
-	}) {
+	constructor(opts: { schema: string; operation: OrmNotFoundOperation; where: FilterGroup; message?: string }) {
 		const msg = opts.message ?? `${opts.schema}.${opts.operation}: no row matched ${renderFilter(opts.where)}`
 		super(msg, {
 			schema: opts.schema,
@@ -50,7 +45,7 @@ export class OrmNotFoundError extends EquippedError {
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
-	const { OrmValidationError } = await import('./validation')
+	const { OrmValidationError } = await import('./validation.js')
 
 	describe('OrmNotFoundError', () => {
 		describe('carrier construction', () => {

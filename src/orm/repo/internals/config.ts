@@ -1,9 +1,9 @@
 import type { Pipe } from 'valleyed'
 
-import type { InferAdapterConfig } from '../../adapter'
-import type { OrmAdapterLike } from '../../adapters/base'
-import { composeSchemaConfig } from '../../schema-validations'
-import { currentTransforms } from '../als'
+import type { InferAdapterConfig } from '../../adapter.js'
+import type { OrmAdapterLike } from '../../adapters/base.js'
+import { composeSchemaConfig } from '../../schema-validations.js'
+import { currentTransforms } from '../als.js'
 
 type ConfigState<C> = {
 	resolve: (name: string) => C

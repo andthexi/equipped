@@ -9,12 +9,13 @@ import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify'
 // import fastifySlowDown from 'fastify-slow-down'
 import qs from 'qs'
 
-import { ValidationError } from '../../../errors'
-import { Instance } from '../../../instance'
-import { configurable, getMediaDuration } from '../../../utilities'
-import { Request, Response } from '../../requests'
-import { StatusCodes, type IncomingFile, type MethodsEnum } from '../../types'
-import { type RawResponder, Server, serverConfigPipe } from '../base'
+import { ValidationError } from '../../../errors/index.js'
+import { Instance } from '../../../instance/index.js'
+import { configurable, getMediaDuration } from '../../../utilities/index.js'
+import type { Response } from '../../requests.js'
+import { Request } from '../../requests.js'
+import { StatusCodes, type IncomingFile, type MethodsEnum } from '../../types.js'
+import { type RawResponder, Server, serverConfigPipe } from '../base.js'
 
 export class FastifyServer extends configurable(serverConfigPipe, Server) {
 	#app: ReturnType<typeof Fastify>
@@ -49,7 +50,10 @@ export class FastifyServer extends configurable(serverConfigPipe, Server) {
 		app.register(fastifyCookie, {})
 		app.register(fastifyCors, this.cors)
 		app.register(fastifyFormBody, { parser: (str) => qs.parse(str) })
-		app.register(fastifyHelmet, { crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false })
+		app.register(fastifyHelmet, {
+			crossOriginResourcePolicy: { policy: 'cross-origin' },
+			contentSecurityPolicy: false,
+		})
 		app.register(fastifyMultipart, {
 			attachFieldsToBody: 'keyValues',
 			throwFileSizeLimit: false,
@@ -136,7 +140,9 @@ function excludeBufferKeys<T>(body: T) {
 	if (typeof body !== 'object') return { body, files: {} }
 	const entries = Object.entries(body ?? {})
 	const isFile = (val: any) => (Array.isArray(val) ? isFile(val.at(0)) : Buffer.isBuffer(val?.data))
-	const fileEntries = entries.filter(([_, value]) => isFile(value)).map(([key, value]) => [key, Array.isArray(value) ? value : [value]])
+	const fileEntries = entries
+		.filter(([_, value]) => isFile(value))
+		.map(([key, value]) => [key, Array.isArray(value) ? value : [value]])
 	const nonFileEntries = entries.filter(([_, value]) => !isFile(value))
 	return {
 		body: <T>Object.fromEntries(nonFileEntries),
@@ -150,7 +156,8 @@ if (import.meta.vitest) {
 	const testInstanceState = globalThis as typeof globalThis & { __equippedTestInstanceAliased?: boolean }
 
 	function ensureTestInstance() {
-		const instance = Instance.maybeGet() ?? Instance.create({ app: { name: 'equipped-test' }, log: { level: 'silent' } })
+		const instance =
+			Instance.maybeGet() ?? Instance.create({ app: { name: 'equipped-test' }, log: { level: 'silent' } })
 		if (!testInstanceState.__equippedTestInstanceAliased) {
 			instance.alias('equipped-test')
 			testInstanceState.__equippedTestInstanceAliased = true

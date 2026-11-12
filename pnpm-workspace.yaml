@@ -1,11 +1,17 @@
 allowBuilds:
-  '@confluentinc/kafka-javascript': true
-  esbuild: true
-  msgpackr-extract: true
+    '@confluentinc/kafka-javascript': true
+    esbuild: true
+    msgpackr-extract: true
 
 minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+    - prettier@3.10.1
+    - valleyed@4.5.25
+    - xi-configs@0.1.0
 
-nodeVersion: 24.5.0
+autoInstallPeers: false
+
+nodeVersion: 24.22.3
 engineStrict: true
 strictPeerDependencies: false
 enablePrePostScripts: true

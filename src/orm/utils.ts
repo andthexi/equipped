@@ -1,11 +1,11 @@
 import type { Prettify as ValleyedPrettify } from 'valleyed'
 
-import type { ComputedField, Field, SchemaField } from './fields'
-import type { Filter, FilterGroup } from './filter'
-import type { OrderBy } from './query-options'
-import type { AnyRelDef } from './relations'
-import type { Schema } from './schema'
-import type { AnyUpdateOp } from './updates'
+import type { ComputedField, Field, SchemaField } from './fields.js'
+import type { Filter, FilterGroup } from './filter.js'
+import type { OrderBy } from './query-options.js'
+import type { AnyRelDef } from './relations.js'
+import type { Schema } from './schema.js'
+import type { AnyUpdateOp } from './updates.js'
 
 type AnyOrmClass =
 	| Field<any, any>

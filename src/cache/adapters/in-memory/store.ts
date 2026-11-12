@@ -43,7 +43,10 @@ export class InMemoryCacheStore {
 	snapshot(): Record<string, CacheEntry> {
 		const entries: Record<string, CacheEntry> = {}
 		for (const [key, record] of this.entries.entries()) {
-			entries[key] = { data: record.data, ...(record.expiredAt === undefined ? {} : { expiredAt: record.expiredAt }) }
+			entries[key] = {
+				data: record.data,
+				...(record.expiredAt === undefined ? {} : { expiredAt: record.expiredAt }),
+			}
 		}
 		return entries
 	}
@@ -51,7 +54,10 @@ export class InMemoryCacheStore {
 	restore(entries: Record<string, CacheEntry>) {
 		this.entries.clear()
 		for (const [key, record] of Object.entries(entries)) {
-			this.entries.set(key, { data: record.data, ...(record.expiredAt === undefined ? {} : { expiredAt: record.expiredAt }) })
+			this.entries.set(key, {
+				data: record.data,
+				...(record.expiredAt === undefined ? {} : { expiredAt: record.expiredAt }),
+			})
 		}
 	}
 }

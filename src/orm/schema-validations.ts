@@ -1,20 +1,20 @@
 import { v, type Pipe, type PipeInput, type PipeOutput } from 'valleyed'
 
-import { OrmValidationError, type OrmValidationFailure } from './errors'
-import type { AnySchemaField, SchemaField } from './fields'
-import { Schema, type AnySchema, type SchemaFields, type SchemaOutput } from './schema'
-import { SetOp, isUpdateOp, opTouchedFields, type AnyUpdateOp } from './updates'
-import type { Prettify } from './utils'
+import { OrmValidationError, type OrmValidationFailure } from './errors/index.js'
+import type { AnySchemaField, SchemaField } from './fields.js'
+import { Schema, type AnySchema, type SchemaFields, type SchemaOutput } from './schema.js'
+import { SetOp, isUpdateOp, opTouchedFields, type AnyUpdateOp } from './updates.js'
+import type { Prettify } from './utils.js'
 
 export type SchemaCreateInput<S extends AnySchema> = Prettify<
 	{
-		[K in keyof SchemaFields<S> as SchemaFields<S>[K] extends SchemaField<any, any, true>
-			? never
-			: K]: SchemaFields<S>[K] extends AnySchemaField ? PipeInput<SchemaFields<S>[K]['pipe']> : never
+		[
+			K in keyof SchemaFields<S> as SchemaFields<S>[K] extends SchemaField<any, any, true> ? never : K
+		]: SchemaFields<S>[K] extends AnySchemaField ? PipeInput<SchemaFields<S>[K]['pipe']> : never
 	} & {
-		[K in keyof SchemaFields<S> as SchemaFields<S>[K] extends SchemaField<any, any, true>
-			? K
-			: never]?: SchemaFields<S>[K] extends AnySchemaField ? PipeInput<SchemaFields<S>[K]['pipe']> : never
+		[
+			K in keyof SchemaFields<S> as SchemaFields<S>[K] extends SchemaField<any, any, true> ? K : never
+		]?: SchemaFields<S>[K] extends AnySchemaField ? PipeInput<SchemaFields<S>[K]['pipe']> : never
 	}
 >
 
@@ -123,7 +123,10 @@ export function validateUpdateOps(schema: AnySchema, ops: AnyUpdateOp[], operati
 	const conflicts: OrmValidationFailure[] = []
 	for (const [field, indices] of touched) {
 		if (indices.length > 1) {
-			conflicts.push({ field, cause: `field "${field}" touched by multiple ops at indices [${indices.join(', ')}]` })
+			conflicts.push({
+				field,
+				cause: `field "${field}" touched by multiple ops at indices [${indices.join(', ')}]`,
+			})
 		}
 	}
 	if (conflicts.length > 0) {
@@ -177,7 +180,10 @@ export function validateUpsertConflicts(
 		if (op instanceof SetOp) continue
 		for (const field of opTouchedFields(op)) {
 			if (createFields.has(field)) {
-				conflicts.push({ field, cause: `field "${field}" present in both create payload and atomic op "${op.kind}"` })
+				conflicts.push({
+					field,
+					cause: `field "${field}" present in both create payload and atomic op "${op.kind}"`,
+				})
 			}
 		}
 	}
@@ -188,8 +194,8 @@ export function validateUpsertConflicts(
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
-	const { IncOp, MulOp, SetOp, UnsetOp } = await import('./updates')
-	const { EquippedError } = await import('../errors')
+	const { IncOp, MulOp, SetOp, UnsetOp } = await import('./updates.js')
+	const { EquippedError } = await import('../errors/index.js')
 
 	describe('validateCreate', () => {
 		const UserSchema = Schema.from('users')
@@ -419,9 +425,7 @@ if (import.meta.vitest) {
 		test('user set({updatedAt:X}) suppresses auto-bump for that field', () => {
 			const ops = validateUpdateOps(UpdateSchema, [new SetOp({ updatedAt: 9999 })])
 			const setOps = ops.filter((op) => op instanceof SetOp) as SetOp[]
-			const allUpdatedAtValues = setOps.flatMap((op) =>
-				'updatedAt' in op.values ? [op.values.updatedAt] : [],
-			)
+			const allUpdatedAtValues = setOps.flatMap((op) => ('updatedAt' in op.values ? [op.values.updatedAt] : []))
 			expect(allUpdatedAtValues).toEqual([9999])
 		})
 
@@ -433,9 +437,9 @@ if (import.meta.vitest) {
 		})
 
 		test('set({views:0}) + inc(views, 1) throws conflicting-ops', () => {
-			expect(() =>
-				validateUpdateOps(UpdateSchema, [new SetOp({ views: 0 }), new IncOp('views', 1)]),
-			).toThrow(OrmValidationError)
+			expect(() => validateUpdateOps(UpdateSchema, [new SetOp({ views: 0 }), new IncOp('views', 1)])).toThrow(
+				OrmValidationError,
+			)
 
 			try {
 				validateUpdateOps(UpdateSchema, [new SetOp({ views: 0 }), new IncOp('views', 1)])
@@ -451,15 +455,13 @@ if (import.meta.vitest) {
 				.pk('id', v.string(), () => 'auto')
 				.field('score', v.optional(v.number()))
 				.build()
-			expect(() =>
-				validateUpdateOps(UpdateSchema2, [new UnsetOp('score'), new IncOp('score', 5)]),
-			).toThrow(OrmValidationError)
+			expect(() => validateUpdateOps(UpdateSchema2, [new UnsetOp('score'), new IncOp('score', 5)])).toThrow(
+				OrmValidationError,
+			)
 		})
 
 		test('SetOp values are pipe-validated', () => {
-			expect(() =>
-				validateUpdateOps(UpdateSchema, [new SetOp({ name: 123 as any })]),
-			).toThrow(OrmValidationError)
+			expect(() => validateUpdateOps(UpdateSchema, [new SetOp({ name: 123 as any })])).toThrow(OrmValidationError)
 
 			try {
 				validateUpdateOps(UpdateSchema, [new SetOp({ name: 123 as any })])
@@ -481,9 +483,7 @@ if (import.meta.vitest) {
 				.field('name', v.string())
 				.field('counter', v.number(), { onUpdate: () => 'not-a-number' as any })
 				.build()
-			expect(() =>
-				validateUpdateOps(BadSchema, [new SetOp({ name: 'test' })]),
-			).toThrow(OrmValidationError)
+			expect(() => validateUpdateOps(BadSchema, [new SetOp({ name: 'test' })])).toThrow(OrmValidationError)
 		})
 
 		test('collects all conflicts in one error', () => {
@@ -511,10 +511,12 @@ if (import.meta.vitest) {
 					seen.push(name)
 					return { table: name }
 				},
-				[(config, name) => {
-					seen.push(name)
-					return { table: `scoped_${config.table}` }
-				}],
+				[
+					(config, name) => {
+						seen.push(name)
+						return { table: `scoped_${config.table}` }
+					},
+				],
 				'users',
 				tablePipe,
 			)
@@ -537,12 +539,8 @@ if (import.meta.vitest) {
 
 		test('throws OrmValidationError when composed config fails pipe validation', () => {
 			try {
-				composeSchemaConfig(
-					() => ({ table: 123 }),
-					[],
-					'cfg_test',
-					tablePipe,
-				)
+				composeSchemaConfig(() => ({ table: 123 }), [], 'cfg_test', tablePipe)
+
 				expect.unreachable()
 			} catch (e) {
 				expect(e).toBeInstanceOf(OrmValidationError)

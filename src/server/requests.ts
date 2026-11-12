@@ -4,8 +4,8 @@ import type { Readable } from 'node:stream'
 import type { SerializeOptions } from '@fastify/cookie'
 import type { DistributiveOmit, IsInTypeList } from 'valleyed'
 
-import type { RequestError } from '../errors'
-import type { AuthUser } from '../types'
+import type { RequestError } from '../errors/index.js'
+import type { AuthUser } from '../types/index.js'
 import {
 	StatusCodes,
 	type DefaultCookies,
@@ -13,7 +13,7 @@ import {
 	type IncomingFile,
 	type MethodsEnum,
 	type RouteReqRes,
-} from './types'
+} from './types.js'
 
 type ResponseCookies<C> = C extends DefaultCookies ? C : DefaultCookies
 
@@ -71,7 +71,10 @@ export class Request<Def extends RouteReqRes> {
 		return this
 	}
 
-	pipe(stream: Readable, opts: { headers?: Def['responseHeaders']; cookies?: Def['responseCookies']; status?: Def['statusCode'] } = {}) {
+	pipe(
+		stream: Readable,
+		opts: { headers?: Def['responseHeaders']; cookies?: Def['responseCookies']; status?: Def['statusCode'] } = {},
+	) {
 		return new Response<Omit<Def, 'response'> & { response: Readable }>(<any>{
 			status: this.#responseDefaults.status,
 			...opts,
@@ -104,9 +107,10 @@ export class Request<Def extends RouteReqRes> {
 
 type BodyParam<T> = [T] extends [undefined] ? { body?: T; piped?: boolean } : { body: T; piped?: boolean }
 
-type RequestParams<Def extends RouteReqRes, T = Def['response']> = BodyParam<T> &
-	{ contentType?: Def['contentType']; status?: Def['statusCode'] } &
-	(IsInTypeList<Def['responseHeaders'], [DefaultHeaders]> extends true
+type RequestParams<Def extends RouteReqRes, T = Def['response']> = BodyParam<T> & {
+	contentType?: Def['contentType']
+	status?: Def['statusCode']
+} & (IsInTypeList<Def['responseHeaders'], [DefaultHeaders]> extends true
 		? { headers?: Def['responseHeaders'] }
 		: { headers: Def['responseHeaders'] }) &
 	(IsInTypeList<Def['responseCookies'], [DefaultCookies]> extends true

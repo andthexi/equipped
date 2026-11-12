@@ -1,10 +1,10 @@
 import { Queue, Worker } from 'bullmq'
 import { v } from 'valleyed'
 
-import { RedisCache, redisConfigPipe } from '../../../cache/adapters/redis'
-import { Instance } from '../../../instance'
-import { Random, configurable } from '../../../utilities'
-import { Job, JobNames, type Cron, type DelayedJobEvent, type RepeatableJobEvent } from '../base'
+import { RedisCache, redisConfigPipe } from '../../../cache/adapters/redis/index.js'
+import { Instance } from '../../../instance/index.js'
+import { Random, configurable } from '../../../utilities/index.js'
+import { Job, JobNames, type Cron, type DelayedJobEvent, type RepeatableJobEvent } from '../base.js'
 
 export const redisJobsConfigPipe = () =>
 	v.meta(
@@ -43,11 +43,15 @@ export class RedisJob extends configurable(redisJobsConfigPipe, Job) {
 			{ connection: redisCache.connectionOptions, autorun: false, skipVersionCheck: true },
 		)
 
-		Instance.on('start', async () => {
-			await this.#cleanup()
-			await Promise.all(this.crons.map(({ cron, name }) => this.#addCron(name, cron)))
-			worker.run()
-		}, { class: RedisJob })
+		Instance.on(
+			'start',
+			async () => {
+				await this.#cleanup()
+				await Promise.all(this.crons.map(({ cron, name }) => this.#addCron(name, cron)))
+				worker.run()
+			},
+			{ class: RedisJob },
+		)
 	}
 
 	#getNewId() {

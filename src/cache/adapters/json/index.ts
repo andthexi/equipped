@@ -3,11 +3,11 @@ import { open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 
 import { v } from 'valleyed'
 
-import { EquippedError } from '../../../errors'
-import { Instance } from '../../../instance'
-import { configurable } from '../../../utilities'
-import { Cache } from '../base'
-import { InMemoryCacheStore } from '../in-memory/store'
+import { EquippedError } from '../../../errors/index.js'
+import { Instance } from '../../../instance/index.js'
+import { configurable } from '../../../utilities/index.js'
+import { Cache } from '../base.js'
+import { InMemoryCacheStore } from '../in-memory/store.js'
 
 const ADAPTER_NAME = 'json-cache'
 
@@ -104,8 +104,10 @@ export class JsonCache extends configurable(jsonCacheConfigPipe, Cache) {
 				return true
 			} catch (error: any) {
 				if (error?.code === 'ENOENT' && operation === 'start') return false
-				if (error?.code !== 'EEXIST') throw this.#operationError('JsonCache failed to acquire cache file lock', operation, error)
-				if (Date.now() > deadline) throw this.#operationError('JsonCache timed out waiting for cache file lock', operation, error)
+				if (error?.code !== 'EEXIST')
+					throw this.#operationError('JsonCache failed to acquire cache file lock', operation, error)
+				if (Date.now() > deadline)
+					throw this.#operationError('JsonCache timed out waiting for cache file lock', operation, error)
 				await new Promise((resolve) => setTimeout(resolve, 50))
 			}
 		}
@@ -132,7 +134,8 @@ export class JsonCache extends configurable(jsonCacheConfigPipe, Cache) {
 		}
 
 		const validity = v.validate(jsonCacheFilePipe, raw)
-		if (!validity.valid) throw this.#operationError('JsonCache persisted cache file is invalid', operation, validity.error)
+		if (!validity.valid)
+			throw this.#operationError('JsonCache persisted cache file is invalid', operation, validity.error)
 		this.#store.restore(validity.value.entries)
 		return true
 	}
@@ -223,7 +226,9 @@ if (import.meta.vitest) {
 	}
 
 	async function readPersistedEntries() {
-		return JSON.parse(await readFileForTest(filePath, 'utf-8')) as { entries: Record<string, { data: string; expiredAt?: number }> }
+		return JSON.parse(await readFileForTest(filePath, 'utf-8')) as {
+			entries: Record<string, { data: string; expiredAt?: number }>
+		}
 	}
 
 	beforeEach(async () => {
@@ -251,8 +256,16 @@ if (import.meta.vitest) {
 		test('create() registers Instance lifecycle hooks', () => {
 			const cache = JsonCache.create({ filePath })
 			expect(cache).toBeInstanceOf(JsonCache)
-			expect(onSpy).toHaveBeenCalledWith('start', expect.any(Function), expect.objectContaining({ class: JsonCache }))
-			expect(onSpy).toHaveBeenCalledWith('close', expect.any(Function), expect.objectContaining({ class: JsonCache }))
+			expect(onSpy).toHaveBeenCalledWith(
+				'start',
+				expect.any(Function),
+				expect.objectContaining({ class: JsonCache }),
+			)
+			expect(onSpy).toHaveBeenCalledWith(
+				'close',
+				expect.any(Function),
+				expect.objectContaining({ class: JsonCache }),
+			)
 		})
 
 		test('Config type matches pipe output', () => {
@@ -276,7 +289,11 @@ if (import.meta.vitest) {
 		test('loads through Instance.start and persists mutations with scoped keys', async () => {
 			const instance = ensureInstance()
 			const scopedKey = instance.getScopedName('key', ':')
-			await writeFileForTest(filePath, JSON.stringify({ entries: { [scopedKey]: { data: 'from-file' } } }), 'utf-8')
+			await writeFileForTest(
+				filePath,
+				JSON.stringify({ entries: { [scopedKey]: { data: 'from-file' } } }),
+				'utf-8',
+			)
 			const cache = JsonCache.create({ filePath })
 
 			await instance.start()
@@ -297,7 +314,9 @@ if (import.meta.vitest) {
 			await expect(readFileForTest(filePath, 'utf-8')).rejects.toMatchObject({ code: 'ENOENT' })
 
 			await cache.set('key', 'value')
-			expect(await readPersistedEntries()).toEqual({ entries: { [instance.getScopedName('key', ':')]: { data: 'value' } } })
+			expect(await readPersistedEntries()).toEqual({
+				entries: { [instance.getScopedName('key', ':')]: { data: 'value' } },
+			})
 		})
 
 		test('operations reload latest persisted data after start', async () => {
@@ -323,7 +342,10 @@ if (import.meta.vitest) {
 
 			await cache.set('key', 'value', 1)
 			let persisted = await readPersistedEntries()
-			expect(persisted.entries[instance.getScopedName('key', ':')]).toEqual({ data: 'value', expiredAt: now + 1000 })
+			expect(persisted.entries[instance.getScopedName('key', ':')]).toEqual({
+				data: 'value',
+				expiredAt: now + 1000,
+			})
 
 			vi.spyOn(Date, 'now').mockReturnValue(now + 1001)
 			expect(await cache.get('key')).toBeNull()

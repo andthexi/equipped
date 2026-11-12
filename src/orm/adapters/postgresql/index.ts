@@ -4,22 +4,11 @@ import { Pool, type PoolClient } from 'pg'
 import Cursor from 'pg-cursor'
 import { v } from 'valleyed'
 
-import {
-	buildAggregateQuery,
-	buildCountQuery,
-	buildCreateQuery,
-	buildDeleteQuery,
-	buildPkUpdateQuery,
-	buildSelectQuery,
-	buildUpdateQuery,
-	buildUpsertQuery,
-	extractUpsertConflictColumn,
-} from './query'
-import { EquippedError } from '../../../errors'
-import { configurable } from '../../../utilities'
-import type { FieldTypeName } from '../../adapter'
-import type { FilterGroup } from '../../filter'
-import type { DiscoveredSchema, ForeignKeyAction } from '../../migrations/introspection-types'
+import { EquippedError } from '../../../errors/index.js'
+import { configurable } from '../../../utilities/index.js'
+import type { FieldTypeName } from '../../adapter.js'
+import type { FilterGroup } from '../../filter.js'
+import type { DiscoveredSchema, ForeignKeyAction } from '../../migrations/introspection-types.js'
 import type {
 	AddFieldChange,
 	AddForeignKeyChange,
@@ -32,11 +21,22 @@ import type {
 	ModifyFieldChange,
 	RenameFieldChange,
 	RenameTableChange,
-} from '../../migrations/types'
-import { OrmAdapter, type AggregateSpec } from '../../orm-adapter'
-import type { IterationQueryOptions, QueryOptions } from '../../query-options'
-import type { AnySchema } from '../../schema'
-import { flattenOps, type AnyUpdateOp } from '../../updates'
+} from '../../migrations/types.js'
+import { OrmAdapter, type AggregateSpec } from '../../orm-adapter.js'
+import type { IterationQueryOptions, QueryOptions } from '../../query-options.js'
+import type { AnySchema } from '../../schema.js'
+import { flattenOps, type AnyUpdateOp } from '../../updates.js'
+import {
+	buildAggregateQuery,
+	buildCountQuery,
+	buildCreateQuery,
+	buildDeleteQuery,
+	buildPkUpdateQuery,
+	buildSelectQuery,
+	buildUpdateQuery,
+	buildUpsertQuery,
+	extractUpsertConflictColumn,
+} from './query.js'
 
 export type PostgresqlRepoConfig = {
 	schema?: string
@@ -169,7 +169,11 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			const result = await this.#getClient().query(`SELECT * FROM "${tableName}" WHERE "${pkName}" = $1`, [pk])
 			return result.rows[0] ?? null
 		} catch (error) {
-			throw new EquippedError('PostgreSQL findByPk failed', { adapter: 'postgresql', operation: 'findByPk', table: c.table }, error)
+			throw new EquippedError(
+				'PostgreSQL findByPk failed',
+				{ adapter: 'postgresql', operation: 'findByPk', table: c.table },
+				error,
+			)
 		}
 	}
 
@@ -201,7 +205,9 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			const pkName = schema.pkField.name
 			const data = flattenOps(ops)
 			if (Object.keys(data).length === 0) {
-				const result = await this.#getClient().query(`SELECT * FROM "${tableName}" WHERE "${pkName}" = $1`, [pk])
+				const result = await this.#getClient().query(`SELECT * FROM "${tableName}" WHERE "${pkName}" = $1`, [
+					pk,
+				])
 				return result.rows[0] ?? null
 			}
 			const { sql, params } = buildPkUpdateQuery(tableName, pkName, pk, data)
@@ -221,7 +227,10 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		try {
 			const tableName = this.#resolveTableName(c)
 			const pkName = schema.pkField.name
-			const result = await this.#getClient().query(`DELETE FROM "${tableName}" WHERE "${pkName}" = $1 RETURNING *`, [pk])
+			const result = await this.#getClient().query(
+				`DELETE FROM "${tableName}" WHERE "${pkName}" = $1 RETURNING *`,
+				[pk],
+			)
 			return result.rows[0] ?? null
 		} catch (error) {
 			throw new EquippedError(
@@ -239,7 +248,11 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			return result
 		} catch (error) {
 			if (error instanceof EquippedError) throw error
-			throw new EquippedError('PostgreSQL raw failed', { adapter: 'postgresql', operation: 'raw', table: c.table }, error)
+			throw new EquippedError(
+				'PostgreSQL raw failed',
+				{ adapter: 'postgresql', operation: 'raw', table: c.table },
+				error,
+			)
 		}
 	}
 
@@ -251,7 +264,11 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			const result = await this.#getClient().query(sql, params)
 			return result.rows
 		} catch (error) {
-			throw new EquippedError('PostgreSQL findMany failed', { adapter: 'postgresql', operation: 'findMany', table: c.table }, error)
+			throw new EquippedError(
+				'PostgreSQL findMany failed',
+				{ adapter: 'postgresql', operation: 'findMany', table: c.table },
+				error,
+			)
 		}
 	}
 
@@ -263,7 +280,11 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			const result = await this.#getClient().query(sql, params)
 			return Number(result.rows[0]?.count ?? 0)
 		} catch (error) {
-			throw new EquippedError('PostgreSQL count failed', { adapter: 'postgresql', operation: 'count', table: c.table }, error)
+			throw new EquippedError(
+				'PostgreSQL count failed',
+				{ adapter: 'postgresql', operation: 'count', table: c.table },
+				error,
+			)
 		}
 	}
 
@@ -282,7 +303,9 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				client = await this.pool.connect()
 				releaseClient = true
 			}
-			cursor = client.query(new Cursor<Record<string, unknown>>(sql, params) as any) as PostgresCursor<Record<string, unknown>>
+			cursor = client.query(new Cursor<Record<string, unknown>>(sql, params) as any) as PostgresCursor<
+				Record<string, unknown>
+			>
 			const batchSize = options?.batchSize ?? DEFAULT_CURSOR_BATCH_SIZE
 
 			while (true) {
@@ -291,7 +314,11 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				for (const row of rows) yield row
 			}
 		} catch (error) {
-			throw new EquippedError('PostgreSQL iterateMany failed', { adapter: 'postgresql', operation: 'iterateMany', table: c.table }, error)
+			throw new EquippedError(
+				'PostgreSQL iterateMany failed',
+				{ adapter: 'postgresql', operation: 'iterateMany', table: c.table },
+				error,
+			)
 		} finally {
 			try {
 				await cursor?.close()
@@ -333,7 +360,13 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		}
 	}
 
-	async upsertOne(schema: AnySchema, config: unknown, filter: FilterGroup, create: Record<string, unknown>, ops: AnyUpdateOp[]) {
+	async upsertOne(
+		schema: AnySchema,
+		config: unknown,
+		filter: FilterGroup,
+		create: Record<string, unknown>,
+		ops: AnyUpdateOp[],
+	) {
 		const c = config as PostgresqlRepoConfig
 		try {
 			const tableName = this.#resolveTableName(c)
@@ -344,7 +377,11 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			return result.rows[0]
 		} catch (error) {
 			if (error instanceof EquippedError) throw error
-			throw new EquippedError('PostgreSQL upsertOne failed', { adapter: 'postgresql', operation: 'upsertOne', table: c.table }, error)
+			throw new EquippedError(
+				'PostgreSQL upsertOne failed',
+				{ adapter: 'postgresql', operation: 'upsertOne', table: c.table },
+				error,
+			)
 		}
 	}
 
@@ -371,7 +408,11 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			})
 		} catch (error) {
 			if (error instanceof EquippedError) throw error
-			throw new EquippedError('PostgreSQL aggregate failed', { adapter: 'postgresql', operation: 'aggregate', table: c.table }, error)
+			throw new EquippedError(
+				'PostgreSQL aggregate failed',
+				{ adapter: 'postgresql', operation: 'aggregate', table: c.table },
+				error,
+			)
 		}
 	}
 
@@ -436,7 +477,9 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			await client.query(`ALTER TABLE ${table} ALTER COLUMN ${col} SET NOT NULL`)
 		}
 		if (change.to.default !== undefined) {
-			await client.query(`ALTER TABLE ${table} ALTER COLUMN ${col} SET DEFAULT ${this.#renderDefault(change.to.default)}`)
+			await client.query(
+				`ALTER TABLE ${table} ALTER COLUMN ${col} SET DEFAULT ${this.#renderDefault(change.to.default)}`,
+			)
 		} else {
 			await client.query(`ALTER TABLE ${table} ALTER COLUMN ${col} DROP DEFAULT`)
 		}
@@ -477,53 +520,75 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 	}
 
 	async introspect(): Promise<DiscoveredSchema[]> {
-		const { OrmIntrospectionError } = await import('../../errors/introspection')
+		const { OrmIntrospectionError } = await import('../../errors/introspection.js')
 		const client = this.#getClient()
 
-		const tablesResult = await client.query(`
+		const tablesResult = await client.query(
+			`
 			SELECT table_name FROM information_schema.tables
 			WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name != $1
-		`, [TRACKER_TABLE])
+		`,
+			[TRACKER_TABLE],
+		)
 
 		const schemas: DiscoveredSchema[] = []
 
 		for (const tableRow of tablesResult.rows) {
 			const tableName = tableRow.table_name
 
-			const colsResult = await client.query(`
+			const colsResult = await client.query(
+				`
 				SELECT column_name, data_type, is_nullable, column_default
 				FROM information_schema.columns
 				WHERE table_schema = 'public' AND table_name = $1
 				ORDER BY ordinal_position
-			`, [tableName])
+			`,
+				[tableName],
+			)
 
-			const pkResult = await client.query(`
+			const pkResult = await client.query(
+				`
 				SELECT kcu.column_name
 				FROM information_schema.table_constraints tc
 				JOIN information_schema.key_column_usage kcu
 					ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
 				WHERE tc.table_schema = 'public' AND tc.table_name = $1 AND tc.constraint_type = 'PRIMARY KEY'
-			`, [tableName])
+			`,
+				[tableName],
+			)
 
 			const pkColName = pkResult.rows[0]?.column_name as string | undefined
 
-			const uniqueResult = await client.query(`
+			const uniqueResult = await client.query(
+				`
 				SELECT kcu.column_name
 				FROM information_schema.table_constraints tc
 				JOIN information_schema.key_column_usage kcu
 					ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
 				WHERE tc.table_schema = 'public' AND tc.table_name = $1 AND tc.constraint_type = 'UNIQUE'
-			`, [tableName])
+			`,
+				[tableName],
+			)
 			const uniqueCols = new Set(uniqueResult.rows.map((r: any) => r.column_name))
 
 			let pk: { name: string; type: FieldTypeName } | undefined
-			const fields: { name: string; type: FieldTypeName; nullable: boolean; default?: string | number | boolean | null; unique?: boolean }[] = []
+			const fields: {
+				name: string
+				type: FieldTypeName
+				nullable: boolean
+				default?: string | number | boolean | null
+				unique?: boolean
+			}[] = []
 
 			for (const col of colsResult.rows) {
 				const pgType = (col.data_type as string).toLowerCase()
 				const fieldType = PG_TO_FIELD_TYPE[pgType]
 				if (!fieldType) {
-					throw new OrmIntrospectionError({ adapter: 'postgresql', table: tableName, cause: `Unsupported column type '${pgType}' on column '${col.column_name}'` })
+					throw new OrmIntrospectionError({
+						adapter: 'postgresql',
+						table: tableName,
+						cause: `Unsupported column type '${pgType}' on column '${col.column_name}'`,
+					})
 				}
 
 				if (col.column_name === pkColName) {
@@ -544,11 +609,14 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				})
 			}
 
-			const idxResult = await client.query(`
+			const idxResult = await client.query(
+				`
 				SELECT indexname, indexdef
 				FROM pg_indexes
 				WHERE schemaname = 'public' AND tablename = $1
-			`, [tableName])
+			`,
+				[tableName],
+			)
 
 			const indexes: { name: string; on: readonly string[]; unique: boolean }[] = []
 			for (const idx of idxResult.rows) {
@@ -561,7 +629,8 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				indexes.push({ name: idxName, on: cols, unique })
 			}
 
-			const fkResult = await client.query(`
+			const fkResult = await client.query(
+				`
 				SELECT
 					tc.constraint_name,
 					kcu.column_name,
@@ -577,16 +646,28 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				JOIN information_schema.referential_constraints rc
 					ON tc.constraint_name = rc.constraint_name AND tc.table_schema = rc.constraint_schema
 				WHERE tc.table_schema = 'public' AND tc.table_name = $1 AND tc.constraint_type = 'FOREIGN KEY'
-			`, [tableName])
+			`,
+				[tableName],
+			)
 
-			const foreignKeys: { name: string; on: string; references: { table: string; column: string }; onDelete?: ForeignKeyAction; onUpdate?: ForeignKeyAction }[] = []
+			const foreignKeys: {
+				name: string
+				on: string
+				references: { table: string; column: string }
+				onDelete?: ForeignKeyAction
+				onUpdate?: ForeignKeyAction
+			}[] = []
 			for (const fk of fkResult.rows) {
 				foreignKeys.push({
 					name: fk.constraint_name,
 					on: fk.column_name,
 					references: { table: fk.foreign_table_name, column: fk.foreign_column_name },
-					...(fk.delete_rule && fk.delete_rule !== 'NO ACTION' ? { onDelete: this.#parseFkAction(fk.delete_rule) } : {}),
-					...(fk.update_rule && fk.update_rule !== 'NO ACTION' ? { onUpdate: this.#parseFkAction(fk.update_rule) } : {}),
+					...(fk.delete_rule && fk.delete_rule !== 'NO ACTION'
+						? { onDelete: this.#parseFkAction(fk.delete_rule) }
+						: {}),
+					...(fk.update_rule && fk.update_rule !== 'NO ACTION'
+						? { onUpdate: this.#parseFkAction(fk.update_rule) }
+						: {}),
 				})
 			}
 
@@ -596,7 +677,13 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		return schemas
 	}
 
-	#renderColumnDef(f: { name: string; type: string; nullable?: boolean; default?: string | number | boolean | null; unique?: boolean }): string {
+	#renderColumnDef(f: {
+		name: string
+		type: string
+		nullable?: boolean
+		default?: string | number | boolean | null
+		unique?: boolean
+	}): string {
 		const pgType = FIELD_TYPE_TO_PG[f.type] ?? 'text'
 		let def = `"${f.name}" ${pgType}`
 		if (!f.nullable) def += ' NOT NULL'
@@ -618,12 +705,21 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 	}
 
 	#renderFkAction(action: string): string {
-		const map: Record<string, string> = { cascade: 'CASCADE', restrict: 'RESTRICT', setnull: 'SET NULL', noaction: 'NO ACTION' }
+		const map: Record<string, string> = {
+			cascade: 'CASCADE',
+			restrict: 'RESTRICT',
+			setnull: 'SET NULL',
+			noaction: 'NO ACTION',
+		}
 		return map[action.toLowerCase()] ?? 'NO ACTION'
 	}
 
 	#parseFkAction(rule: string): ForeignKeyAction {
-		const map: Record<string, ForeignKeyAction> = { CASCADE: 'cascade', RESTRICT: 'restrict', 'SET NULL': 'setNull' }
+		const map: Record<string, ForeignKeyAction> = {
+			CASCADE: 'cascade',
+			RESTRICT: 'restrict',
+			'SET NULL': 'setNull',
+		}
 		return map[rule.toUpperCase()] ?? 'noAction'
 	}
 
@@ -680,7 +776,7 @@ if (import.meta.vitest) {
 		let onSpy: ReturnType<typeof vi.spyOn>
 
 		beforeEach(async () => {
-			const { Instance } = await import('../../../instance')
+			const { Instance } = await import('../../../instance/index.js')
 			onSpy = vi.spyOn(Instance, 'on').mockImplementation(() => {})
 		})
 
@@ -691,7 +787,15 @@ if (import.meta.vitest) {
 		test('PostgresAdapter.create returns instance with correct capability declarations', () => {
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 
-			expect(adapter.supportedFieldTypes).toEqual(['string', 'number', 'boolean', 'null', 'object', 'array', 'date'])
+			expect(adapter.supportedFieldTypes).toEqual([
+				'string',
+				'number',
+				'boolean',
+				'null',
+				'object',
+				'array',
+				'date',
+			])
 			expect(adapter.queryableOps).toEqual([
 				'eq',
 				'ne',
@@ -729,12 +833,20 @@ if (import.meta.vitest) {
 		test('auto-wires Instance hooks for connect and disconnect', () => {
 			PostgresAdapter.create(testConnectionConfig)
 
-			expect(onSpy).toHaveBeenCalledWith('start', expect.any(Function), expect.objectContaining({ class: PostgresAdapter }))
-			expect(onSpy).toHaveBeenCalledWith('close', expect.any(Function), expect.objectContaining({ class: PostgresAdapter }))
+			expect(onSpy).toHaveBeenCalledWith(
+				'start',
+				expect.any(Function),
+				expect.objectContaining({ class: PostgresAdapter }),
+			)
+			expect(onSpy).toHaveBeenCalledWith(
+				'close',
+				expect.any(Function),
+				expect.objectContaining({ class: PostgresAdapter }),
+			)
 		})
 
 		test('adapter.use returns OrmUse-shaped object', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('test')
 				.pk('id', v.string(), () => 'x')
@@ -760,24 +872,42 @@ if (import.meta.vitest) {
 			const _adapter = PostgresAdapter.create(testConnectionConfig)
 
 			type Ops = typeof _adapter.updateOps
-			expectTypeOf<Ops>().toEqualTypeOf<readonly ['set', 'inc', 'mul', 'min', 'max', 'unset', 'push', 'pull', 'patch']>()
+			expectTypeOf<Ops>().toEqualTypeOf<
+				readonly ['set', 'inc', 'mul', 'min', 'max', 'unset', 'push', 'pull', 'patch']
+			>()
 
 			type Types = typeof _adapter.supportedFieldTypes
-			expectTypeOf<Types>().toEqualTypeOf<readonly ['string', 'number', 'boolean', 'null', 'object', 'array', 'date']>()
+			expectTypeOf<Types>().toEqualTypeOf<
+				readonly ['string', 'number', 'boolean', 'null', 'object', 'array', 'date']
+			>()
 
 			type QOps = typeof _adapter.queryableOps
 			expectTypeOf<QOps>().toEqualTypeOf<
-				readonly ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'notIn', 'like', 'exists', 'notExists', 'contains', 'notContains']
+				readonly [
+					'eq',
+					'ne',
+					'gt',
+					'gte',
+					'lt',
+					'lte',
+					'in',
+					'notIn',
+					'like',
+					'exists',
+					'notExists',
+					'contains',
+					'notContains',
+				]
 			>()
 		})
 
 		test('type-level: Repo.from with PostgresAdapter enables all builder methods', async () => {
-			const { Repo } = await import('../../repo/repo')
-			const { Schema } = await import('../../schema')
+			const { Repo } = await import('../../repo/repo.js')
+			const { Schema } = await import('../../schema.js')
 
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const repo = Repo.from(adapter)
-				.resolve(() => ({ table: 'test' }))
+				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
 				.pk('id', v.string(), () => 'x')
@@ -801,12 +931,12 @@ if (import.meta.vitest) {
 		})
 
 		test('type-level: raw arg-tuple infers (command: string, params?: unknown[]) from PostgresAdapter', async () => {
-			const { Repo } = await import('../../repo/repo')
-			const { Schema } = await import('../../schema')
+			const { Repo } = await import('../../repo/repo.js')
+			const { Schema } = await import('../../schema.js')
 
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const repo = Repo.from(adapter)
-				.resolve(() => ({ table: 'test' }))
+				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
 				.pk('id', v.string(), () => 'x')
@@ -817,12 +947,12 @@ if (import.meta.vitest) {
 		})
 
 		test('type-level: per-call <T> override narrows PostgresAdapter raw return type', async () => {
-			const { Repo } = await import('../../repo/repo')
-			const { Schema } = await import('../../schema')
+			const { Repo } = await import('../../repo/repo.js')
+			const { Schema } = await import('../../schema.js')
 
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const repo = Repo.from(adapter)
-				.resolve(() => ({ table: 'test' }))
+				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
 				.pk('id', v.string(), () => 'x')
@@ -833,8 +963,8 @@ if (import.meta.vitest) {
 		})
 
 		test('count forwards COUNT query to pool.query and returns a number', async () => {
-			const { Schema } = await import('../../schema')
-			const { FilterGroup } = await import('../../filter')
+			const { Schema } = await import('../../schema.js')
+			const { FilterGroup } = await import('../../filter.js')
 
 			const schema = Schema.from('pg_count')
 				.pk('id', v.string(), () => 'x')
@@ -856,7 +986,7 @@ if (import.meta.vitest) {
 		})
 
 		test('raw forwards (command, params) to pool.query at runtime', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_raw')
 				.pk('id', v.string(), () => 'x')
@@ -870,14 +1000,16 @@ if (import.meta.vitest) {
 				capturedParams = params
 				return mockResult
 			}
-			const result = await adapter.use(schema, { table: 'users' }).raw('SELECT * FROM users WHERE id = $1', ['abc'])
+			const result = await adapter
+				.use(schema, { table: 'users' })
+				.raw('SELECT * FROM users WHERE id = $1', ['abc'])
 			expect(capturedCommand).toBe('SELECT * FROM users WHERE id = $1')
 			expect(capturedParams).toEqual(['abc'])
 			expect(result).toBe(mockResult)
 		})
 
 		test('raw defaults params to [] when omitted', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_raw2')
 				.pk('id', v.string(), () => 'x')
@@ -893,9 +1025,9 @@ if (import.meta.vitest) {
 		})
 
 		test('iterateMany opens a dedicated cursor client, reads in batchSize chunks, and releases on completion', async () => {
-			const { Schema } = await import('../../schema')
-			const { FilterGroup } = await import('../../filter')
-			const { OrderBy } = await import('../../query-options')
+			const { Schema } = await import('../../schema.js')
+			const { FilterGroup } = await import('../../filter.js')
+			const { OrderBy } = await import('../../query-options.js')
 
 			const schema = Schema.from('pg_iter')
 				.pk('id', v.string(), () => 'x')
@@ -905,7 +1037,8 @@ if (import.meta.vitest) {
 			let capturedCursor: Cursor<Record<string, unknown>> | undefined
 			const release = vi.fn()
 			const cursor = {
-				read: vi.fn()
+				read: vi
+					.fn()
 					.mockResolvedValueOnce([{ id: 'u3', age: 40 }])
 					.mockResolvedValueOnce([{ id: 'u1', age: 30 }])
 					.mockResolvedValueOnce([]),
@@ -921,31 +1054,38 @@ if (import.meta.vitest) {
 			;(adapter.pool as any).connect = vi.fn(async () => client)
 
 			const rows: Record<string, unknown>[] = []
-			for await (const row of adapter.use(schema, { table: 'people' }).iterateMany(FilterGroup.create().gt('age', 19), {
-				orderBy: [new OrderBy('age', 'desc')],
-				offset: 1,
-				limit: 2,
-				batchSize: 1,
-			})) {
+			for await (const row of adapter
+				.use(schema, { table: 'people' })
+				.iterateMany(FilterGroup.create().gt('age', 19), {
+					orderBy: [new OrderBy('age', 'desc')],
+					offset: 1,
+					limit: 2,
+					batchSize: 1,
+				})) {
 				rows.push(row)
 			}
 
 			expect((adapter.pool as any).connect).toHaveBeenCalledTimes(1)
 			expect(capturedCursor).toBeInstanceOf(Cursor)
 			const capturedCursorConfig = capturedCursor as unknown as { text: string; values: unknown[] }
-			expect(capturedCursorConfig.text).toBe('SELECT * FROM "people" WHERE "age" > $1 ORDER BY "age" DESC LIMIT $2 OFFSET $3')
+			expect(capturedCursorConfig.text).toBe(
+				'SELECT * FROM "people" WHERE "age" > $1 ORDER BY "age" DESC LIMIT $2 OFFSET $3',
+			)
 			expect(capturedCursorConfig.values).toEqual(['19', '2', '1'])
 			expect(cursor.read).toHaveBeenNthCalledWith(1, 1)
 			expect(cursor.read).toHaveBeenNthCalledWith(2, 1)
 			expect(cursor.read).toHaveBeenNthCalledWith(3, 1)
 			expect(cursor.close).toHaveBeenCalledTimes(1)
 			expect(release).toHaveBeenCalledTimes(1)
-			expect(rows).toEqual([{ id: 'u3', age: 40 }, { id: 'u1', age: 30 }])
+			expect(rows).toEqual([
+				{ id: 'u3', age: 40 },
+				{ id: 'u1', age: 30 },
+			])
 		})
 
 		test('iterateMany closes cursor and releases dedicated client on early break', async () => {
-			const { Schema } = await import('../../schema')
-			const { FilterGroup } = await import('../../filter')
+			const { Schema } = await import('../../schema.js')
+			const { FilterGroup } = await import('../../filter.js')
 
 			const schema = Schema.from('pg_iter_break')
 				.pk('id', v.string(), () => 'x')
@@ -973,8 +1113,8 @@ if (import.meta.vitest) {
 		})
 
 		test('iterateMany closes cursor and releases dedicated client when the consumer throws', async () => {
-			const { Schema } = await import('../../schema')
-			const { FilterGroup } = await import('../../filter')
+			const { Schema } = await import('../../schema.js')
+			const { FilterGroup } = await import('../../filter.js')
 
 			const schema = Schema.from('pg_iter_throw')
 				.pk('id', v.string(), () => 'x')
@@ -1002,8 +1142,8 @@ if (import.meta.vitest) {
 		})
 
 		test('iterateMany inside a session uses the active client and leaves release ownership to session', async () => {
-			const { Schema } = await import('../../schema')
-			const { FilterGroup } = await import('../../filter')
+			const { Schema } = await import('../../schema.js')
+			const { FilterGroup } = await import('../../filter.js')
 
 			const schema = Schema.from('pg_iter_session')
 				.pk('id', v.string(), () => 'x')
@@ -1012,7 +1152,8 @@ if (import.meta.vitest) {
 			const events: string[] = []
 			const release = vi.fn(() => events.push('release'))
 			const cursor = {
-				read: vi.fn()
+				read: vi
+					.fn()
 					.mockResolvedValueOnce([{ id: 'u1' }])
 					.mockResolvedValueOnce([]),
 				close: vi.fn(async () => events.push('cursor.close')),
@@ -1032,7 +1173,9 @@ if (import.meta.vitest) {
 
 			const rows: Record<string, unknown>[] = []
 			await adapter.session(async () => {
-				for await (const row of adapter.use(schema, { table: 'people' }).iterateMany(FilterGroup.create(), { batchSize: 1 })) {
+				for await (const row of adapter
+					.use(schema, { table: 'people' })
+					.iterateMany(FilterGroup.create(), { batchSize: 1 })) {
 					rows.push(row)
 				}
 				events.push('session.body.done')
@@ -1058,13 +1201,11 @@ if (import.meta.vitest) {
 		test('type-level: aggregateOps is a readonly tuple of all six ops', () => {
 			const _adapter = PostgresAdapter.create(testConnectionConfig)
 			type AggOps = typeof _adapter.aggregateOps
-			expectTypeOf<AggOps>().toEqualTypeOf<
-				readonly ['count', 'countDistinct', 'sum', 'avg', 'min', 'max']
-			>()
+			expectTypeOf<AggOps>().toEqualTypeOf<readonly ['count', 'countDistinct', 'sum', 'avg', 'min', 'max']>()
 		})
 
 		test('aggregate method forwards spec to pool.query and returns mapped rows', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_agg')
 				.pk('id', v.string(), () => 'x')
@@ -1079,17 +1220,21 @@ if (import.meta.vitest) {
 				capturedParams = params
 				return { rows: [{ total: '5' }] }
 			}
-			const result = await adapter.aggregate(schema, { table: 'orders' }, {
-				aggregates: [{ fn: 'count', alias: 'total' }],
-				groupBy: [],
-			})
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'orders' },
+				{
+					aggregates: [{ fn: 'count', alias: 'total' }],
+					groupBy: [],
+				},
+			)
 			expect(capturedSql).toBe('SELECT COUNT(*) AS "total" FROM "orders"')
 			expect(capturedParams).toEqual([])
 			expect(result).toEqual([{ total: 5 }])
 		})
 
 		test('aggregate converts PG bigint/numeric strings to numbers for count/sum/avg', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_agg_types')
 				.pk('id', v.string(), () => 'x')
@@ -1099,21 +1244,25 @@ if (import.meta.vitest) {
 			;(adapter.pool as any).query = async () => ({
 				rows: [{ cnt: '10', revenue: '250.50', avgAmt: '25.05' }],
 			})
-			const result = await adapter.aggregate(schema, { table: 'orders' }, {
-				aggregates: [
-					{ fn: 'count', alias: 'cnt' },
-					{ fn: 'sum', field: 'amount', alias: 'revenue' },
-					{ fn: 'avg', field: 'amount', alias: 'avgAmt' },
-				],
-				groupBy: [],
-			})
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'orders' },
+				{
+					aggregates: [
+						{ fn: 'count', alias: 'cnt' },
+						{ fn: 'sum', field: 'amount', alias: 'revenue' },
+						{ fn: 'avg', field: 'amount', alias: 'avgAmt' },
+					],
+					groupBy: [],
+				},
+			)
 			expect(result[0].cnt).toBe(10)
 			expect(result[0].revenue).toBe(250.5)
 			expect(result[0].avgAmt).toBe(25.05)
 		})
 
 		test('aggregate preserves original type for min/max', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_agg_minmax')
 				.pk('id', v.string(), () => 'x')
@@ -1123,19 +1272,23 @@ if (import.meta.vitest) {
 			;(adapter.pool as any).query = async () => ({
 				rows: [{ lowest: 'Alice', highest: 'Zara' }],
 			})
-			const result = await adapter.aggregate(schema, { table: 'users' }, {
-				aggregates: [
-					{ fn: 'min', field: 'name', alias: 'lowest' },
-					{ fn: 'max', field: 'name', alias: 'highest' },
-				],
-				groupBy: [],
-			})
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'users' },
+				{
+					aggregates: [
+						{ fn: 'min', field: 'name', alias: 'lowest' },
+						{ fn: 'max', field: 'name', alias: 'highest' },
+					],
+					groupBy: [],
+				},
+			)
 			expect(result[0].lowest).toBe('Alice')
 			expect(result[0].highest).toBe('Zara')
 		})
 
 		test('aggregate includes groupBy fields in result rows', async () => {
-			const { Schema } = await import('../../schema')
+			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_agg_group')
 				.pk('id', v.string(), () => 'x')
@@ -1148,10 +1301,14 @@ if (import.meta.vitest) {
 					{ cnt: '2', region: 'EU' },
 				],
 			})
-			const result = await adapter.aggregate(schema, { table: 'orders' }, {
-				aggregates: [{ fn: 'count', alias: 'cnt' }],
-				groupBy: ['region'],
-			})
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'orders' },
+				{
+					aggregates: [{ fn: 'count', alias: 'cnt' }],
+					groupBy: ['region'],
+				},
+			)
 			expect(result).toEqual([
 				{ cnt: 3, region: 'US' },
 				{ cnt: 2, region: 'EU' },
@@ -1159,12 +1316,12 @@ if (import.meta.vitest) {
 		})
 
 		test('type-level: Repo.from with PostgresAdapter enables aggregate method', async () => {
-			const { Repo } = await import('../../repo/repo')
-			const { Schema } = await import('../../schema')
+			const { Repo } = await import('../../repo/repo.js')
+			const { Schema } = await import('../../schema.js')
 
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const repo = Repo.from(adapter)
-				.resolve(() => ({ table: 'test' }))
+				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
 				.pk('id', v.string(), () => 'x')
@@ -1181,7 +1338,7 @@ if (import.meta.vitest) {
 		let queries: { sql: string; params?: unknown[] }[]
 
 		beforeEach(async () => {
-			const { Instance } = await import('../../../instance')
+			const { Instance } = await import('../../../instance/index.js')
 			onSpy = vi.spyOn(Instance, 'on').mockImplementation(() => {})
 			adapter = PostgresAdapter.create(testConnectionConfig)
 			queries = []
@@ -1231,9 +1388,11 @@ if (import.meta.vitest) {
 		})
 
 		test('acquireMigrationLock unlocks even on error', async () => {
-			await expect(adapter.acquireMigrationLock(async () => {
-				throw new Error('boom')
-			})).rejects.toThrow('boom')
+			await expect(
+				adapter.acquireMigrationLock(async () => {
+					throw new Error('boom')
+				}),
+			).rejects.toThrow('boom')
 			expect(queries[0].sql).toContain('pg_advisory_lock')
 			expect(queries[1].sql).toContain('pg_advisory_unlock')
 		})
@@ -1321,13 +1480,21 @@ if (import.meta.vitest) {
 		})
 
 		test('applyAddIndex generates CREATE UNIQUE INDEX with explicit name', async () => {
-			await adapter.applyAddIndex({ kind: 'addIndex', table: 'users', on: ['email'], unique: true, name: 'my_idx' })
+			await adapter.applyAddIndex({
+				kind: 'addIndex',
+				table: 'users',
+				on: ['email'],
+				unique: true,
+				name: 'my_idx',
+			})
 			expect(queries[0].sql).toBe('CREATE UNIQUE INDEX "my_idx" ON "users" ("email")')
 		})
 
 		test('applyAddIndex auto-derives unique suffix when unique and no name', async () => {
 			await adapter.applyAddIndex({ kind: 'addIndex', table: 'posts', on: ['author', 'title'], unique: true })
-			expect(queries[0].sql).toBe('CREATE UNIQUE INDEX "idx_posts_author_title_unique" ON "posts" ("author", "title")')
+			expect(queries[0].sql).toBe(
+				'CREATE UNIQUE INDEX "idx_posts_author_title_unique" ON "posts" ("author", "title")',
+			)
 		})
 
 		test('applyDropIndex generates DROP INDEX', async () => {
@@ -1377,7 +1544,12 @@ if (import.meta.vitest) {
 					return {
 						rows: [
 							{ column_name: 'id', data_type: 'text', is_nullable: 'NO', column_default: null },
-							{ column_name: 'email', data_type: 'character varying', is_nullable: 'NO', column_default: null },
+							{
+								column_name: 'email',
+								data_type: 'character varying',
+								is_nullable: 'NO',
+								column_default: null,
+							},
 							{ column_name: 'age', data_type: 'integer', is_nullable: 'YES', column_default: '25' },
 						],
 					}
@@ -1389,7 +1561,14 @@ if (import.meta.vitest) {
 					return { rows: [{ column_name: 'email' }] }
 				}
 				if (sql.includes('pg_indexes')) {
-					return { rows: [{ indexname: 'users_email_idx', indexdef: 'CREATE UNIQUE INDEX users_email_idx ON public.users USING btree (email)' }] }
+					return {
+						rows: [
+							{
+								indexname: 'users_email_idx',
+								indexdef: 'CREATE UNIQUE INDEX users_email_idx ON public.users USING btree (email)',
+							},
+						],
+					}
 				}
 				if (sql.includes("constraint_type = 'FOREIGN KEY'")) {
 					return { rows: [] }
@@ -1410,7 +1589,7 @@ if (import.meta.vitest) {
 		})
 
 		test('introspect throws OrmIntrospectionError on unsupported PG type', async () => {
-			const { OrmIntrospectionError } = await import('../../errors/introspection')
+			const { OrmIntrospectionError } = await import('../../errors/introspection.js')
 			;(adapter.pool as any).query = async (sql: string) => {
 				if (sql.includes('information_schema.tables')) {
 					return { rows: [{ table_name: 'files' }] }
@@ -1465,26 +1644,30 @@ if (import.meta.vitest) {
 				}
 				if (sql.includes("constraint_type = 'FOREIGN KEY'")) {
 					return {
-						rows: [{
-							constraint_name: 'fk_posts_author_id',
-							column_name: 'author_id',
-							foreign_table_name: 'users',
-							foreign_column_name: 'id',
-							delete_rule: 'CASCADE',
-							update_rule: 'SET NULL',
-						}],
+						rows: [
+							{
+								constraint_name: 'fk_posts_author_id',
+								column_name: 'author_id',
+								foreign_table_name: 'users',
+								foreign_column_name: 'id',
+								delete_rule: 'CASCADE',
+								update_rule: 'SET NULL',
+							},
+						],
 					}
 				}
 				return { rows: [] }
 			}
 			const schemas = await adapter.introspect()
-			expect(schemas[0].foreignKeys).toEqual([{
-				name: 'fk_posts_author_id',
-				on: 'author_id',
-				references: { table: 'users', column: 'id' },
-				onDelete: 'cascade',
-				onUpdate: 'setNull',
-			}])
+			expect(schemas[0].foreignKeys).toEqual([
+				{
+					name: 'fk_posts_author_id',
+					on: 'author_id',
+					references: { table: 'users', column: 'id' },
+					onDelete: 'cascade',
+					onUpdate: 'setNull',
+				},
+			])
 		})
 
 		test('introspect excludes tracker table from results', async () => {
@@ -1518,9 +1701,11 @@ if (import.meta.vitest) {
 		})
 
 		test('type-level: Migrator.from rejects withoutLock for PostgresAdapter', async () => {
-			const { Repo } = await import('../../repo/repo')
-			const { Migrator } = await import('../../migrations/migrator')
-			const repo = Repo.from(adapter).resolve(() => ({ table: 'test' })).build()
+			const { Repo } = await import('../../repo/repo.js')
+			const { Migrator } = await import('../../migrations/migrator.js')
+			const repo = Repo.from(adapter)
+				.resolve(() => ({ table: 'test', schema: undefined }))
+				.build()
 			const step = Migrator.from(repo, adapter).migrations([])
 			expectTypeOf(step).toHaveProperty('build')
 			expectTypeOf(step).not.toHaveProperty('withoutLock')
@@ -1579,19 +1764,27 @@ if (import.meta.vitest) {
 		})
 
 		test('end-to-end: Migrator.from(repo, adapter) wires up correctly', async () => {
-			const { Repo } = await import('../../repo/repo')
-			const { Migrator } = await import('../../migrations/migrator')
-			const { Schema } = await import('../../schema')
+			const { Repo } = await import('../../repo/repo.js')
+			const { Migrator } = await import('../../migrations/migrator.js')
+			const { Schema } = await import('../../schema.js')
 
-			Schema.from('users').pk('id', v.string(), () => 'x').field('email', v.string()).build()
-			const repo = Repo.from(adapter).resolve(() => ({ table: 'test' })).build()
+			Schema.from('users')
+				.pk('id', v.string(), () => 'x')
+				.field('email', v.string())
+				.build()
+			const repo = Repo.from(adapter)
+				.resolve(() => ({ table: 'test', schema: undefined }))
+				.build()
 
 			let loadCalls = 0
 			const mockClient = {
 				query: async (sql: string, _params?: unknown[]) => {
 					if (sql.includes('pg_advisory_lock') || sql.includes('pg_advisory_unlock')) return { rows: [] }
 					if (sql.includes('CREATE TABLE IF NOT EXISTS')) return { rows: [] }
-					if (sql.includes('SELECT id, applied_at')) { loadCalls++; return { rows: [] } }
+					if (sql.includes('SELECT id, applied_at')) {
+						loadCalls++
+						return { rows: [] }
+					}
 					if (sql.includes('INSERT INTO')) return { rows: [] }
 					if (sql.includes('CREATE TABLE')) return { rows: [] }
 					if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] }
@@ -1602,9 +1795,21 @@ if (import.meta.vitest) {
 			;(adapter.pool as any).query = mockClient.query
 			;(adapter.pool as any).connect = async () => mockClient
 
-			const migrator = Migrator.from(repo, adapter).migrations([
-				{ id: '0001', changes: [{ kind: 'createTable', name: 'users', pk: { name: 'id', type: 'string' }, fields: [{ name: 'email', type: 'string' }] }] },
-			]).build()
+			const migrator = Migrator.from(repo, adapter)
+				.migrations([
+					{
+						id: '0001',
+						changes: [
+							{
+								kind: 'createTable',
+								name: 'users',
+								pk: { name: 'id', type: 'string' },
+								fields: [{ name: 'email', type: 'string' }],
+							},
+						],
+					},
+				])
+				.build()
 
 			const result = await migrator.up()
 			expect(result.ran).toEqual(['0001'])

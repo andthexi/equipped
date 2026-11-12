@@ -1,7 +1,19 @@
-import { Filter, FilterGroup, type FilterChild } from '../../filter'
-import type { AggregateSpec } from '../../orm-adapter'
-import type { QueryOptions } from '../../query-options'
-import { flattenOps, IncOp, MaxOp, MinOp, MulOp, PatchOp, PullOp, PushOp, SetOp, UnsetOp, type AnyUpdateOp } from '../../updates'
+import { Filter, FilterGroup, type FilterChild } from '../../filter.js'
+import type { AggregateSpec } from '../../orm-adapter.js'
+import type { QueryOptions } from '../../query-options.js'
+import {
+	flattenOps,
+	IncOp,
+	MaxOp,
+	MinOp,
+	MulOp,
+	PatchOp,
+	PullOp,
+	PushOp,
+	SetOp,
+	UnsetOp,
+	type AnyUpdateOp,
+} from '../../updates.js'
 
 type MongoFilter = Record<string, unknown>
 
@@ -37,7 +49,8 @@ export function compileMongoQuery(
 			: undefined
 
 	const selects = options?.select ?? []
-	const projection = selects.length > 0 ? Object.fromEntries(selects.map((f) => [mapField(f, primaryKey), 1])) : undefined
+	const projection =
+		selects.length > 0 ? Object.fromEntries(selects.map((f) => [mapField(f, primaryKey), 1])) : undefined
 
 	return {
 		filter: mongoFilter,
@@ -157,9 +170,7 @@ export function compileMongoAggregate(spec: AggregateSpec, primaryKey: string): 
 	}
 
 	const groupId: Record<string, string> | null =
-		spec.groupBy.length > 0
-			? Object.fromEntries(spec.groupBy.map((f) => [f, `$${mapField(f, primaryKey)}`]))
-			: null
+		spec.groupBy.length > 0 ? Object.fromEntries(spec.groupBy.map((f) => [f, `$${mapField(f, primaryKey)}`])) : null
 
 	const accumulators: Record<string, unknown> = {}
 	for (const agg of spec.aggregates) {
@@ -205,9 +216,9 @@ export function compileMongoAggregate(spec: AggregateSpec, primaryKey: string): 
 
 if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
-	const { Field } = await import('../../fields')
-	const { FilterGroup } = await import('../../filter')
-	const { OrderBy } = await import('../../query-options')
+	const { Field } = await import('../../fields.js')
+	const { FilterGroup } = await import('../../filter.js')
+	const { OrderBy } = await import('../../query-options.js')
 
 	describe('compileMongoFilter', () => {
 		test('empty filter group compiles to empty object', () => {

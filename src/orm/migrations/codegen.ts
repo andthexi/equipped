@@ -1,10 +1,10 @@
-import type { OrmAdapterLike } from '../adapters/base'
-import type { OrmAdapter } from '../orm-adapter'
-import { diffSchemas } from './diff'
-import type { DiscoveredSchema } from './introspection-types'
-import type { ChangeFor } from './types'
-import type { Repo } from '../repo/repo'
-import type { AnySchema } from '../schema'
+import type { OrmAdapterLike } from '../adapters/base.js'
+import type { OrmAdapter } from '../orm-adapter.js'
+import type { Repo } from '../repo/repo.js'
+import type { AnySchema } from '../schema.js'
+import { diffSchemas } from './diff.js'
+import type { DiscoveredSchema } from './introspection-types.js'
+import type { ChangeFor } from './types.js'
 
 export type IntrospectableAdapter<A> = A extends { introspect(): Promise<DiscoveredSchema[]> } ? A : never
 
@@ -51,10 +51,10 @@ export class MigrationCodegen<A extends OrmAdapterLike<any>> {
 if (import.meta.vitest) {
 	const { describe, test, expect, expectTypeOf } = import.meta.vitest
 	const { v } = await import('valleyed')
-	const { InMemoryAdapter } = await import('../adapters/in-memory')
-	const { Schema } = await import('../schema')
-	const { Repo } = await import('../repo/repo')
-	const { OrmIntrospectionError } = await import('../errors/introspection')
+	const { InMemoryAdapter } = await import('../adapters/in-memory/index.js')
+	const { Schema } = await import('../schema.js')
+	const { Repo } = await import('../repo/repo.js')
+	const { OrmIntrospectionError } = await import('../errors/introspection.js')
 
 	const UserSchema = Schema.from('users')
 		.pk('id', v.string(), () => `u-${Math.random().toString(36).slice(2)}`)
@@ -89,6 +89,19 @@ if (import.meta.vitest) {
 				{ name: 'email', type: 'string' },
 				{ name: 'age', type: 'number' },
 			])
+		})
+
+		test('discovers a CRUD-created container rather than proposing to create it again', async () => {
+			const { adapter, repo } = makeEnv()
+			await repo.on(UserSchema).one().create({ id: 'u1', email: 'alice@example.com', age: 30 })
+			const codegen = MigrationCodegen.from(repo, adapter).target([UserSchema]).build()
+			expect(await codegen.discover()).toEqual([
+				{ name: 'users', pk: undefined, fields: [], indexes: [], foreignKeys: [] },
+			])
+			const changes = await codegen.diff()
+			expect(changes).not.toBeNull()
+			expect(changes!.every((c) => c.kind === 'addField')).toBe(true)
+			expect(changes!.map((c) => (c.kind === 'addField' ? c.field.name : ''))).toEqual(['email', 'age'])
 		})
 
 		test('diff() returns null when target matches current', async () => {
@@ -147,7 +160,7 @@ if (import.meta.vitest) {
 		})
 
 		test('compile-time: IntrospectableAdapter is never when adapter lacks introspect', async () => {
-			const { OrmAdapter } = await import('../orm-adapter')
+			const { OrmAdapter } = await import('../orm-adapter.js')
 			class _NoIntrospectAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({ table: v.string() })
 				readonly supportedFieldTypes = ['string'] as const
@@ -171,7 +184,11 @@ if (import.meta.vitest) {
 					for (const f of s.fields) {
 						const validTypes = ['string', 'number', 'boolean', 'null', 'object', 'array', 'date']
 						if (!validTypes.includes(f.type)) {
-							throw new OrmIntrospectionError({ adapter: 'in-memory', table: s.name, cause: `unsupported type '${f.type}' on column '${f.name}'` })
+							throw new OrmIntrospectionError({
+								adapter: 'in-memory',
+								table: s.name,
+								cause: `unsupported type '${f.type}' on column '${f.name}'`,
+							})
 						}
 					}
 				}

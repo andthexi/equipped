@@ -1,26 +1,25 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
-import {
+import type {
 	ClientSession,
 	Collection,
-	MongoClient,
-	ObjectId,
-	type CollectionInfo,
-	type OptionalUnlessRequiredId,
-	type SortDirection,
-	type WithId,
+	CollectionInfo,
+	OptionalUnlessRequiredId,
+	SortDirection,
+	WithId,
 } from 'mongodb'
-import { v } from 'valleyed'
+import { MongoClient, ObjectId } from 'mongodb'
+import { type ConditionalObjectKeys, type DistributiveOmit, v } from 'valleyed'
 
-import { MongoDbChange } from './changes'
-import { mongoDbConfigPipe, type MongoDbConfig } from './pipes'
-import { parseMongodbQueryParams } from './query'
-import { EquippedError } from '../../../errors'
-import { Instance } from '../../../instance'
-import type { QueryParamsBase } from '../../pipes'
-import * as core from '../base/core'
-import { Db } from '../base/db'
-import type { DbConfig } from '../base/types'
+import { EquippedError } from '../../../errors/index.js'
+import { Instance } from '../../../instance/index.js'
+import type { QueryParamsBase } from '../../pipes.js'
+import type * as core from '../base/core.js'
+import { Db } from '../base/db.js'
+import type { DbConfig } from '../base/types.js'
+import { MongoDbChange } from './changes.js'
+import { mongoDbConfigPipe, type MongoDbConfig } from './pipes.js'
+import { parseMongodbQueryParams } from './query.js'
 
 const idKey = '_id'
 type IdType = { _id: string }
@@ -58,7 +57,8 @@ export class MongoDb extends Db<{ _id: string }> {
 						const existing = collections.find((collection) => collection.name === colName)
 						if (existing) {
 							if (
-								existing.options?.changeStreamPreAndPostImages?.enabled !== options.changeStreamPreAndPostImages.enabled
+								existing.options?.changeStreamPreAndPostImages?.enabled !==
+								options.changeStreamPreAndPostImages.enabled
 							)
 								await db.command({ collMod: colName, ...options })
 						} else await db.createCollection(colName, options)
@@ -91,9 +91,9 @@ export class MongoDb extends Db<{ _id: string }> {
 	) {
 		type WI = Model | WithId<Model>
 		function transform(doc: WI, select?: core.Select<Entity>): Entity
-		// eslint-disable-next-line no-redeclare
+
 		function transform(doc: WI[], select?: core.Select<Entity>): Entity[]
-		// eslint-disable-next-line no-redeclare
+
 		function transform(doc: WI | WI[], select?: core.Select<Entity>) {
 			const docs = Array.isArray(doc) ? doc : [doc]
 			const mapped = docs.map((d) => config.mapper(d as Model, select))
@@ -121,7 +121,9 @@ export class MongoDb extends Db<{ _id: string }> {
 				...value,
 				$set: {
 					...value.$set,
-					...(upsert || (Object.keys(value).length > 0 && !config.options?.skipAudit) ? { updatedAt: now.getTime() } : {}),
+					...(upsert || (Object.keys(value).length > 0 && !config.options?.skipAudit)
+						? { updatedAt: now.getTime() }
+						: {}),
 				},
 			}
 		}
@@ -168,10 +170,14 @@ export class MongoDb extends Db<{ _id: string }> {
 
 			insertMany: async (values, options = {}) => {
 				const now = options.getTime?.() ?? new Date()
-				const payload = values.map((value, i) => prepInsertValue(value, options.makeId?.(i) ?? new ObjectId().toString(), now))
+				const payload = values.map((value, i) =>
+					prepInsertValue(value, options.makeId?.(i) ?? new ObjectId().toString(), now),
+				)
 				await collection.insertMany(payload, { session: sessionStore.getStore() })
 
-				const insertedData = await Promise.all(payload.map(async (data) => await table.findById(data[idKey] as any)))
+				const insertedData = await Promise.all(
+					payload.map(async (data) => await table.findById(data[idKey] as any)),
+				)
 				return insertedData.filter((value) => !!value)
 			},
 
@@ -211,13 +217,19 @@ export class MongoDb extends Db<{ _id: string }> {
 					filter,
 					{
 						...prepUpdateValue('update' in values ? values.update : {}, now, true),
-						// @ts-expect-error fighting ts
-						$setOnInsert: prepInsertValue(values.insert, options.makeId?.() ?? new ObjectId().toString(), now, true),
+						$setOnInsert: prepInsertValue(
+							values.insert as ConditionalObjectKeys<
+								DistributiveOmit<Model, 'id' | '_id' | 'createdAt' | 'updatedAt'>
+							>,
+							options.makeId?.() ?? new ObjectId().toString(),
+							now,
+							true,
+						) as any,
 					},
 					{ returnDocument: 'after', session: sessionStore.getStore(), upsert: true },
 				)
 
-				return transform(doc, undefined)
+				return transform(doc!, undefined)
 			},
 
 			deleteMany: async (filter, options = {}) => {
@@ -243,7 +255,13 @@ export class MongoDb extends Db<{ _id: string }> {
 				operations.forEach((operation, i) => {
 					switch (operation.op) {
 						case 'insert':
-							bulk.insert(prepInsertValue(operation.value, operation.makeId?.(i) ?? new ObjectId().toString(), now))
+							bulk.insert(
+								prepInsertValue(
+									operation.value,
+									operation.makeId?.(i) ?? new ObjectId().toString(),
+									now,
+								),
+							)
 							break
 						case 'delete':
 							bulk.find(operation.filter).delete()
@@ -274,8 +292,12 @@ export class MongoDb extends Db<{ _id: string }> {
 			watch(callbacks) {
 				if (!dbThis.config.changes)
 					Instance.crash(new EquippedError('Db changes are not enabled in the configuration.', { config }))
-				return new MongoDbChange<Model, Entity>(dbThis.mongoConfig, dbThis.config.changes, collection, callbacks, (m) =>
-					config.mapper(m),
+				return new MongoDbChange<Model, Entity>(
+					dbThis.mongoConfig,
+					dbThis.config.changes,
+					collection,
+					callbacks,
+					(m) => config.mapper(m),
 				)
 			},
 		}
