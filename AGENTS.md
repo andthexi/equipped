@@ -8,4 +8,4 @@ Multi-context: `docs/CONTEXT-MAP.md` points at per-module `CONTEXT.md` files und
 
 ### Commit convention
 
-This repo follows `@commitlint/config-conventional` (Conventional Commits), enforced by a Husky `commit-msg` hook. Use `<type>(<scope>)?: <subject>` with imperative-mood lowercase subjects and no trailing period. See `docs/agents/COMMIT-CONVENTION.md`.
+This repo follows `@commitlint/config-conventional` (Conventional Commits), enforced by a Husky `commit-msg` hook. Use `<type>(<scope>)?: <subject>` with imperative-mood lowercase subjects and no trailing period.
