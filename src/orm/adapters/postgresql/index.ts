@@ -36,6 +36,7 @@ import {
 	buildUpdateQuery,
 	buildUpsertQuery,
 	extractUpsertConflictColumn,
+	quoteQualifiedIdentifier,
 } from './query.js'
 
 export type PostgresqlRepoConfig = {
@@ -166,7 +167,10 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		try {
 			const tableName = this.#resolveTableName(c)
 			const pkName = schema.pkField.name
-			const result = await this.#getClient().query(`SELECT * FROM "${tableName}" WHERE "${pkName}" = $1`, [pk])
+			const result = await this.#getClient().query(
+				`SELECT * FROM ${quoteQualifiedIdentifier(tableName)} WHERE "${pkName}" = $1`,
+				[pk],
+			)
 			return result.rows[0] ?? null
 		} catch (error) {
 			throw new EquippedError(
@@ -205,9 +209,10 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			const pkName = schema.pkField.name
 			const data = flattenOps(ops)
 			if (Object.keys(data).length === 0) {
-				const result = await this.#getClient().query(`SELECT * FROM "${tableName}" WHERE "${pkName}" = $1`, [
-					pk,
-				])
+				const result = await this.#getClient().query(
+					`SELECT * FROM ${quoteQualifiedIdentifier(tableName)} WHERE "${pkName}" = $1`,
+					[pk],
+				)
 				return result.rows[0] ?? null
 			}
 			const { sql, params } = buildPkUpdateQuery(tableName, pkName, pk, data)
@@ -228,7 +233,7 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			const tableName = this.#resolveTableName(c)
 			const pkName = schema.pkField.name
 			const result = await this.#getClient().query(
-				`DELETE FROM "${tableName}" WHERE "${pkName}" = $1 RETURNING *`,
+				`DELETE FROM ${quoteQualifiedIdentifier(tableName)} WHERE "${pkName}" = $1 RETURNING *`,
 				[pk],
 			)
 			return result.rows[0] ?? null
@@ -443,31 +448,37 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		}
 	}
 
-	async applyCreateTable(change: CreateTableChange<any>): Promise<void> {
+	async applyCreateTable(change: CreateTableChange<any>, target?: unknown): Promise<void> {
+		const table = this.#resolveTableName((target as PostgresqlRepoConfig | undefined) ?? { table: change.name })
 		const pkType = FIELD_TYPE_TO_PG[change.pk.type] ?? 'text'
 		const cols = [`"${change.pk.name}" ${pkType} PRIMARY KEY`]
 		for (const f of change.fields) {
 			cols.push(this.#renderColumnDef(f))
 		}
-		await this.#getClient().query(`CREATE TABLE "${change.name}" (${cols.join(', ')})`)
+		await this.#getClient().query(`CREATE TABLE ${quoteQualifiedIdentifier(table)} (${cols.join(', ')})`)
 	}
 
-	async applyDropTable(change: DropTableChange): Promise<void> {
-		await this.#getClient().query(`DROP TABLE "${change.name}"`)
+	async applyDropTable(change: DropTableChange, target?: unknown): Promise<void> {
+		const table = this.#resolveTableName((target as PostgresqlRepoConfig | undefined) ?? { table: change.name })
+		await this.#getClient().query(`DROP TABLE ${quoteQualifiedIdentifier(table)}`)
 	}
 
-	async applyAddField(change: AddFieldChange<any>): Promise<void> {
+	async applyAddField(change: AddFieldChange<any>, target?: unknown): Promise<void> {
+		const table = this.#resolveTableName((target as PostgresqlRepoConfig | undefined) ?? { table: change.table })
 		const colDef = this.#renderColumnDef(change.field)
-		await this.#getClient().query(`ALTER TABLE "${change.table}" ADD COLUMN ${colDef}`)
+		await this.#getClient().query(`ALTER TABLE ${quoteQualifiedIdentifier(table)} ADD COLUMN ${colDef}`)
 	}
 
-	async applyDropField(change: DropFieldChange): Promise<void> {
-		await this.#getClient().query(`ALTER TABLE "${change.table}" DROP COLUMN "${change.name}"`)
+	async applyDropField(change: DropFieldChange, target?: unknown): Promise<void> {
+		const table = this.#resolveTableName((target as PostgresqlRepoConfig | undefined) ?? { table: change.table })
+		await this.#getClient().query(`ALTER TABLE ${quoteQualifiedIdentifier(table)} DROP COLUMN "${change.name}"`)
 	}
 
-	async applyModifyField(change: ModifyFieldChange<any>): Promise<void> {
+	async applyModifyField(change: ModifyFieldChange<any>, target?: unknown): Promise<void> {
 		const client = this.#getClient()
-		const table = `"${change.table}"`
+		const table = quoteQualifiedIdentifier(
+			this.#resolveTableName((target as PostgresqlRepoConfig | undefined) ?? { table: change.table }),
+		)
 		const col = `"${change.name}"`
 		const newType = FIELD_TYPE_TO_PG[change.to.type] ?? 'text'
 		await client.query(`ALTER TABLE ${table} ALTER COLUMN ${col} TYPE ${newType} USING ${col}::${newType}`)
@@ -488,12 +499,22 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		}
 	}
 
-	async applyRenameTable(change: RenameTableChange): Promise<void> {
-		await this.#getClient().query(`ALTER TABLE "${change.from}" RENAME TO "${change.to}"`)
+	async applyRenameTable(change: RenameTableChange, fromTarget?: unknown, toTarget?: unknown): Promise<void> {
+		const from = (fromTarget as PostgresqlRepoConfig | undefined) ?? { table: change.from }
+		const to = (toTarget as PostgresqlRepoConfig | undefined) ?? { table: change.to }
+		const fromSchema = from.schema === 'public' ? undefined : from.schema
+		const toSchema = to.schema === 'public' ? undefined : to.schema
+		if (fromSchema !== toSchema) throw new Error('PostgreSQL table rename cannot cross schemas')
+		await this.#getClient().query(
+			`ALTER TABLE ${quoteQualifiedIdentifier(this.#resolveTableName(from))} RENAME TO ${quoteQualifiedIdentifier(to.table)}`,
+		)
 	}
 
-	async applyRenameField(change: RenameFieldChange): Promise<void> {
-		await this.#getClient().query(`ALTER TABLE "${change.table}" RENAME COLUMN "${change.from}" TO "${change.to}"`)
+	async applyRenameField(change: RenameFieldChange, target?: unknown): Promise<void> {
+		const table = this.#resolveTableName((target as PostgresqlRepoConfig | undefined) ?? { table: change.table })
+		await this.#getClient().query(
+			`ALTER TABLE ${quoteQualifiedIdentifier(table)} RENAME COLUMN "${change.from}" TO "${change.to}"`,
+		)
 	}
 
 	async applyAddIndex(change: AddIndexChange): Promise<void> {
@@ -1467,6 +1488,25 @@ if (import.meta.vitest) {
 		test('applyRenameTable generates ALTER TABLE RENAME', async () => {
 			await adapter.applyRenameTable({ kind: 'renameTable', from: 'users', to: 'accounts' })
 			expect(queries[0].sql).toBe('ALTER TABLE "users" RENAME TO "accounts"')
+		})
+
+		test('applyRenameTable rejects cross-schema targets before querying', async () => {
+			await expect(
+				adapter.applyRenameTable(
+					{ kind: 'renameTable', from: 'users', to: 'accounts' },
+					{ schema: 'tenant_a', table: 'users' },
+					{ schema: 'tenant_b', table: 'accounts' },
+				),
+			).rejects.toThrow('cannot cross schemas')
+			expect(queries).toEqual([])
+		})
+
+		test('resolved migration targets quote schema and table separately', async () => {
+			await adapter.applyAddField(
+				{ kind: 'addField', table: 'users', field: { name: 'bio', type: 'string' } },
+				{ schema: 'tenant', table: 'physical_users' },
+			)
+			expect(queries[0].sql).toContain('ALTER TABLE "tenant"."physical_users" ADD COLUMN')
 		})
 
 		test('applyRenameField generates ALTER TABLE RENAME COLUMN', async () => {

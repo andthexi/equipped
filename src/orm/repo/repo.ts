@@ -20,6 +20,11 @@ export class Repo<A extends OrmAdapterLike<any>> {
 		return resolveRepoConfig<A>(this, s.name)
 	}
 
+	/** Resolve and validate a logical schema name using the active runtime scope. */
+	resolveConfig(name: string): InferAdapterConfig<A> {
+		return resolveRepoConfig<A>(this, name)
+	}
+
 	#getUse(s: AnySchema) {
 		return this.#adapter.use(s, this.#getConfig(s))
 	}

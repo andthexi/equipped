@@ -18,6 +18,10 @@ function quoteIdentifier(value: string): string {
 	return `"${value.replaceAll('"', '""')}"`
 }
 
+export function quoteQualifiedIdentifier(value: string): string {
+	return value.split('.').map(quoteIdentifier).join('.')
+}
+
 function pgJsonPath(path: readonly string[]): string {
 	return `'{${path.map((segment) => segment.replaceAll('\\', '\\\\').replaceAll('"', '\\"')).join(',')}}'`
 }
@@ -268,7 +272,7 @@ export function buildSelectQuery(
 		: '*'
 
 	const sql =
-		`SELECT ${selectClause} FROM "${tableName}" ${whereClause} ${orderClause} ${limitClause} ${offsetClause}`
+		`SELECT ${selectClause} FROM ${quoteQualifiedIdentifier(tableName)} ${whereClause} ${orderClause} ${limitClause} ${offsetClause}`
 			.trim()
 			.replace(/\s+/g, ' ')
 	return { sql, params }
@@ -280,7 +284,9 @@ export function buildCountQuery(
 	primaryKey: string,
 ): { sql: string; params: unknown[] } {
 	const { whereClause, params } = compilePgFilter(group, primaryKey)
-	const sql = `SELECT COUNT(*) as count FROM "${tableName}" ${whereClause}`.trim().replace(/\s+/g, ' ')
+	const sql = `SELECT COUNT(*) as count FROM ${quoteQualifiedIdentifier(tableName)} ${whereClause}`
+		.trim()
+		.replace(/\s+/g, ' ')
 	return { sql, params }
 }
 
@@ -289,7 +295,7 @@ export function buildCreateQuery(tableName: string, data: Record<string, unknown
 	const params = Object.values(data)
 	const placeholders = keys.map((_, i) => `$${i + 1}`)
 	const columns = keys.map((k) => `"${k}"`).join(', ')
-	const sql = `INSERT INTO "${tableName}" (${columns}) VALUES (${placeholders.join(', ')}) RETURNING *`
+	const sql = `INSERT INTO ${quoteQualifiedIdentifier(tableName)} (${columns}) VALUES (${placeholders.join(', ')}) RETURNING *`
 	return { sql, params }
 }
 
@@ -302,7 +308,7 @@ export function buildUpdateQuery(
 	const { setParts, params: setParams, nextParamIndex } = buildSetParts(data, 1)
 	const { whereClause, params: whereParams } = compilePgFilter(group, primaryKey, nextParamIndex)
 	const params = [...setParams, ...whereParams]
-	const sql = `UPDATE "${tableName}" SET ${setParts.join(', ')} ${whereClause} RETURNING *`
+	const sql = `UPDATE ${quoteQualifiedIdentifier(tableName)} SET ${setParts.join(', ')} ${whereClause} RETURNING *`
 		.trim()
 		.replace(/\s+/g, ' ')
 	return { sql, params }
@@ -317,7 +323,7 @@ export function buildPkUpdateQuery(
 	const { setParts, params: setParams, nextParamIndex } = buildSetParts(data, 1)
 	setParams.push(pk)
 	const sql =
-		`UPDATE "${tableName}" SET ${setParts.join(', ')} WHERE "${primaryKey}" = $${nextParamIndex} RETURNING *`.replace(
+		`UPDATE ${quoteQualifiedIdentifier(tableName)} SET ${setParts.join(', ')} WHERE "${primaryKey}" = $${nextParamIndex} RETURNING *`.replace(
 			/\s+/g,
 			' ',
 		)
@@ -330,7 +336,9 @@ export function buildDeleteQuery(
 	primaryKey: string,
 ): { sql: string; params: unknown[] } {
 	const { whereClause, params } = compilePgFilter(group, primaryKey)
-	const sql = `DELETE FROM "${tableName}" ${whereClause} RETURNING *`.trim().replace(/\s+/g, ' ')
+	const sql = `DELETE FROM ${quoteQualifiedIdentifier(tableName)} ${whereClause} RETURNING *`
+		.trim()
+		.replace(/\s+/g, ' ')
 	return { sql, params }
 }
 
@@ -358,7 +366,7 @@ export function buildUpsertQuery(
 	}
 
 	const sql =
-		`INSERT INTO "${tableName}" (${columns.map((c) => `"${c}"`).join(', ')}) VALUES (${placeholders.join(', ')}) ON CONFLICT ("${pgConflictCol}") DO UPDATE SET ${setClause} RETURNING *`.replace(
+		`INSERT INTO ${quoteQualifiedIdentifier(tableName)} (${columns.map((c) => `"${c}"`).join(', ')}) VALUES (${placeholders.join(', ')}) ON CONFLICT ("${pgConflictCol}") DO UPDATE SET ${setClause} RETURNING *`.replace(
 			/\s+/g,
 			' ',
 		)
@@ -463,9 +471,10 @@ export function buildAggregateQuery(
 		if (havingParts.length > 0) havingClause = `HAVING ${havingParts.join(' AND ')}`
 	}
 
-	const sql = `SELECT ${selectParts.join(', ')} FROM "${tableName}" ${whereClause} ${groupByClause} ${havingClause}`
-		.trim()
-		.replace(/\s+/g, ' ')
+	const sql =
+		`SELECT ${selectParts.join(', ')} FROM ${quoteQualifiedIdentifier(tableName)} ${whereClause} ${groupByClause} ${havingClause}`
+			.trim()
+			.replace(/\s+/g, ' ')
 	return { sql, params }
 }
 
@@ -473,6 +482,12 @@ if (import.meta.vitest) {
 	const { describe, test, expect } = import.meta.vitest
 	const { Field } = await import('../../fields.js')
 	const { FilterGroup } = await import('../../filter.js')
+
+	describe('qualified table identifiers', () => {
+		test('escapes namespace and table separately', () => {
+			expect(quoteQualifiedIdentifier('tenant.schema"table')).toBe('"tenant"."schema""table"')
+		})
+	})
 	const { OrderBy } = await import('../../query-options.js')
 	const { IncOp, MulOp, MinOp, MaxOp, UnsetOp, PushOp, PullOp, PatchOp, SetOp, flattenOps } =
 		await import('../../updates.js')

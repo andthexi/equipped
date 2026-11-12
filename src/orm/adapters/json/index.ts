@@ -336,32 +336,32 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 		return this.#withFileLock(fn)
 	}
 
-	async applyCreateTable(change: CreateTableChange<any>): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyCreateTable(change))
+	async applyCreateTable(change: CreateTableChange<any>, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyCreateTable(change, target))
 	}
 
-	async applyDropTable(change: DropTableChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropTable(change))
+	async applyDropTable(change: DropTableChange, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropTable(change, target))
 	}
 
-	async applyAddField(change: AddFieldChange<any>): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddField(change))
+	async applyAddField(change: AddFieldChange<any>, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyAddField(change, target))
 	}
 
-	async applyDropField(change: DropFieldChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropField(change))
+	async applyDropField(change: DropFieldChange, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyDropField(change, target))
 	}
 
-	async applyModifyField(change: ModifyFieldChange<any>): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyModifyField(change))
+	async applyModifyField(change: ModifyFieldChange<any>, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyModifyField(change, target))
 	}
 
-	async applyRenameTable(change: RenameTableChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyRenameTable(change))
+	async applyRenameTable(change: RenameTableChange, from?: unknown, to?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyRenameTable(change, from, to))
 	}
 
-	async applyRenameField(change: RenameFieldChange): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.applyRenameField(change))
+	async applyRenameField(change: RenameFieldChange, target?: unknown): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.applyRenameField(change, target))
 	}
 
 	async applyAddIndex(change: AddIndexChange): Promise<void> {

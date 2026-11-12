@@ -213,6 +213,36 @@ if (import.meta.vitest) {
 			expect(row!.email).toBe('test@example.com')
 		})
 
+		test('declarative changes and execute share the active resolved target', async () => {
+			const { adapter, repo } = makeEnv()
+			const migration: Migration<typeof adapter> = {
+				id: '0001-scoped-users',
+				changes: [
+					{
+						kind: 'createTable',
+						name: 'users',
+						pk: { name: 'id', type: 'string' },
+						fields: [{ name: 'email', type: 'string' }],
+					},
+					{
+						kind: 'execute',
+						up: async (r) => {
+							await r.on(UserSchema).one().create({ id: 'scoped-1', email: 'scope@example.com' })
+						},
+					},
+				],
+			}
+			const migrator = Migrator.from(repo, adapter).migrations([migration]).build()
+			const scope = (config: { table: string }) => ({ ...config, table: `tenant_${config.table}` })
+
+			await repo.resolve(scope, () => migrator.up())
+
+			expect((await adapter.introspect()).map(({ name }) => name)).toContain('tenant_users')
+			expect(await repo.resolve(scope, () => repo.on(UserSchema).one().id('scoped-1').find())).toMatchObject({
+				email: 'scope@example.com',
+			})
+		})
+
 		test('duplicate id throws OrmValidationError at build()', () => {
 			const { adapter, repo } = makeEnv()
 			expect(() =>
