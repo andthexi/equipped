@@ -2330,9 +2330,10 @@ runner for evolving the underlying database. A migration is a typed
 description of a set of `Change`s; the `Migrator` walks pending migrations
 in order, holds a cluster-safe lock, wraps each in a tx (where the adapter
 supports one), and records each as applied via the adapter's storage
-capability. There is no `down()`. The runtime is **A** in the C-hybrid
-scope; codegen ("B") is deferred — see `docs/orm/TODO.md`. See ADR
-`2026-05-09-migrations-runtime.md` for the decision tree.
+capability. There is no `down()`. The runtime is **A** and codegen is **B** in
+the C-hybrid scope; both ship in v1. See ADRs
+`2026-05-09-migrations-runtime.md` and `2026-05-09-migrations-codegen.md` for
+the decision tree.
 
 ### 16.1 Migration unit
 
@@ -2748,12 +2749,13 @@ class OrmValidationError extends EquippedError {
   Adapter-owned tracker tables keep recovery adapter-specific by
   construction. Users who need to remove a tracker row do so directly
   via the adapter's documented storage shape.
-- **No drift detection.** The runtime trusts user-supplied `Change`
+- **No runtime drift detection.** The runtime trusts user-supplied `Change`
   payloads. If the live DB diverges from the migration sequence
   (manual edits, restores from backup, partially-rolled-back changes),
   the next `.up()` may fail loud (`apply*` errors) but doesn't
-  proactively detect drift. Drift detection is a B (codegen) concern
-  — see `docs/orm/TODO.md`.
+  proactively detect drift. Codegen reports the natural current-to-target diff,
+  but does not compare the live database with historical migration snapshots
+  (§16.13).
 
 ### 16.11 Migration codegen ("B" in the C-hybrid scope)
 
