@@ -681,6 +681,42 @@ if (import.meta.vitest) {
 	})
 
 	describe('json adapter — persistence', () => {
+		test('root and nested sessions commit and roll back without deadlocking', async () => {
+			const schema = Schema.from('docs')
+				.pk('id', v.string(), () => 'd')
+				.field('value', v.number())
+				.build()
+			const adapter = JsonAdapter.create({ filePath })
+			await adapter.connect()
+			const use = adapter.use(schema, { table: 'docs' })
+
+			await adapter.session(async () => {
+				await use.createOne({ id: 'committed', value: 1 })
+				await adapter.session(async () => {
+					await use.createOne({ id: 'nested', value: 2 })
+				})
+			})
+
+			await expect(
+				adapter.session(async () => {
+					await use.createOne({ id: 'rolled-back', value: 3 })
+					await adapter.session(async () => {
+						await use.createOne({ id: 'nested-rolled-back', value: 4 })
+					})
+					throw new Error('rollback')
+				}),
+			).rejects.toThrow('rollback')
+			await adapter.disconnect()
+
+			const reopened = JsonAdapter.create({ filePath })
+			await reopened.connect()
+			expect(await reopened.use(schema, { table: 'docs' }).findMany(FilterGroup.create())).toEqual([
+				{ id: 'committed', value: 1 },
+				{ id: 'nested', value: 2 },
+			])
+			await reopened.disconnect()
+		})
+
 		test('lazy discovery and table rename/drop remain consistent across reloads', async () => {
 			const schema = Schema.from('users')
 				.pk('id', v.string(), () => 'u')

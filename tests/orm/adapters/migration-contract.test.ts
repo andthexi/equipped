@@ -19,7 +19,9 @@ describe('InMemoryAdapter migration contract', () => {
 			return {
 				adapter,
 				repo,
-				differentScopesRunConcurrently: true,
+				// In-memory keeps one adapter-wide rollback admission boundary while
+				// partitioning history and lock ownership by resolved identity.
+				differentScopesRunConcurrently: false,
 				runInScope: <T>(scope: string, fn: () => Promise<T>) =>
 					repo.resolve(
 						(config, name) =>

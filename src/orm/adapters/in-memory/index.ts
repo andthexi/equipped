@@ -267,7 +267,12 @@ function applyOps(doc: Record<string, unknown>, ops: AnyUpdateOp[]): Record<stri
 	return updated
 }
 
-const sessionActiveStore = new AsyncLocalStorage<boolean>()
+type SessionContext = {
+	admissionOwners: Set<InMemoryAdapter>
+	activeTransactions: Set<InMemoryAdapter>
+}
+
+const sessionContextStore = new AsyncLocalStorage<SessionContext>()
 
 export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAdapter) {
 	readonly schemaConfigPipe = v.object({ table: v.string() })
@@ -298,9 +303,35 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	readonly foreignKeys = new Map<string, ForeignKeyMeta>()
 
 	readonly #migrationLocks = new Map<string, Promise<void>>()
+	#sessionAdmission: Promise<void> = Promise.resolve()
 
 	protected constructor(config: typeof InMemoryAdapter.Config) {
 		super(config)
+	}
+
+	async #admit<T>(fn: () => Promise<T>): Promise<T> {
+		const current = sessionContextStore.getStore()
+		if (current?.admissionOwners.has(this)) return fn()
+
+		let release!: () => void
+		const admitted = new Promise<void>((resolve) => {
+			release = resolve
+		})
+		const preceding = this.#sessionAdmission
+		this.#sessionAdmission = preceding.then(() => admitted)
+		await preceding
+
+		const context: SessionContext = {
+			admissionOwners: current ? new Set(current.admissionOwners) : new Set(),
+			activeTransactions: current ? new Set(current.activeTransactions) : new Set(),
+		}
+		context.admissionOwners.add(this)
+		try {
+			return await sessionContextStore.run(context, fn)
+		} finally {
+			context.admissionOwners.delete(this)
+			release()
+		}
 	}
 
 	#resolveStore(schema: AnySchema, config: unknown, create = false) {
@@ -341,58 +372,72 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async findByPk(schema: AnySchema, config: unknown, pk: unknown) {
-		const store = this.#resolveStore(schema, config)
-		const doc = store.get(String(pk))
-		return doc ? clone(doc) : null
+		return this.#admit(async () => {
+			const store = this.#resolveStore(schema, config)
+			const doc = store.get(String(pk))
+			return doc ? clone(doc) : null
+		})
 	}
 
 	async createMany(schema: AnySchema, config: unknown, data: Record<string, unknown>[]) {
-		if (data.length === 0) return []
-		const pk = schema.pkField.name
-		const store = this.#resolveStore(schema, config, true)
-		return data.map((d) => {
-			const row = clone(d)
-			store.set(String(row[pk]), row)
-			return clone(row)
+		return this.#admit(async () => {
+			if (data.length === 0) return []
+			const pk = schema.pkField.name
+			const store = this.#resolveStore(schema, config, true)
+			return data.map((d) => {
+				const row = clone(d)
+				store.set(String(row[pk]), row)
+				return clone(row)
+			})
 		})
 	}
 
 	async deleteByPk(schema: AnySchema, config: unknown, pk: unknown) {
-		const store = this.#resolveStore(schema, config)
-		const pkStr = String(pk)
-		const doc = store.get(pkStr)
-		if (!doc) return null
-		store.delete(pkStr)
-		return clone(doc)
+		return this.#admit(async () => {
+			const store = this.#resolveStore(schema, config)
+			const pkStr = String(pk)
+			const doc = store.get(pkStr)
+			if (!doc) return null
+			store.delete(pkStr)
+			return clone(doc)
+		})
 	}
 
 	async updateByPk(schema: AnySchema, config: unknown, pk: unknown, ops: AnyUpdateOp[]) {
-		const store = this.#resolveStore(schema, config)
-		const pkStr = String(pk)
-		const doc = store.get(pkStr)
-		if (!doc) return null
-		const updated = applyOps(doc, ops)
-		store.set(pkStr, updated)
-		return clone(updated)
+		return this.#admit(async () => {
+			const store = this.#resolveStore(schema, config)
+			const pkStr = String(pk)
+			const doc = store.get(pkStr)
+			if (!doc) return null
+			const updated = applyOps(doc, ops)
+			store.set(pkStr, updated)
+			return clone(updated)
+		})
 	}
 
 	async findMany(schema: AnySchema, config: unknown, group: FilterGroup, options?: QueryOptions) {
-		const store = this.#resolveStore(schema, config)
-		const rows = [...store.values()].filter((doc) => matchesFilter(doc, group)).map((doc) => clone(doc))
-		return applyOptions(rows, options)
+		return this.#admit(async () => {
+			const store = this.#resolveStore(schema, config)
+			const rows = [...store.values()].filter((doc) => matchesFilter(doc, group)).map((doc) => clone(doc))
+			return applyOptions(rows, options)
+		})
 	}
 
 	async count(schema: AnySchema, config: unknown, group: FilterGroup) {
-		const store = this.#resolveStore(schema, config)
-		return [...store.values()].filter((doc) => matchesFilter(doc, group)).length
+		return this.#admit(async () => {
+			const store = this.#resolveStore(schema, config)
+			return [...store.values()].filter((doc) => matchesFilter(doc, group)).length
+		})
 	}
 
 	async *iterateMany(schema: AnySchema, config: unknown, group: FilterGroup, options?: IterationQueryOptions) {
-		const store = this.#resolveStore(schema, config)
-		const rows = applyOptions(
-			[...store.values()].filter((doc) => matchesFilter(doc, group)).map((doc) => clone(doc)),
-			options,
-		)
+		const rows = await this.#admit(async () => {
+			const store = this.#resolveStore(schema, config)
+			return applyOptions(
+				[...store.values()].filter((doc) => matchesFilter(doc, group)).map((doc) => clone(doc)),
+				options,
+			)
+		})
 		const batchSize =
 			typeof options?.batchSize === 'number' && Number.isSafeInteger(options.batchSize) && options.batchSize > 0
 				? options.batchSize
@@ -405,26 +450,30 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async updateMany(schema: AnySchema, config: unknown, group: FilterGroup, data: Record<string, unknown>) {
-		const store = this.#resolveStore(schema, config)
-		const ids = [...store.entries()].filter(([, doc]) => matchesFilter(doc, group)).map(([id]) => id)
+		return this.#admit(async () => {
+			const store = this.#resolveStore(schema, config)
+			const ids = [...store.entries()].filter(([, doc]) => matchesFilter(doc, group)).map(([id]) => id)
 
-		const updated: Record<string, unknown>[] = []
-		for (const id of ids) {
-			const current = store.get(id)
-			if (!current) continue
-			const next = applyUpdateData(current, data)
-			store.set(id, next)
-			updated.push(clone(next))
-		}
-		return updated
+			const updated: Record<string, unknown>[] = []
+			for (const id of ids) {
+				const current = store.get(id)
+				if (!current) continue
+				const next = applyUpdateData(current, data)
+				store.set(id, next)
+				updated.push(clone(next))
+			}
+			return updated
+		})
 	}
 
 	async deleteMany(schema: AnySchema, config: unknown, filter: FilterGroup) {
-		const store = this.#resolveStore(schema, config)
-		const pk = schema.pkField.name
-		const rows = [...store.values()].filter((doc) => matchesFilter(doc, filter)).map((doc) => clone(doc))
-		for (const row of rows) store.delete(String(row[pk]))
-		return rows
+		return this.#admit(async () => {
+			const store = this.#resolveStore(schema, config)
+			const pk = schema.pkField.name
+			const rows = [...store.values()].filter((doc) => matchesFilter(doc, filter)).map((doc) => clone(doc))
+			for (const row of rows) store.delete(String(row[pk]))
+			return rows
+		})
 	}
 
 	async upsertOne(
@@ -434,22 +483,28 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		create: Record<string, unknown>,
 		ops: AnyUpdateOp[],
 	) {
-		const store = this.#resolveStore(schema, config)
-		const pk = schema.pkField.name
-		const rows = [...store.values()].filter((doc) => matchesFilter(doc, filter))
-		const current = rows[0]
-		if (current) {
-			const next = ops.length > 0 ? applyOps(current, ops) : clone(current)
-			store.set(String(next[pk]), next)
-			return clone(next)
-		}
-		const base = clone(create)
-		const result = ops.length > 0 ? applyOps(base, ops) : base
-		this.#resolveStore(schema, config, true).set(String(result[pk]), result)
-		return clone(result)
+		return this.#admit(async () => {
+			const store = this.#resolveStore(schema, config)
+			const pk = schema.pkField.name
+			const rows = [...store.values()].filter((doc) => matchesFilter(doc, filter))
+			const current = rows[0]
+			if (current) {
+				const next = ops.length > 0 ? applyOps(current, ops) : clone(current)
+				store.set(String(next[pk]), next)
+				return clone(next)
+			}
+			const base = clone(create)
+			const result = ops.length > 0 ? applyOps(base, ops) : base
+			this.#resolveStore(schema, config, true).set(String(result[pk]), result)
+			return clone(result)
+		})
 	}
 
 	async aggregate(schema: AnySchema, config: unknown, spec: AggregateSpec): Promise<Array<Record<string, unknown>>> {
+		return this.#admit(async () => this.#aggregate(schema, config, spec))
+	}
+
+	async #aggregate(schema: AnySchema, config: unknown, spec: AggregateSpec): Promise<Array<Record<string, unknown>>> {
 		const store = this.#resolveStore(schema, config)
 		let rows = [...store.values()]
 		if (spec.where) {
@@ -525,18 +580,26 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async loadMigrations(config: InMemoryRepoConfig): Promise<{ id: string; appliedAt: number }[]> {
-		const records = this.migrations.get(this.physicalTargetIdentity(config))
-		return [...(records?.values() ?? [])].map((m) => ({ id: m.id, appliedAt: m.appliedAt }))
+		return this.#admit(async () => {
+			const records = this.migrations.get(this.physicalTargetIdentity(config))
+			return [...(records?.values() ?? [])].map((m) => ({ id: m.id, appliedAt: m.appliedAt }))
+		})
 	}
 
 	async recordMigration(config: InMemoryRepoConfig, id: string, appliedAt: number): Promise<void> {
-		const identity = this.physicalTargetIdentity(config)
-		let records = this.migrations.get(identity)
-		if (!records) this.migrations.set(identity, (records = new Map()))
-		records.set(id, { id, appliedAt })
+		return this.#admit(async () => {
+			const identity = this.physicalTargetIdentity(config)
+			let records = this.migrations.get(identity)
+			if (!records) this.migrations.set(identity, (records = new Map()))
+			records.set(id, { id, appliedAt })
+		})
 	}
 
 	async applyCreateTable(change: CreateTableChange<any>, target?: unknown): Promise<void> {
+		return this.#admit(async () => this.#applyCreateTable(change, target))
+	}
+
+	async #applyCreateTable(change: CreateTableChange<any>, target?: unknown): Promise<void> {
 		const name = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.name
 		const fields = new Map<string, AnyFieldSpec>()
 		for (const f of change.fields) {
@@ -546,6 +609,10 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async applyDropTable(change: DropTableChange, target?: unknown): Promise<void> {
+		return this.#admit(async () => this.#applyDropTable(change, target))
+	}
+
+	async #applyDropTable(change: DropTableChange, target?: unknown): Promise<void> {
 		const targetName = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.name
 		for (const foreignKey of this.foreignKeys.values()) {
 			if (foreignKey.table !== targetName && foreignKey.references.table === targetName) {
@@ -565,6 +632,10 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async applyAddField(change: AddFieldChange<any>, target?: unknown): Promise<void> {
+		return this.#admit(async () => this.#applyAddField(change, target))
+	}
+
+	async #applyAddField(change: AddFieldChange<any>, target?: unknown): Promise<void> {
 		const table = this.tables.get(
 			target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table,
 		)
@@ -574,6 +645,10 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async applyDropField(change: DropFieldChange, target?: unknown): Promise<void> {
+		return this.#admit(async () => this.#applyDropField(change, target))
+	}
+
+	async #applyDropField(change: DropFieldChange, target?: unknown): Promise<void> {
 		const table = this.tables.get(
 			target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table,
 		)
@@ -583,6 +658,10 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async applyModifyField(change: ModifyFieldChange<any>, target?: unknown): Promise<void> {
+		return this.#admit(async () => this.#applyModifyField(change, target))
+	}
+
+	async #applyModifyField(change: ModifyFieldChange<any>, target?: unknown): Promise<void> {
 		const table = this.tables.get(
 			target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table,
 		)
@@ -593,6 +672,10 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async applyRenameTable(change: RenameTableChange, fromTarget?: unknown, toTarget?: unknown): Promise<void> {
+		return this.#admit(async () => this.#applyRenameTable(change, fromTarget, toTarget))
+	}
+
+	async #applyRenameTable(change: RenameTableChange, fromTarget?: unknown, toTarget?: unknown): Promise<void> {
 		const from = fromTarget ? resolveConfigName({} as AnySchema, fromTarget as InMemoryRepoConfig) : change.from
 		const to = toTarget ? resolveConfigName({} as AnySchema, toTarget as InMemoryRepoConfig) : change.to
 		const table = this.tables.get(from)
@@ -630,6 +713,10 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async applyRenameField(change: RenameFieldChange, target?: unknown): Promise<void> {
+		return this.#admit(async () => this.#applyRenameField(change, target))
+	}
+
+	async #applyRenameField(change: RenameFieldChange, target?: unknown): Promise<void> {
 		const table = this.tables.get(
 			target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table,
 		)
@@ -643,17 +730,33 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async applyAddIndex(change: AddIndexChange, target?: unknown): Promise<void> {
+		return this.#admit(async () => this.#applyAddIndex(change, target))
+	}
+
+	async #applyAddIndex(change: AddIndexChange, target?: unknown): Promise<void> {
 		const table = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table
 		const indexName = change.name ?? `${table}_${change.on.join('_')}_idx`
 		this.indexes.set(indexName, { table, on: change.on, unique: change.unique ?? false })
 	}
 
 	async applyDropIndex(change: DropIndexChange, target?: unknown): Promise<void> {
+		return this.#admit(async () => this.#applyDropIndex(change, target))
+	}
+
+	async #applyDropIndex(change: DropIndexChange, target?: unknown): Promise<void> {
 		const table = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table
 		if (this.indexes.get(change.name)?.table === table) this.indexes.delete(change.name)
 	}
 
 	async applyAddForeignKey(change: AddForeignKeyChange, target?: unknown, referencedTarget?: unknown): Promise<void> {
+		return this.#admit(async () => this.#applyAddForeignKey(change, target, referencedTarget))
+	}
+
+	async #applyAddForeignKey(
+		change: AddForeignKeyChange,
+		target?: unknown,
+		referencedTarget?: unknown,
+	): Promise<void> {
 		const table = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table
 		const referencedTable = referencedTarget
 			? resolveConfigName({} as AnySchema, referencedTarget as InMemoryRepoConfig)
@@ -669,6 +772,10 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async applyDropForeignKey(change: DropForeignKeyChange, target?: unknown): Promise<void> {
+		return this.#admit(async () => this.#applyDropForeignKey(change, target))
+	}
+
+	async #applyDropForeignKey(change: DropForeignKeyChange, target?: unknown): Promise<void> {
 		const table = target ? resolveConfigName({} as AnySchema, target as InMemoryRepoConfig) : change.table
 		if (this.foreignKeys.get(change.name)?.table === table) this.foreignKeys.delete(change.name)
 	}
@@ -678,6 +785,10 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async introspectTarget(config: InMemoryRepoConfig): Promise<DiscoveredSchema | null> {
+		return this.#admit(async () => this.#introspectTarget(config))
+	}
+
+	async #introspectTarget(config: InMemoryRepoConfig): Promise<DiscoveredSchema | null> {
 		const name = this.physicalTargetIdentity(config)
 		if (!this.tables.has(name) && !this.stores.has(name)) return null
 
@@ -712,16 +823,21 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	}
 
 	async introspect(): Promise<DiscoveredSchema[]> {
-		const schemas: DiscoveredSchema[] = []
-		const names = new Set([...this.tables.keys(), ...this.stores.keys()])
-		for (const name of names) {
-			const schema = await this.introspectTarget({ table: name })
-			if (schema) schemas.push(schema)
-		}
-		return schemas
+		return this.#admit(async () => {
+			const schemas: DiscoveredSchema[] = []
+			const names = new Set([...this.tables.keys(), ...this.stores.keys()])
+			for (const name of names) {
+				const schema = await this.#introspectTarget({ table: name })
+				if (schema) schemas.push(schema)
+			}
+			return schemas
+		})
 	}
 
 	async acquireMigrationLock<T>(config: InMemoryRepoConfig, fn: () => Promise<T>): Promise<T> {
+		const current = sessionContextStore.getStore()
+		if (current?.admissionOwners.has(this)) return fn()
+
 		const identity = this.physicalTargetIdentity(config)
 		let release!: () => void
 		const next = new Promise<void>((r) => {
@@ -731,21 +847,28 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		this.#migrationLocks.set(identity, next)
 		await prev
 		try {
-			return await fn()
+			return await this.#admit(fn)
 		} finally {
 			release()
 		}
 	}
 
 	async session<T>(fn: () => Promise<T>): Promise<T> {
-		if (sessionActiveStore.getStore()) return fn()
-		const snap = this.#snapshot()
-		try {
-			return await sessionActiveStore.run(true, fn)
-		} catch (error) {
-			this.#restore(snap)
-			throw error
-		}
+		const current = sessionContextStore.getStore()
+		if (current?.activeTransactions.has(this)) return fn()
+		return this.#admit(async () => {
+			const context = sessionContextStore.getStore()!
+			context.activeTransactions.add(this)
+			const snap = this.#snapshot()
+			try {
+				return await fn()
+			} catch (error) {
+				this.#restore(snap)
+				throw error
+			} finally {
+				context.activeTransactions.delete(this)
+			}
+		})
 	}
 }
 
@@ -759,7 +882,313 @@ if (import.meta.vitest) {
 
 	const { v } = await import('valleyed')
 
+	const deferred = () => {
+		let resolve!: () => void
+		const promise = new Promise<void>((done) => {
+			resolve = done
+		})
+		return { promise, resolve }
+	}
+
 	describe('in-memory adapter', () => {
+		test('outside reads wait for rollback and outside writes survive it', async () => {
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'users' })
+			const inserted = deferred()
+			const releaseRollback = deferred()
+			let readSettled = false
+
+			const failed = adapter.session(async () => {
+				await use.createMany([{ id: 'rolled-back' }])
+				inserted.resolve()
+				await releaseRollback.promise
+				throw new Error('rollback')
+			})
+			await inserted.promise
+			const read = use.findMany(FilterGroup.create()).then((rows) => {
+				readSettled = true
+				return rows
+			})
+			const write = use.createMany([{ id: 'preserved' }])
+			await Promise.resolve()
+			expect(readSettled).toBe(false)
+
+			releaseRollback.resolve()
+			await expect(failed).rejects.toThrow('rollback')
+			expect(await read).toEqual([])
+			await write
+			expect(await use.findMany(FilterGroup.create())).toEqual([{ id: 'preserved' }])
+		})
+
+		test('migration locking admits nested sessions and recovers after failure', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const history = { table: '_equipped_migrations' }
+			const entered = deferred()
+			const releaseFailure = deferred()
+			const order: string[] = []
+
+			const failed = adapter.acquireMigrationLock(history, async () => {
+				await adapter.session(async () => {
+					await adapter.recordMigration(history, 'rolled-back', 1)
+					entered.resolve()
+					await releaseFailure.promise
+					throw new Error('migration failed')
+				})
+			})
+			await entered.promise
+			const next = adapter.acquireMigrationLock(history, async () => {
+				order.push('next')
+				await adapter.session(async () => adapter.recordMigration(history, 'committed', 2))
+			})
+			releaseFailure.resolve()
+
+			await expect(failed).rejects.toThrow('migration failed')
+			await next
+			expect(order).toEqual(['next'])
+			expect(await adapter.loadMigrations(history)).toEqual([{ id: 'committed', appliedAt: 2 }])
+		})
+
+		test('migration locking is re-entrant without taking a transaction snapshot', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const history = { table: '_equipped_migrations' }
+
+			await adapter.acquireMigrationLock(history, async () => {
+				await adapter.recordMigration(history, 'outside-session', 1)
+				await adapter.acquireMigrationLock(history, async () =>
+					adapter.recordMigration(history, 'nested-lock', 2),
+				)
+				await expect(
+					adapter.session(async () => {
+						await adapter.recordMigration(history, 'rolled-back', 3)
+						throw new Error('rollback nested session')
+					}),
+				).rejects.toThrow('rollback nested session')
+			})
+
+			expect(await adapter.loadMigrations(history)).toEqual([
+				{ id: 'outside-session', appliedAt: 1 },
+				{ id: 'nested-lock', appliedAt: 2 },
+			])
+		})
+
+		test('outside metadata mutations wait for rollback and remain preserved', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const changed = deferred()
+			const releaseRollback = deferred()
+
+			const failed = adapter.session(async () => {
+				await adapter.applyCreateTable({
+					kind: 'createTable',
+					name: 'temporary',
+					pk: { name: 'id', type: 'string' },
+					fields: [],
+				})
+				changed.resolve()
+				await releaseRollback.promise
+				throw new Error('rollback metadata')
+			})
+			await changed.promise
+			const preserved = adapter.session(async () => {
+				await adapter.applyCreateTable({
+					kind: 'createTable',
+					name: 'preserved',
+					pk: { name: 'id', type: 'string' },
+					fields: [{ name: 'ownerId', type: 'string' }],
+				})
+				await adapter.applyAddIndex({ kind: 'addIndex', table: 'preserved', on: ['ownerId'] })
+				await adapter.applyAddForeignKey({
+					kind: 'addForeignKey',
+					table: 'preserved',
+					on: 'ownerId',
+					references: { table: 'preserved', column: 'id' },
+				})
+			})
+			releaseRollback.resolve()
+
+			await expect(failed).rejects.toThrow('rollback metadata')
+			await preserved
+			expect(await adapter.introspect()).toEqual([
+				{
+					name: 'preserved',
+					pk: { name: 'id', type: 'string' },
+					fields: [{ name: 'ownerId', type: 'string', nullable: false }],
+					indexes: [{ name: 'preserved_ownerId_idx', on: ['ownerId'], unique: false }],
+					foreignKeys: [
+						{
+							name: 'preserved_ownerId_fk',
+							on: 'ownerId',
+							references: { table: 'preserved', column: 'id' },
+						},
+					],
+				},
+			])
+		})
+
+		test('serializes the issue #148 insert case at the root-session admission boundary', async () => {
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'users' })
+			const firstInserted = deferred()
+			const releaseFirst = deferred()
+
+			const first = adapter.session(async () => {
+				await use.createMany([{ id: 'u1' }])
+				firstInserted.resolve()
+				await releaseFirst.promise
+			})
+			await firstInserted.promise
+			const second = adapter.session(async () => {
+				await use.createMany([{ id: 'u2' }])
+			})
+			releaseFirst.resolve()
+			await Promise.all([first, second])
+
+			expect(await use.findMany(FilterGroup.create())).toEqual([{ id: 'u1' }, { id: 'u2' }])
+		})
+
+		test('a queued root sees a preceding successful update and preserves it', async () => {
+			const schema = Schema.from('docs')
+				.pk('id', v.string(), () => 'd')
+				.field('count', v.number())
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'docs' })
+			await use.createMany([{ id: 'd1', count: 0 }])
+			const updated = deferred()
+			const releaseFirst = deferred()
+
+			const first = adapter.session(async () => {
+				await use.updateOne(FilterGroup.create().eq('id', 'd1'), { count: 1 })
+				updated.resolve()
+				await releaseFirst.promise
+			})
+			await updated.promise
+			const second = adapter.session(async () => {
+				expect(await use.findOne(FilterGroup.create().eq('id', 'd1'))).toEqual({ id: 'd1', count: 1 })
+				await use.updateOne(FilterGroup.create().eq('id', 'd1'), { count: 2 })
+			})
+			releaseFirst.resolve()
+			await Promise.all([first, second])
+
+			expect(await use.findOne(FilterGroup.create().eq('id', 'd1'))).toEqual({ id: 'd1', count: 2 })
+		})
+
+		test('serializes roots across unrelated schemas on one adapter', async () => {
+			const schema = Schema.from('items')
+				.pk('id', v.string(), () => 'i')
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const firstUse = adapter.use(schema, { table: 'first' })
+			const secondUse = adapter.use(schema, { table: 'second' })
+			const entered = deferred()
+			const releaseFirst = deferred()
+			const order: string[] = []
+
+			const first = adapter.session(async () => {
+				order.push('first')
+				entered.resolve()
+				await releaseFirst.promise
+				await firstUse.createMany([{ id: 'i1' }])
+			})
+			await entered.promise
+			const second = adapter.session(async () => {
+				order.push('second')
+				await secondUse.createMany([{ id: 'i2' }])
+			})
+			await Promise.resolve()
+			expect(order).toEqual(['first'])
+			releaseFirst.resolve()
+			await Promise.all([first, second])
+			expect(order).toEqual(['first', 'second'])
+		})
+
+		test('admits independent root sessions in FIFO call order', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const firstEntered = deferred()
+			const releaseFirst = deferred()
+			const order: number[] = []
+
+			const first = adapter.session(async () => {
+				order.push(1)
+				firstEntered.resolve()
+				await releaseFirst.promise
+			})
+			await firstEntered.promise
+			const second = adapter.session(async () => void order.push(2))
+			const third = adapter.session(async () => void order.push(3))
+			releaseFirst.resolve()
+			await Promise.all([first, second, third])
+
+			expect(order).toEqual([1, 2, 3])
+		})
+
+		test('restores a failed root before admitting a later successful root', async () => {
+			const schema = Schema.from('users')
+				.pk('id', v.string(), () => 'u')
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const use = adapter.use(schema, { table: 'users' })
+			const inserted = deferred()
+			const releaseFailure = deferred()
+
+			const failed = adapter.session(async () => {
+				await use.createMany([{ id: 'rolled-back' }])
+				inserted.resolve()
+				await releaseFailure.promise
+				throw new Error('rollback')
+			})
+			await inserted.promise
+			const succeeded = adapter.session(async () => {
+				expect(await use.findMany(FilterGroup.create())).toEqual([])
+				await use.createMany([{ id: 'committed' }])
+			})
+			releaseFailure.resolve()
+			await expect(failed).rejects.toThrow('rollback')
+			await succeeded
+
+			expect(await use.findMany(FilterGroup.create())).toEqual([{ id: 'committed' }])
+		})
+
+		test('same-instance nested sessions join without waiting for admission', async () => {
+			const adapter = InMemoryAdapter.create({})
+			const order: string[] = []
+
+			await adapter.session(async () => {
+				order.push('outer-before')
+				await adapter.session(async () => void order.push('nested'))
+				order.push('outer-after')
+			})
+
+			expect(order).toEqual(['outer-before', 'nested', 'outer-after'])
+		})
+
+		test('different adapters admit independent roots and allow acyclic nesting', async () => {
+			const first = InMemoryAdapter.create({})
+			const second = InMemoryAdapter.create({})
+			const secondEntered = deferred()
+			const releaseSecond = deferred()
+			const order: string[] = []
+
+			await first.session(async () => {
+				const independent = second.session(async () => {
+					order.push('second')
+					secondEntered.resolve()
+					await releaseSecond.promise
+					await first.session(async () => void order.push('first-nested'))
+				})
+				await secondEntered.promise
+				order.push('first')
+				releaseSecond.resolve()
+				await independent
+			})
+
+			expect(order).toEqual(['second', 'first', 'first-nested'])
+		})
 		test('targeted introspection uses the resolved physical table and reports absence', async () => {
 			const adapter = InMemoryAdapter.create({})
 			await adapter.applyCreateTable({
