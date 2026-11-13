@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { randomUUID } from 'node:crypto'
 
 import { MongoClient, type ClientSession, type MongoClientOptions, type OptionalUnlessRequiredId } from 'mongodb'
 import { v, type PipeOutput } from 'valleyed'
@@ -28,7 +29,10 @@ const mongoConnectionPipe = () =>
 		uri: v.string(),
 	})
 
-const MIGRATION_TRACKER_COLLECTION = 'equipped_migrations'
+const MIGRATION_TRACKER_COLLECTION = '_equipped_migrations'
+const MIGRATION_LOCK_COLLECTION = '_equipped_migration_locks'
+const MIGRATION_LOCK_POLL_MS = 100
+const MIGRATION_LOCK_TIMEOUT_MS = 10_000
 
 export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter) {
 	readonly schemaConfigPipe = mongoSchemaConfigPipe()
@@ -366,15 +370,43 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 		}
 	}
 
-	async loadMigrations(): Promise<{ id: string; appliedAt: number }[]> {
-		const db = this.client.db()
-		const docs = await db.collection(MIGRATION_TRACKER_COLLECTION).find({}).toArray()
+	async loadMigrations(config: MongoDbRepoConfig): Promise<{ id: string; appliedAt: number }[]> {
+		const db = this.client.db(config.db)
+		const docs = await db.collection(config.col).find({}, { session: this.#sessionStore.getStore() }).toArray()
 		return docs.map((d) => ({ id: String(d._id), appliedAt: d.appliedAt as number }))
 	}
 
-	async recordMigration(id: string, appliedAt: number): Promise<void> {
-		const db = this.client.db()
-		await db.collection(MIGRATION_TRACKER_COLLECTION).insertOne({ _id: id as any, appliedAt })
+	async recordMigration(config: MongoDbRepoConfig, id: string, appliedAt: number): Promise<void> {
+		const db = this.client.db(config.db)
+		await db
+			.collection(config.col)
+			.insertOne({ _id: id as any, appliedAt }, { session: this.#sessionStore.getStore() })
+	}
+
+	async acquireMigrationLock<T>(config: MongoDbRepoConfig, fn: () => Promise<T>): Promise<T> {
+		const collection = this.client.db(config.db).collection(MIGRATION_LOCK_COLLECTION)
+		const lockId = this.physicalTargetIdentity(config)
+		const owner = randomUUID()
+		const deadline = Date.now() + MIGRATION_LOCK_TIMEOUT_MS
+
+		for (;;) {
+			try {
+				await collection.insertOne({ _id: lockId as any, owner })
+				break
+			} catch (error) {
+				if (!(error && typeof error === 'object' && 'code' in error && error.code === 11000)) throw error
+				if (Date.now() >= deadline) {
+					throw new Error(`Timed out acquiring MongoDB migration lock for ${lockId}`)
+				}
+				await new Promise((resolve) => setTimeout(resolve, MIGRATION_LOCK_POLL_MS))
+			}
+		}
+
+		try {
+			return await fn()
+		} finally {
+			await collection.deleteOne({ _id: lockId as any, owner })
+		}
 	}
 
 	async applyAddIndex(change: AddIndexChange, target?: unknown): Promise<void> {
@@ -431,7 +463,7 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 		const collections = await db.listCollections().toArray()
 		const schemas: DiscoveredSchema[] = []
 		for (const col of collections) {
-			if (col.name === MIGRATION_TRACKER_COLLECTION) continue
+			if (col.name === MIGRATION_TRACKER_COLLECTION || col.name === MIGRATION_LOCK_COLLECTION) continue
 			const rawIndexes = await db.collection(col.name).listIndexes().toArray()
 			const indexes = rawIndexes
 				.filter((idx) => idx.name !== '_id_')
@@ -453,7 +485,7 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 }
 
 if (import.meta.vitest) {
-	const { describe, test, expect, expectTypeOf } = import.meta.vitest
+	const { describe, test, expect, expectTypeOf, vi } = import.meta.vitest
 
 	describe('MongoDbAdapter: class-via-configurable shape', () => {
 		test('MongoDbAdapter.create validates connection config via pipe', () => {
@@ -914,6 +946,147 @@ if (import.meta.vitest) {
 	})
 
 	describe('MongoDbAdapter: migrations', () => {
+		test('history uses the resolved database and collection and records with the active session', async () => {
+			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/default' })
+			const session = { id: 'active-session' }
+			const calls: Array<{ db: string; col: string; operation: string; options?: unknown }> = []
+			;(adapter.client as any).db = (db: string) => ({
+				collection: (col: string) => ({
+					find: (_filter: unknown, options: unknown) => ({
+						toArray: async () => {
+							calls.push({ db, col, operation: 'find', options })
+							return [{ _id: '0001', appliedAt: 123 }]
+						},
+					}),
+					insertOne: async (_doc: unknown, options: unknown) => {
+						calls.push({ db, col, operation: 'insert', options })
+					},
+				}),
+			})
+			;(adapter.client as any).startSession = () =>
+				Object.assign(session, {
+					withTransaction: (fn: () => Promise<unknown>) => fn(),
+					endSession: async () => {},
+				})
+
+			await adapter.session(async () => {
+				expect(await adapter.loadMigrations({ db: 'tenant', col: 'tenant_history' })).toEqual([
+					{ id: '0001', appliedAt: 123 },
+				])
+				await adapter.recordMigration({ db: 'tenant', col: 'tenant_history' }, '0002', 456)
+			})
+
+			expect(calls).toEqual([
+				{ db: 'tenant', col: 'tenant_history', operation: 'find', options: { session } },
+				{ db: 'tenant', col: 'tenant_history', operation: 'insert', options: { session } },
+			])
+		})
+
+		test('lock acquisition atomically inserts a scoped owner token and releases only that owner', async () => {
+			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/default' })
+			const inserted: any[] = []
+			const deleted: any[] = []
+			const collections: string[] = []
+			;(adapter.client as any).db = (db: string) => ({
+				collection: (col: string) => {
+					collections.push(`${db}.${col}`)
+					return {
+						insertOne: async (doc: unknown) => void inserted.push(doc),
+						deleteOne: async (filter: unknown) => void deleted.push(filter),
+					}
+				},
+			})
+
+			expect(await adapter.acquireMigrationLock({ db: 'tenant', col: 'history_a' }, async () => 42)).toBe(42)
+			expect(collections).toEqual(['tenant._equipped_migration_locks'])
+			expect(inserted).toEqual([{ _id: JSON.stringify(['tenant', 'history_a']), owner: expect.any(String) }])
+			expect(deleted).toEqual([{ _id: JSON.stringify(['tenant', 'history_a']), owner: inserted[0].owner }])
+		})
+
+		test('lock release is owner-checked when the migration callback fails', async () => {
+			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/default' })
+			let inserted: any
+			let deleted: any
+			;(adapter.client as any).db = () => ({
+				collection: () => ({
+					insertOne: async (doc: unknown) => void (inserted = doc),
+					deleteOne: async (filter: unknown) => void (deleted = filter),
+				}),
+			})
+
+			await expect(
+				adapter.acquireMigrationLock({ db: 'tenant', col: 'history' }, async () => {
+					throw new Error('boom')
+				}),
+			).rejects.toThrow('boom')
+			expect(deleted).toEqual({ _id: inserted._id, owner: inserted.owner })
+		})
+
+		test('lock polling times out without taking over the existing owner', async () => {
+			vi.useFakeTimers()
+			try {
+				const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/default' })
+				const insertOne = vi.fn(async () => {
+					throw Object.assign(new Error('duplicate'), { code: 11000 })
+				})
+				const deleteOne = vi.fn()
+				;(adapter.client as any).db = () => ({ collection: () => ({ insertOne, deleteOne }) })
+
+				const pending = adapter.acquireMigrationLock({ db: 'tenant', col: 'history' }, async () => 'never')
+				const assertion = expect(pending).rejects.toThrow('Timed out acquiring MongoDB migration lock')
+				await vi.runAllTimersAsync()
+				await assertion
+				expect(insertOne).toHaveBeenCalledTimes(101)
+				expect(deleteOne).not.toHaveBeenCalled()
+			} finally {
+				vi.useRealTimers()
+			}
+		})
+
+		test('different history identities acquire independently while the same identity waits', async () => {
+			vi.useFakeTimers()
+			try {
+				const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/default' })
+				const held = new Set<string>()
+				;(adapter.client as any).db = () => ({
+					collection: () => ({
+						insertOne: async ({ _id }: { _id: string }) => {
+							if (held.has(_id)) throw Object.assign(new Error('duplicate'), { code: 11000 })
+							held.add(_id)
+						},
+						deleteOne: async ({ _id }: { _id: string }) => void held.delete(_id),
+					}),
+				})
+				let release!: () => void
+				const first = adapter.acquireMigrationLock(
+					{ db: 'tenant', col: 'history_a' },
+					() => new Promise<void>((resolve) => (release = resolve)),
+				)
+				await vi.advanceTimersByTimeAsync(0)
+				let sameRan = false
+				const same = adapter.acquireMigrationLock(
+					{ db: 'tenant', col: 'history_a' },
+					async () => void (sameRan = true),
+				)
+				let otherRan = false
+				const other = adapter.acquireMigrationLock(
+					{ db: 'tenant', col: 'history_b' },
+					async () => void (otherRan = true),
+				)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sameRan).toBe(false)
+				expect(otherRan).toBe(true)
+				release()
+				await first
+				await vi.advanceTimersByTimeAsync(100)
+				await Promise.all([same, other])
+				expect(sameRan).toBe(true)
+			} finally {
+				vi.useRealTimers()
+			}
+		})
+
 		function mockMongoDb(adapter: MongoDbAdapter) {
 			const state = {
 				migrations: new Map<string, { _id: string; appliedAt: number }>(),
@@ -988,7 +1161,7 @@ if (import.meta.vitest) {
 			state.migrations.set('0001', { _id: '0001', appliedAt: 1000 })
 			state.migrations.set('0002', { _id: '0002', appliedAt: 2000 })
 
-			const result = await adapter.loadMigrations()
+			const result = await adapter.loadMigrations({ db: 'testdb', col: '_equipped_migrations' })
 			expect(result).toEqual([
 				{ id: '0001', appliedAt: 1000 },
 				{ id: '0002', appliedAt: 2000 },
@@ -999,7 +1172,7 @@ if (import.meta.vitest) {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
 			mockMongoDb(adapter)
 
-			const result = await adapter.loadMigrations()
+			const result = await adapter.loadMigrations({ db: 'testdb', col: '_equipped_migrations' })
 			expect(result).toEqual([])
 		})
 
@@ -1007,7 +1180,7 @@ if (import.meta.vitest) {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
 			const state = mockMongoDb(adapter)
 
-			await adapter.recordMigration('0001', 1234)
+			await adapter.recordMigration({ db: 'testdb', col: '_equipped_migrations' }, '0001', 1234)
 
 			expect(state.migrations.has('0001')).toBe(true)
 			expect(state.migrations.get('0001')).toEqual({ _id: '0001', appliedAt: 1234 })
@@ -1108,6 +1281,7 @@ if (import.meta.vitest) {
 			const state = mockMongoDb(adapter)
 			state.collections.set('users', { indexes: [] })
 			state.collections.set(MIGRATION_TRACKER_COLLECTION, { indexes: [] })
+			state.collections.set(MIGRATION_LOCK_COLLECTION, { indexes: [] })
 
 			const schemas = await adapter.introspect()
 
@@ -1133,9 +1307,9 @@ if (import.meta.vitest) {
 			])
 		})
 
-		test('adapter does not implement acquireMigrationLock', () => {
+		test('adapter implements acquireMigrationLock', () => {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
-			expect((adapter as any).acquireMigrationLock).toBeUndefined()
+			expect(adapter.acquireMigrationLock).toBeTypeOf('function')
 		})
 
 		test('adapter does not implement DDL apply methods', () => {
@@ -1169,7 +1343,7 @@ if (import.meta.vitest) {
 			expectTypeOf<Extract<Changes, { kind: 'dropForeignKey' }>>().toBeNever()
 		})
 
-		test('type-level: Migrator.from(repo, adapter).build() works without withoutLock', async () => {
+		test('type-level: Migrator requires an explicit lock policy', async () => {
 			const { Migrator } = await import('../../migrations/migrator.js')
 			const { Repo } = await import('../../repo/repo.js')
 
@@ -1177,13 +1351,13 @@ if (import.meta.vitest) {
 			const repo = Repo.from(adapter)
 				.resolve(() => ({ db: 'test', col: 'test' }))
 				.build()
-			const step = Migrator.from(repo, adapter).migrations([])
+			const step = Migrator.from(repo).withoutLock().migrations([])
 
 			expectTypeOf(step).toHaveProperty('build')
-			expectTypeOf(step).toHaveProperty('withoutLock')
+			expectTypeOf(Migrator.from(repo)).not.toHaveProperty('migrations')
 		})
 
-		test('type-level: Migrator.from(repo, adapter).withoutLock().build() also works', async () => {
+		test('type-level: Migrator.from(repo).withoutLock().build() also works', async () => {
 			const { Migrator } = await import('../../migrations/migrator.js')
 			const { Repo } = await import('../../repo/repo.js')
 
@@ -1191,7 +1365,7 @@ if (import.meta.vitest) {
 			const repo = Repo.from(adapter)
 				.resolve(() => ({ db: 'test', col: 'test' }))
 				.build()
-			const migrator = Migrator.from(repo, adapter).migrations([]).withoutLock().build()
+			const migrator = Migrator.from(repo).withoutLock().migrations([]).build()
 			expect(migrator).toBeDefined()
 		})
 
@@ -1232,7 +1406,7 @@ if (import.meta.vitest) {
 				},
 			]
 
-			const migrator = Migrator.from(repo, adapter).migrations(migrations).build()
+			const migrator = Migrator.from(repo).withoutLock().migrations(migrations).build()
 			const result = await migrator.up()
 
 			expect(result.ran).toEqual(['0001-add-idx', '0002-backfill', '0003-drop-idx'])
@@ -1266,7 +1440,7 @@ if (import.meta.vitest) {
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017/testdb' })
 			mockMongoDb(adapter)
 			const repo = Repo.from(adapter)
-				.resolve(() => ({ db: 'test', col: 'test' }))
+				.resolve((name) => ({ db: 'test', col: name }))
 				.build()
 
 			const backfilledData: string[] = []
@@ -1285,7 +1459,7 @@ if (import.meta.vitest) {
 				],
 			}
 
-			const migrator = Migrator.from(repo, adapter).migrations([m]).build()
+			const migrator = Migrator.from(repo).withoutLock().migrations([m]).build()
 			await migrator.up()
 
 			expect(backfilledData).toEqual(['user-1-normalized', 'user-2-normalized'])

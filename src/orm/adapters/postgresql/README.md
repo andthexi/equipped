@@ -85,10 +85,12 @@ The PostgreSQL adapter implements the full migrations capability surface:
 
 ### Migration tracker table
 
-Applied migrations are stored in a table named `equipped_migrations` (created automatically on first `loadMigrations()` call):
+For every `up()`, `status()`, and `dry()` call, the Repo resolves the reserved logical name `_equipped_migrations`. The resulting `{ schema?, table }` config is the physical history identity. There is no fallback to `equipped_migrations`.
+
+Applied migrations are stored in the resolved table, which is created automatically on the first `loadMigrations()` call. The schema and table identifiers are quoted independently. A configured schema must already exist; the adapter does not provision it, and PostgreSQL's missing-schema error is surfaced.
 
 ```sql
-CREATE TABLE IF NOT EXISTS equipped_migrations (
+CREATE TABLE IF NOT EXISTS "resolved_schema"."_equipped_migrations" (
   id text PRIMARY KEY,
   applied_at bigint NOT NULL
 )
@@ -96,7 +98,14 @@ CREATE TABLE IF NOT EXISTS equipped_migrations (
 
 ### Cluster-safe lock
 
-`acquireMigrationLock(fn)` uses PostgreSQL advisory locks (`pg_advisory_lock` / `pg_advisory_unlock`) with a fixed lock key derived from the package name. This serialises concurrent migration runs across all connections in the cluster.
+`acquireMigrationLock(historyConfig, fn)` uses PostgreSQL advisory locks (`pg_advisory_lock` / `pg_advisory_unlock`). Its deterministic key is derived from the full physical history identity: database, schema (defaulting to `public`), and table. Runs for the same history serialize; runs for distinct histories do not block each other.
+
+Lock and unlock always use the same `PoolClient`. An active transaction client is reused. Otherwise the adapter checks out a dedicated client, routes migration history and transaction work through it for the callback's lifetime, unlocks after the callback commits or rolls back, and then releases the client.
+
+```ts
+const migrator = Migrator.from(repo).withLock().migrations(migrations).build()
+const codegen = MigrationCodegen.from(repo).target(schemas).build()
+```
 
 ### Declarative change support
 

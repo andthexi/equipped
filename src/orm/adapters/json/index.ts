@@ -59,8 +59,10 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 	#serialize(): string {
 		const obj: Record<string, unknown> = {}
 
-		const migrations = [...this.#inMemory.migrations.values()]
-		if (migrations.length > 0) obj['__migrations'] = migrations
+		const migrations = Object.fromEntries(
+			[...this.#inMemory.migrations].map(([identity, records]) => [identity, [...records.values()]]),
+		)
+		if (Object.keys(migrations).length > 0) obj['__migrations'] = migrations
 
 		const tables: Record<string, unknown> = {}
 		for (const [name, meta] of this.#inMemory.tables.entries()) {
@@ -188,9 +190,18 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 	#restoreFromDisk(data: Record<string, unknown>): void {
 		this.#clearInMemory()
 
-		if (Array.isArray(data['__migrations'])) {
-			for (const m of data['__migrations'] as Array<{ id: string; appliedAt: number }>) {
-				this.#inMemory.migrations.set(m.id, { id: m.id, appliedAt: m.appliedAt })
+		if (data['__migrations'] && typeof data['__migrations'] === 'object' && !Array.isArray(data['__migrations'])) {
+			for (const [identity, history] of Object.entries(data['__migrations'] as Record<string, unknown>)) {
+				if (!Array.isArray(history)) continue
+				this.#inMemory.migrations.set(
+					identity,
+					new Map(
+						(history as Array<{ id: string; appliedAt: number }>).map((migration) => [
+							migration.id,
+							migration,
+						]),
+					),
+				)
 			}
 		}
 
@@ -324,15 +335,15 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 		})
 	}
 
-	async loadMigrations(): Promise<{ id: string; appliedAt: number }[]> {
-		return this.#withCurrentFile(false, async () => await this.#inMemory.loadMigrations())
+	async loadMigrations(config: JsonAdapterConfig): Promise<{ id: string; appliedAt: number }[]> {
+		return this.#withCurrentFile(false, async () => await this.#inMemory.loadMigrations(config))
 	}
 
-	async recordMigration(id: string, appliedAt: number): Promise<void> {
-		return this.#withCurrentFile(true, async () => await this.#inMemory.recordMigration(id, appliedAt))
+	async recordMigration(config: JsonAdapterConfig, id: string, appliedAt: number): Promise<void> {
+		return this.#withCurrentFile(true, async () => await this.#inMemory.recordMigration(config, id, appliedAt))
 	}
 
-	async acquireMigrationLock<T>(fn: () => Promise<T>): Promise<T> {
+	async acquireMigrationLock<T>(_config: JsonAdapterConfig, fn: () => Promise<T>): Promise<T> {
 		return this.#withFileLock(fn)
 	}
 
@@ -409,6 +420,7 @@ if (import.meta.vitest) {
 	const { Migrator } = await import('../../migrations/migrator.js')
 	const { Repo } = await import('../../repo/repo.js')
 	const { OrmMigrationError } = await import('../../errors/migration.js')
+	const historyConfig = { table: '_equipped_migrations' }
 	type Migration<A extends import('../base.js').OrmAdapterLike<any>> =
 		import('../../migrations/types.js').Migration<A>
 
@@ -1067,10 +1079,10 @@ if (import.meta.vitest) {
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
 
-			await adapter.recordMigration('m-001', 1000)
-			await adapter.recordMigration('m-002', 2000)
+			await adapter.recordMigration(historyConfig, 'm-001', 1000)
+			await adapter.recordMigration(historyConfig, 'm-002', 2000)
 
-			const loaded = await adapter.loadMigrations()
+			const loaded = await adapter.loadMigrations(historyConfig)
 			expect(loaded).toHaveLength(2)
 			expect(loaded).toEqual([
 				{ id: 'm-001', appliedAt: 1000 },
@@ -1082,12 +1094,12 @@ if (import.meta.vitest) {
 		test('migration tracker persists across adapter restarts', async () => {
 			const a1 = JsonAdapter.create({ filePath })
 			await a1.connect()
-			await a1.recordMigration('m-001', 1000)
+			await a1.recordMigration(historyConfig, 'm-001', 1000)
 			await a1.disconnect()
 
 			const a2 = JsonAdapter.create({ filePath })
 			await a2.connect()
-			const loaded = await a2.loadMigrations()
+			const loaded = await a2.loadMigrations(historyConfig)
 			expect(loaded).toEqual([{ id: 'm-001', appliedAt: 1000 }])
 			await a2.disconnect()
 		})
@@ -1096,11 +1108,13 @@ if (import.meta.vitest) {
 			const { readFile: rf } = await import('node:fs/promises')
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
-			await adapter.recordMigration('m-001', 1000)
+			await adapter.recordMigration(historyConfig, 'm-001', 1000)
 			await adapter.disconnect()
 
 			const raw = JSON.parse(await rf(filePath, 'utf-8'))
-			expect(raw['__migrations']).toEqual([{ id: 'm-001', appliedAt: 1000 }])
+			expect(raw['__migrations']).toEqual({
+				_equipped_migrations: [{ id: 'm-001', appliedAt: 1000 }],
+			})
 		})
 	})
 
@@ -1211,13 +1225,13 @@ if (import.meta.vitest) {
 				resolveGate = r
 			})
 
-			const p1 = adapter.acquireMigrationLock(async () => {
+			const p1 = adapter.acquireMigrationLock(historyConfig, async () => {
 				order.push('p1-start')
 				await gate
 				order.push('p1-end')
 			})
 			await new Promise((r) => setTimeout(r, 100))
-			const p2 = adapter.acquireMigrationLock(async () => {
+			const p2 = adapter.acquireMigrationLock(historyConfig, async () => {
 				order.push('p2')
 			})
 
@@ -1236,7 +1250,7 @@ if (import.meta.vitest) {
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
 
-			await adapter.acquireMigrationLock(async () => {
+			await adapter.acquireMigrationLock(historyConfig, async () => {
 				/* no-op */
 			})
 
@@ -1250,7 +1264,7 @@ if (import.meta.vitest) {
 			await adapter.connect()
 
 			await expect(
-				adapter.acquireMigrationLock(async () => {
+				adapter.acquireMigrationLock(historyConfig, async () => {
 					throw new Error('boom')
 				}),
 			).rejects.toThrow('boom')
@@ -1340,11 +1354,11 @@ if (import.meta.vitest) {
 				},
 			]
 
-			const migrator = Migrator.from(repo, adapter).migrations(migrations).build()
+			const migrator = Migrator.from(repo).withLock().migrations(migrations).build()
 			const result = await migrator.up()
 			expect(result.ran).toEqual(['0001-create', '0002-evolve', '0003-cleanup', '0004-seed'])
 
-			const recorded = await adapter.loadMigrations()
+			const recorded = await adapter.loadMigrations(historyConfig)
 			expect(recorded).toHaveLength(4)
 
 			const row = await repo.on(UserSchema).one().id('seed-1').find()
@@ -1355,7 +1369,7 @@ if (import.meta.vitest) {
 			await adapter.disconnect()
 			const { adapter: a2, repo: r2 } = makeEnv()
 			await a2.connect()
-			const recorded2 = await a2.loadMigrations()
+			const recorded2 = await a2.loadMigrations(historyConfig)
 			expect(recorded2).toHaveLength(4)
 
 			const row2 = await r2.on(UserSchema).one().id('seed-1').find()
@@ -1400,12 +1414,12 @@ if (import.meta.vitest) {
 			const adapter1 = JsonAdapter.create({ filePath })
 			await adapter1.connect()
 			const repo1 = new Repo({ adapter: adapter1, resolve: (name) => ({ table: name }) })
-			const migrator1 = Migrator.from(repo1, adapter1).migrations(migrations).build()
+			const migrator1 = Migrator.from(repo1).withLock().migrations(migrations).build()
 
 			const adapter2 = JsonAdapter.create({ filePath })
 			await adapter2.connect()
 			const repo2 = new Repo({ adapter: adapter2, resolve: (name) => ({ table: name }) })
-			const migrator2 = Migrator.from(repo2, adapter2).migrations(migrations).build()
+			const migrator2 = Migrator.from(repo2).withLock().migrations(migrations).build()
 
 			const p1 = migrator1.up()
 			const p2 = migrator2.up()
@@ -1450,13 +1464,13 @@ if (import.meta.vitest) {
 					},
 				],
 			}
-			const migrator = Migrator.from(r2, a2).migrations([m]).build()
+			const migrator = Migrator.from(r2).withLock().migrations([m]).build()
 			await expect(migrator.up()).rejects.toThrow(OrmMigrationError)
 			await a2.disconnect()
 
 			const { adapter: a3, repo: r3 } = makeEnv()
 			await a3.connect()
-			const recorded = await a3.loadMigrations()
+			const recorded = await a3.loadMigrations(historyConfig)
 			expect(recorded).toHaveLength(0)
 			const schemas = await a3.introspect()
 			const users = schemas.find((s) => s.name === 'users')!
@@ -1525,7 +1539,7 @@ if (import.meta.vitest) {
 		test('metadata keys do not leak into data stores', async () => {
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
-			await adapter.recordMigration('m-001', 1000)
+			await adapter.recordMigration(historyConfig, 'm-001', 1000)
 			await adapter.applyCreateTable({
 				kind: 'createTable',
 				name: 'users',

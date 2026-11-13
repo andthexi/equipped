@@ -2461,10 +2461,10 @@ The **Migrator** is constructed via the builder-chain rule (§2.2). It is
 the only verb-bearing entity in this subsystem.
 
 ```ts
-const migrator = Migrator.from(repo, adapter)
-  .migrations([m1, m2, m3])                        // explicit array; lex-sorted by id; dupes throw
-  .withoutLock?()                                  // optional opt-out; only allowed when adapter lacks acquireMigrationLock
-  .build()
+const migrator = Migrator.from(repo)
+	.withLock() // or .withoutLock(); policy is always explicit
+	.migrations([m1, m2, m3]) // explicit array; lex-sorted by id; dupes throw
+	.build()
 ```
 
 `.build()` prerequisites (per §2.6):
@@ -2476,11 +2476,13 @@ discovery (`fs.readdir` breaks edge runtimes) and no post-build
 registration (EventLog-style `migrator.migration(id, def)` adds ceremony
 without payoff — there's no per-migration return value to import).
 
-The **`withoutLock` opt-out rule**: the builder step is a compile error
-unless the adapter doesn't declare `acquireMigrationLock`. Calling it
-when the adapter _does_ declare locking is a type-system rejection —
-locking is the cluster-safety primitive and silently disabling it would
-violate §13 #6 always-throw-never-silently-drop.
+The **explicit lock-policy rule** requires `.withLock()` or `.withoutLock()`
+immediately after `.from(repo)`. `.withLock()` is visible only when the Repo's
+adapter declares `acquireMigrationLock`; `.withoutLock()` is always visible so
+the safety tradeoff cannot be selected implicitly. The built Migrator is also
+capability-narrowed: `status()` and `dry()` require `loadMigrations`, while
+`up()` additionally requires `recordMigration`. An unsupported adapter can
+still build a Migrator with those terminals narrowed out.
 
 ### 16.4 Adapter surface for migrations
 
@@ -2488,11 +2490,11 @@ The adapter declares two flat capability groups (§3.1):
 
 **Migration storage methods** (verb-first prefix):
 
-| Method                           | Required?                | Purpose                                                                 |
-| -------------------------------- | ------------------------ | ----------------------------------------------------------------------- |
-| `loadMigrations()`               | yes (for any migrations) | returns applied `[{ id, appliedAt }]`                                   |
-| `recordMigration(id, appliedAt)` | yes                      | marks one migration as applied                                          |
-| `acquireMigrationLock<T>(fn)`    | optional                 | wraps `fn` in cluster-safe lock; signature mirrors `session(fn)` (§8.1) |
+| Method                                          | Required?                | Purpose                                                      |
+| ----------------------------------------------- | ------------------------ | ------------------------------------------------------------ |
+| `loadMigrations(historyConfig)`                 | yes (for any migrations) | returns applied `[{ id, appliedAt }]`                        |
+| `recordMigration(historyConfig, id, appliedAt)` | yes                      | marks one migration as applied                               |
+| `acquireMigrationLock<T>(historyConfig, fn)`    | optional                 | wraps `fn` in a lock scoped to the resolved history identity |
 
 There is no `forgetMigration` — forward-only, no automatic un-record.
 Local-dev recovery is manual (delete the tracker row directly).
@@ -2524,9 +2526,9 @@ class PgAdapter extends configurable(pgConnPipe, OrmAdapter) {
 
 class MongoAdapter extends configurable(mongoConnPipe, OrmAdapter) {
 	// mongo subset
-	async loadMigrations(): Promise<{ id; appliedAt }[]>
-	async recordMigration(id, appliedAt): Promise<void>
-	// no acquireMigrationLock — Mongo session has no advisory-lock equivalent
+	async loadMigrations(historyConfig): Promise<{ id; appliedAt }[]>
+	async recordMigration(historyConfig, id, appliedAt): Promise<void>
+	async acquireMigrationLock(historyConfig, fn): Promise<unknown>
 	async applyAddIndex(change): Promise<void>
 	async applyDropIndex(change): Promise<void>
 	// no applyCreateTable etc — Mongo is schemaless
@@ -2555,13 +2557,15 @@ User puts `{ kind: 'addField' }` in a Mongo migration → TS error 2322 at
 the offending Change literal. Type-system-is-the-contract (§13 #4) at
 work.
 
-The **adapter-owned storage rule**: each adapter owns its tracker table's
-name, schema, and physical layout. PG might use a single `equipped_migrations`
-table with `id` + `applied_at` columns; Mongo might use a sentinel
-collection; Firebase might use a single doc with an applied-id list. The
-shape is the adapter's choice and is documented in the adapter's README.
-The framework only sees the typed `{ id, appliedAt }` payload returned by
-`loadMigrations`.
+The **resolved history rule**: every `up()`, `status()`, and `dry()` resolves
+the reserved logical name `_equipped_migrations` exactly once through the
+Repo's active resolver and validation pipeline. The resulting config is passed
+unchanged to load, record, and lock operations. Adapters partition history and
+locks by that config's physical identity. `_equipped_migration_locks` is also
+reserved for adapter lock storage; neither reserved name can be used by an
+ordinary Schema. There is no fallback to the former `equipped_migrations`
+name. The adapter owns the physical history layout, while the framework sees
+only the typed `{ id, appliedAt }` payload returned by `loadMigrations`.
 
 ### 16.5 Migrator runtime API
 
@@ -2616,6 +2620,15 @@ at run end. Cheaper than per-migration locks (Mongo sentinel-doc style is
 expensive per acquire) and equally cluster-safe — another node hitting
 the lock waits until the entire run completes, which is the desired
 behaviour.
+
+MongoDB stores migration history in the resolved database and collection for
+`_equipped_migrations`; history writes join the active `ClientSession`. Its
+distributed lock collection is `_equipped_migration_locks` in that same
+database, keyed by the resolved history collection's full physical identity.
+Acquisition is an atomic insert with a unique owner token and bounded polling;
+release matches both identity and owner. Locks have no lease, expiry, renewal,
+or stale-owner takeover: a crashed owner's document requires explicit
+administrative deletion, and migration callbacks are never retried.
 
 The **per-migration tx rule**: each migration gets its own
 `repo.session(...)` (when the adapter declares `transactional.session`
@@ -2690,7 +2703,7 @@ tracker row from the adapter's storage.
 
 ### 16.8 Validation flow
 
-Validation runs once at `Migrator.from(repo, adapter).migrations(arr).build()` —
+Validation runs once at `Migrator.from(repo).withLock().migrations(arr).build()` —
 the **validate-once rule** (§7.1) applies to migrations too. The
 **`assertNormalisedChanges` function** walks every Change in every
 Migration and enforces:
@@ -2787,20 +2800,18 @@ The **MigrationCodegen artifact** is constructed via the builder-chain
 rule (§2.2):
 
 ```ts
-const codegen = MigrationCodegen.from(repo, adapter)
+const codegen = MigrationCodegen.from(repo)
   .target([UserSchema, PostSchema, …])           // declared schemas = desired state
   .build()
 ```
 
 `.build()` prerequisite (per §2.6): `.target(...)` was called.
 
-The **codegen capability gate** narrows `MigrationCodegen.from(repo)` at
-the type level — an adapter must declare `introspectTarget(config)`,
-`physicalTargetIdentity(config)`, and broad diagnostic `introspect()`. An adapter
-without all three resolves to a
-type error at the `.from(...)` call. Symmetric with §5.3
-`SchemaCompatible<A, S>` (the adapter argument is also required so codegen can
-perform targeted introspection):
+The **codegen capability gate** narrows the built surface returned from
+`MigrationCodegen.from(repo)`. Construction is universal. `diff()` requires
+`introspectTarget(config)` plus `physicalTargetIdentity(config)`, while
+`discover()` independently requires broad diagnostic `introspect()`. Missing
+capabilities hide only their terminal methods:
 
 ```ts
 type IntrospectableAdapter<A extends OrmAdapter> = A extends {
@@ -2812,10 +2823,7 @@ type IntrospectableAdapter<A extends OrmAdapter> = A extends {
 	: never
 
 class MigrationCodegen {
-	static from<A extends OrmAdapter>(
-		repo: Repo<IntrospectableAdapter<A>>,
-		adapter: IntrospectableAdapter<A>,
-	): MigrationCodegenBuilder<A>
+	static from<A extends OrmAdapter>(repo: Repo<A>): MigrationCodegenBuilder<A>
 }
 ```
 

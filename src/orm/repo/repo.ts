@@ -1,28 +1,41 @@
 import type { InferAdapterConfig } from '../adapter.js'
 import type { OrmAdapterLike } from '../adapters/base.js'
 import type { IterationOptions } from '../query-options.js'
+import { composeSchemaConfig } from '../schema-validations.js'
 import type { AnySchema } from '../schema.js'
-import { run } from './als.js'
+import { currentTransforms, run } from './als.js'
 import { SchemaContext, SchemaRef, type HasMethod, type SchemaRefSurface } from './builders.js'
-import { registerRepoConfig, resolveRepoConfig } from './internals/config.js'
 
 export type { ConfigTransform } from './als.js'
 
 export class Repo<A extends OrmAdapterLike<any>> {
 	readonly #adapter: A
+	readonly #resolve: (name: string) => InferAdapterConfig<A>
+	readonly #schemaConfigPipe: any
 
 	constructor({ adapter, resolve }: { adapter: A; resolve: (name: string) => InferAdapterConfig<A> }) {
 		this.#adapter = adapter
-		registerRepoConfig<A>(this, resolve, (adapter as any).schemaConfigPipe)
+		this.#resolve = resolve
+		this.#schemaConfigPipe = (adapter as any).schemaConfigPipe
+	}
+
+	get adapter(): A {
+		return this.#adapter
 	}
 
 	#getConfig(s: AnySchema): InferAdapterConfig<A> {
-		return resolveRepoConfig<A>(this, s.name)
+		return this.resolveConfig(s.name)
 	}
 
 	/** Resolve and validate a logical schema name using the active runtime scope. */
 	resolveConfig(name: string): InferAdapterConfig<A> {
-		return resolveRepoConfig<A>(this, name)
+		const transforms = currentTransforms<InferAdapterConfig<A>>(this)
+		if (this.#schemaConfigPipe) {
+			return composeSchemaConfig(this.#resolve, transforms, name, this.#schemaConfigPipe) as InferAdapterConfig<A>
+		}
+		let config = this.#resolve(name)
+		for (const transform of transforms) config = transform(config, name)
+		return config
 	}
 
 	#getUse(s: AnySchema) {
@@ -44,7 +57,7 @@ export class Repo<A extends OrmAdapterLike<any>> {
 	}
 
 	resolve<T>(resolver: (config: InferAdapterConfig<A>, name: string) => InferAdapterConfig<A>, fn: () => T): T {
-		return run<InferAdapterConfig<A>, T>(resolver, fn)
+		return run<InferAdapterConfig<A>, T>(this, resolver, fn)
 	}
 }
 
@@ -726,6 +739,29 @@ if (import.meta.vitest) {
 			)
 
 			expect(seenConfigs[0]).toEqual({ table: 'b_a_users' })
+		})
+
+		test('scoped transforms apply only to the Repo that entered the scope', async () => {
+			const first = makeRepo()
+			const second = makeRepo()
+
+			await first.resolve(
+				(config) => ({ table: `first_${config.table}` }),
+				async () => {
+					expect(first.resolveConfig('users')).toEqual({ table: 'first_users' })
+					expect(second.resolveConfig('users')).toEqual({ table: 'users' })
+				},
+			)
+		})
+
+		test('adapter getter preserves the exact adapter instance and type', () => {
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
+
+			expect(repo.adapter).toBe(adapter)
+			expectTypeOf(repo.adapter).toEqualTypeOf<typeof adapter>()
 		})
 
 		test('session returns callback value and persists writes', async () => {

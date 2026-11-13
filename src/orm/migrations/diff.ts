@@ -356,10 +356,10 @@ if (import.meta.vitest) {
 				readonly supportedFieldTypes = ['string', 'number'] as const
 				async applyAddIndex() {}
 				async applyDropIndex() {}
-				async loadMigrations() {
+				async loadMigrations(_config: unknown) {
 					return []
 				}
-				async recordMigration() {}
+				async recordMigration(_config: unknown, _id: string, _appliedAt: number) {}
 				async introspect() {
 					return []
 				}
@@ -414,10 +414,10 @@ if (import.meta.vitest) {
 				readonly supportedFieldTypes = ['string', 'number', 'object', 'array'] as const
 				async applyAddIndex() {}
 				async applyDropIndex() {}
-				async loadMigrations() {
+				async loadMigrations(_config: unknown) {
 					return []
 				}
-				async recordMigration() {}
+				async recordMigration(_config: unknown, _id: string, _appliedAt: number) {}
 			}
 			const adapter = new (MongoStyleAdapter as any)() as MongoStyleAdapter
 			const UserSchema = Schema.from('users')

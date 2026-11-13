@@ -46,7 +46,7 @@ type ForeignKeyMeta = {
 
 type Snapshot = {
 	stores: Map<string, Map<string, Record<string, unknown>>>
-	migrations: Map<string, MigrationRecord>
+	migrations: Map<string, Map<string, MigrationRecord>>
 	indexes: Map<string, IndexMeta>
 	tables: Map<string, TableMeta>
 	foreignKeys: Map<string, ForeignKeyMeta>
@@ -297,11 +297,12 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	readonly aggregateOps = ['count', 'countDistinct', 'sum', 'avg', 'min', 'max'] as const
 
 	readonly stores = new Map<string, Map<string, Record<string, unknown>>>()
-	readonly migrations = new Map<string, MigrationRecord>()
+	readonly migrations = new Map<string, Map<string, MigrationRecord>>()
 	readonly indexes = new Map<string, IndexMeta>()
 	readonly tables = new Map<string, TableMeta>()
 	readonly foreignKeys = new Map<string, ForeignKeyMeta>()
 
+	readonly #migrationLocks = new Map<string, Promise<void>>()
 	#sessionAdmission: Promise<void> = Promise.resolve()
 
 	protected constructor(config: typeof InMemoryAdapter.Config) {
@@ -351,7 +352,8 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 			}
 			stores.set(name, storeCopy)
 		}
-		const migrations = new Map(this.migrations)
+		const migrations = new Map<string, Map<string, MigrationRecord>>()
+		for (const [identity, records] of this.migrations) migrations.set(identity, new Map(records))
 		const indexes = new Map(this.indexes)
 		const tables = new Map<string, TableMeta>()
 		for (const [name, meta] of this.tables.entries()) {
@@ -577,12 +579,20 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		return results
 	}
 
-	async loadMigrations(): Promise<{ id: string; appliedAt: number }[]> {
-		return this.#admit(async () => [...this.migrations.values()].map((m) => ({ id: m.id, appliedAt: m.appliedAt })))
+	async loadMigrations(config: InMemoryRepoConfig): Promise<{ id: string; appliedAt: number }[]> {
+		return this.#admit(async () => {
+			const records = this.migrations.get(this.physicalTargetIdentity(config))
+			return [...(records?.values() ?? [])].map((m) => ({ id: m.id, appliedAt: m.appliedAt }))
+		})
 	}
 
-	async recordMigration(id: string, appliedAt: number): Promise<void> {
-		return this.#admit(async () => void this.migrations.set(id, { id, appliedAt }))
+	async recordMigration(config: InMemoryRepoConfig, id: string, appliedAt: number): Promise<void> {
+		return this.#admit(async () => {
+			const identity = this.physicalTargetIdentity(config)
+			let records = this.migrations.get(identity)
+			if (!records) this.migrations.set(identity, (records = new Map()))
+			records.set(id, { id, appliedAt })
+		})
 	}
 
 	async applyCreateTable(change: CreateTableChange<any>, target?: unknown): Promise<void> {
@@ -824,8 +834,23 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		})
 	}
 
-	async acquireMigrationLock<T>(fn: () => Promise<T>): Promise<T> {
-		return this.#admit(fn)
+	async acquireMigrationLock<T>(config: InMemoryRepoConfig, fn: () => Promise<T>): Promise<T> {
+		const current = sessionContextStore.getStore()
+		if (current?.admissionOwners.has(this)) return fn()
+
+		const identity = this.physicalTargetIdentity(config)
+		let release!: () => void
+		const next = new Promise<void>((r) => {
+			release = r
+		})
+		const prev = this.#migrationLocks.get(identity) ?? Promise.resolve()
+		this.#migrationLocks.set(identity, next)
+		await prev
+		try {
+			return await this.#admit(fn)
+		} finally {
+			release()
+		}
 	}
 
 	async session<T>(fn: () => Promise<T>): Promise<T> {
@@ -900,46 +925,50 @@ if (import.meta.vitest) {
 
 		test('migration locking admits nested sessions and recovers after failure', async () => {
 			const adapter = InMemoryAdapter.create({})
+			const history = { table: '_equipped_migrations' }
 			const entered = deferred()
 			const releaseFailure = deferred()
 			const order: string[] = []
 
-			const failed = adapter.acquireMigrationLock(async () => {
+			const failed = adapter.acquireMigrationLock(history, async () => {
 				await adapter.session(async () => {
-					await adapter.recordMigration('rolled-back', 1)
+					await adapter.recordMigration(history, 'rolled-back', 1)
 					entered.resolve()
 					await releaseFailure.promise
 					throw new Error('migration failed')
 				})
 			})
 			await entered.promise
-			const next = adapter.acquireMigrationLock(async () => {
+			const next = adapter.acquireMigrationLock(history, async () => {
 				order.push('next')
-				await adapter.session(async () => adapter.recordMigration('committed', 2))
+				await adapter.session(async () => adapter.recordMigration(history, 'committed', 2))
 			})
 			releaseFailure.resolve()
 
 			await expect(failed).rejects.toThrow('migration failed')
 			await next
 			expect(order).toEqual(['next'])
-			expect(await adapter.loadMigrations()).toEqual([{ id: 'committed', appliedAt: 2 }])
+			expect(await adapter.loadMigrations(history)).toEqual([{ id: 'committed', appliedAt: 2 }])
 		})
 
 		test('migration locking is re-entrant without taking a transaction snapshot', async () => {
 			const adapter = InMemoryAdapter.create({})
+			const history = { table: '_equipped_migrations' }
 
-			await adapter.acquireMigrationLock(async () => {
-				await adapter.recordMigration('outside-session', 1)
-				await adapter.acquireMigrationLock(async () => adapter.recordMigration('nested-lock', 2))
+			await adapter.acquireMigrationLock(history, async () => {
+				await adapter.recordMigration(history, 'outside-session', 1)
+				await adapter.acquireMigrationLock(history, async () =>
+					adapter.recordMigration(history, 'nested-lock', 2),
+				)
 				await expect(
 					adapter.session(async () => {
-						await adapter.recordMigration('rolled-back', 3)
+						await adapter.recordMigration(history, 'rolled-back', 3)
 						throw new Error('rollback nested session')
 					}),
 				).rejects.toThrow('rollback nested session')
 			})
 
-			expect(await adapter.loadMigrations()).toEqual([
+			expect(await adapter.loadMigrations(history)).toEqual([
 				{ id: 'outside-session', appliedAt: 1 },
 				{ id: 'nested-lock', appliedAt: 2 },
 			])
