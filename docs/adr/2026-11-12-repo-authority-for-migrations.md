@@ -27,3 +27,11 @@ broad introspection capabilities instead of rejecting construction.
 The migration tracker name remains adapter-owned. Changes to an adapter's
 tracker name are therefore intentional breaks rather than aliases requiring a
 compatibility layer.
+
+Every migration operation resolves the reserved logical name
+`_equipped_migrations` through the Repo. History and locks are partitioned by
+that resolved physical identity. The reserved `_equipped_migration_locks` name
+cannot be used by application Schemas; adapters may use it for internal lock
+storage without colliding with user models. PostgreSQL uses a scoped advisory
+lock, MongoDB uses a scoped lock document, and JSON necessarily serializes the
+whole backing file while retaining independent logical histories within it.

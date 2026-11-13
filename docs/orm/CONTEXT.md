@@ -2508,9 +2508,9 @@ class PgAdapter extends configurable(pgConnPipe, OrmAdapter) {
 
 class MongoAdapter extends configurable(mongoConnPipe, OrmAdapter) {
 	// mongo subset
-	async loadMigrations(): Promise<{ id; appliedAt }[]>
-	async recordMigration(id, appliedAt): Promise<void>
-	// no acquireMigrationLock — Mongo session has no advisory-lock equivalent
+	async loadMigrations(historyConfig): Promise<{ id; appliedAt }[]>
+	async recordMigration(historyConfig, id, appliedAt): Promise<void>
+	async acquireMigrationLock(historyConfig, fn): Promise<unknown>
 	async applyAddIndex(change): Promise<void>
 	async applyDropIndex(change): Promise<void>
 	// no applyCreateTable etc — Mongo is schemaless
@@ -2789,13 +2789,11 @@ const codegen = MigrationCodegen.from(repo)
 
 `.build()` prerequisite (per §2.6): `.target(...)` was called.
 
-The **codegen capability gate** narrows `MigrationCodegen.from(repo)` at
-the type level — an adapter must declare `introspectTarget(config)`,
-`physicalTargetIdentity(config)`, and broad diagnostic `introspect()`. An adapter
-without all three resolves to a
-type error at the `.from(...)` call. Symmetric with §5.3
-`SchemaCompatible<A, S>` (the adapter argument is also required so codegen can
-perform targeted introspection):
+The **codegen capability gate** narrows the built surface returned from
+`MigrationCodegen.from(repo)`. Construction is universal. `diff()` requires
+`introspectTarget(config)` plus `physicalTargetIdentity(config)`, while
+`discover()` independently requires broad diagnostic `introspect()`. Missing
+capabilities hide only their terminal methods:
 
 ```ts
 type IntrospectableAdapter<A extends OrmAdapter> = A extends {
@@ -2807,10 +2805,7 @@ type IntrospectableAdapter<A extends OrmAdapter> = A extends {
 	: never
 
 class MigrationCodegen {
-	static from<A extends OrmAdapter>(
-		repo: Repo<IntrospectableAdapter<A>>,
-		adapter: IntrospectableAdapter<A>,
-	): MigrationCodegenBuilder<A>
+	static from<A extends OrmAdapter>(repo: Repo<A>): MigrationCodegenBuilder<A>
 }
 ```
 
