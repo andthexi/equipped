@@ -191,9 +191,6 @@ importers:
             husky:
                 specifier: ^9.1.7
                 version: 9.1.7
-            mongodb-memory-server:
-                specifier: ^10.4.3
-                version: 10.4.3(bare-buffer@3.7.1)(supports-color@5.5.0)
             prettier:
                 specifier: 3.10.1
                 version: 3.10.1
@@ -4747,20 +4744,6 @@ packages:
             }
         engines: { node: '>=20.19.0' }
 
-    mongodb-memory-server-core@10.4.3:
-        resolution:
-            {
-                integrity: sha512-IPjlw73IoSYopnqBibQKxmAXMbOEPf5uGAOsBcaUiNH/TOI7V19WO+K7n5KYtnQ9FqzLGLpvwCGuPOTBSg4s5Q==,
-            }
-        engines: { node: '>=16.20.1' }
-
-    mongodb-memory-server@10.4.3:
-        resolution:
-            {
-                integrity: sha512-CDZvFisXvGIigsIw5gqH6r9NI/zxGa/uRdutgUL/isuJh+inj0YXb7Ykw6oFMFzqgTJWb7x0I5DpzrqCstBWpg==,
-            }
-        engines: { node: '>=16.20.1' }
-
     mongodb@6.22.0:
         resolution:
             {
@@ -9064,50 +9047,6 @@ snapshots:
         dependencies:
             '@types/whatwg-url': 13.0.0
             whatwg-url: 14.2.0
-
-    mongodb-memory-server-core@10.4.3(bare-buffer@3.7.1)(supports-color@5.5.0):
-        dependencies:
-            async-mutex: 0.5.0
-            camelcase: 6.3.0
-            debug: 4.4.3(supports-color@5.5.0)
-            find-cache-dir: 3.3.2
-            follow-redirects: 1.16.3(debug@4.4.3(supports-color@5.5.0))
-            https-proxy-agent: 7.0.6(supports-color@5.5.0)
-            mongodb: 6.22.0
-            new-find-package-json: 2.0.0(supports-color@5.5.0)
-            semver: 7.8.6
-            tar-stream: 3.2.2(bare-buffer@3.7.1)
-            tslib: 2.8.1
-            yauzl: 3.4.0
-        transitivePeerDependencies:
-            - '@aws-sdk/credential-providers'
-            - '@mongodb-js/zstd'
-            - bare-abort-controller
-            - bare-buffer
-            - gcp-metadata
-            - kerberos
-            - mongodb-client-encryption
-            - react-native-b4a
-            - snappy
-            - socks
-            - supports-color
-
-    mongodb-memory-server@10.4.3(bare-buffer@3.7.1)(supports-color@5.5.0):
-        dependencies:
-            mongodb-memory-server-core: 10.4.3(bare-buffer@3.7.1)(supports-color@5.5.0)
-            tslib: 2.8.1
-        transitivePeerDependencies:
-            - '@aws-sdk/credential-providers'
-            - '@mongodb-js/zstd'
-            - bare-abort-controller
-            - bare-buffer
-            - gcp-metadata
-            - kerberos
-            - mongodb-client-encryption
-            - react-native-b4a
-            - snappy
-            - socks
-            - supports-color
 
     mongodb@6.22.0:
         dependencies:

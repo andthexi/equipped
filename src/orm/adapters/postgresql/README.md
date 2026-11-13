@@ -102,6 +102,11 @@ CREATE TABLE IF NOT EXISTS "resolved_schema"."_equipped_migrations" (
 
 Lock and unlock always use the same `PoolClient`. An active transaction client is reused. Otherwise the adapter checks out a dedicated client, routes migration history and transaction work through it for the callback's lifetime, unlocks after the callback commits or rolls back, and then releases the client.
 
+```ts
+const migrator = Migrator.from(repo).withLock().migrations(migrations).build()
+const codegen = MigrationCodegen.from(repo).target(schemas).build()
+```
+
 ### Declarative change support
 
 All 11 `apply*` methods are implemented:

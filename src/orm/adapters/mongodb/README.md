@@ -51,6 +51,7 @@ Locks have no lease, expiry, renewal, or stale-owner takeover. If a process cras
 
 ```ts
 const migrator = Migrator.from(repo).withLock().migrations(migrations).build()
+const codegen = MigrationCodegen.from(repo).target(schemas).build()
 ```
 
 ### Introspection
