@@ -89,7 +89,6 @@ export abstract class OrmAdapter {
 
 	loadMigrations?(config: unknown): Promise<{ id: string; appliedAt: number }[]>
 	recordMigration?(config: unknown, id: string, appliedAt: number): Promise<void>
-	acquireMigrationLock?<T>(config: unknown, fn: () => Promise<T>): Promise<T>
 	applyCreateTable?(change: CreateTableChange<any>, target: unknown): Promise<void>
 	applyDropTable?(change: DropTableChange, target: unknown): Promise<void>
 	applyAddField?(change: AddFieldChange<any>, target: unknown): Promise<void>
