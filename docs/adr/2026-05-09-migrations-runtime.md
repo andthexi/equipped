@@ -11,8 +11,9 @@ from method presence. The runtime is **forward-only** — there is no
 `down()`, no auto-inverse, no reversibility metadata in the algebra; rollback
 is achieved by writing additional forward migrations or, for local-dev
 mistakes, by deleting the tracker row from the adapter-owned storage table
-manually. Storage and locking are adapter capabilities (`loadMigrations`,
-`recordMigration`, `acquireMigrationLock?`) rather than the orm-driven
+manually. Storage is adapter-owned (`loadMigrations`, `recordMigration`), while
+locked execution uses the general `lock` capability rather than an
+adapter-specific migration lock or the orm-driven
 piggyback over its own crud surface that was initially considered. The full
 v1 spec lives in `docs/orm/CONTEXT.md` §16.
 
@@ -88,8 +89,8 @@ v1 spec lives in `docs/orm/CONTEXT.md` §16.
 - Codegen ("B") ships with targeted introspection, adapter-aware diffing,
   and no file emission; see `2026-05-09-migrations-codegen.md` and
   `docs/orm/CONTEXT.md` §16.11.
-- In-tree adapters (in-memory, json, postgresql, mongodb) gain
-  `loadMigrations`/`recordMigration`/`acquireMigrationLock?` plus
+- In-tree adapters gain `loadMigrations`/`recordMigration`; adapters with the
+  general `lock` capability can additionally offer locked execution, plus
   per-variant `apply*` methods for the variants they support
   (postgresql: all 11 declarative variants; mongodb:
   `applyAddIndex`/`applyDropIndex` only).

@@ -14,8 +14,8 @@ An explicit migration-history-scope API was rejected because it could diverge
 history from the Repo-resolved changes it records.
 
 `Migrator.from(repo)` requires an immediate lock-policy decision. `withLock()`
-is exposed only when the Repo's adapter declares the correctly scoped
-`acquireMigrationLock` method; `withoutLock()` is always available so opting out
+is exposed only when the Repo's adapter declares the general `lock`
+capability; `withoutLock()` is always available so opting out
 is explicit. The built surface is capability-narrowed: status and dry-run need
 `loadMigrations`, while applying also needs `recordMigration`. Construction
 still succeeds for unsupported adapters and yields no terminal methods.
@@ -32,6 +32,7 @@ Every migration operation resolves the reserved logical name
 `_equipped_migrations` through the Repo. History and locks are partitioned by
 that resolved physical identity. The reserved `_equipped_migration_locks` name
 cannot be used by application Schemas; adapters may use it for internal lock
-storage without colliding with user models. PostgreSQL uses a scoped advisory
-lock, MongoDB uses a scoped lock document, and JSON necessarily serializes the
+storage without colliding with user models. PostgreSQL uses a scoped advisory lock, and JSON necessarily serializes the
 whole backing file while retaining independent logical histories within it.
+MongoDB retains unlocked migration execution until it declares the general
+storage-lock capability.

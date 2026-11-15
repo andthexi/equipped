@@ -376,6 +376,7 @@
 		"express-slow-down": "3.0.1",
 		"fastify": "5.7.2",
 		"fastify-slow-down": "2.0.1",
+		"fs-native-extensions": "1.5.3",
 		"helmet": "8.1.0",
 		"ioredis": "5.9.2",
 		"jsonwebtoken": "9.0.3",

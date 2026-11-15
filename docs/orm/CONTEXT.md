@@ -2478,7 +2478,7 @@ without payoff — there's no per-migration return value to import).
 
 The **explicit lock-policy rule** requires `.withLock()` or `.withoutLock()`
 immediately after `.from(repo)`. `.withLock()` is visible only when the Repo's
-adapter declares `acquireMigrationLock`; `.withoutLock()` is always visible so
+adapter declares `lock`; `.withoutLock()` is always visible so
 the safety tradeoff cannot be selected implicitly. The built Migrator is also
 capability-narrowed: `status()` and `dry()` require `loadMigrations`, while
 `up()` additionally requires `recordMigration`. An unsupported adapter can
@@ -2490,11 +2490,13 @@ The adapter declares two flat capability groups (§3.1):
 
 **Migration storage methods** (verb-first prefix):
 
-| Method                                          | Required?                | Purpose                                                      |
-| ----------------------------------------------- | ------------------------ | ------------------------------------------------------------ |
-| `loadMigrations(historyConfig)`                 | yes (for any migrations) | returns applied `[{ id, appliedAt }]`                        |
-| `recordMigration(historyConfig, id, appliedAt)` | yes                      | marks one migration as applied                               |
-| `acquireMigrationLock<T>(historyConfig, fn)`    | optional                 | wraps `fn` in a lock scoped to the resolved history identity |
+| Method                                          | Required?                | Purpose                               |
+| ----------------------------------------------- | ------------------------ | ------------------------------------- |
+| `loadMigrations(historyConfig)`                 | yes (for any migrations) | returns applied `[{ id, appliedAt }]` |
+| `recordMigration(historyConfig, id, appliedAt)` | yes                      | marks one migration as applied        |
+
+Locked execution uses the adapter's general `lock(historyConfig,
+'exclusive', fn)` capability. There is no migration-specific lock method.
 
 There is no `forgetMigration` — forward-only, no automatic un-record.
 Local-dev recovery is manual (delete the tracker row directly).
@@ -2508,7 +2510,7 @@ class PgAdapter extends configurable(pgConnPipe, OrmAdapter) {
 	// migration storage
 	async loadMigrations(): Promise<{ id: string; appliedAt: number }[]>
 	async recordMigration(id: string, appliedAt: number): Promise<void>
-	async acquireMigrationLock<T>(fn: () => Promise<T>): Promise<T>
+	async lock<T>(config: SchemaConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T>
 
 	// declarative variant renderers (full SQL set: 11 methods)
 	async applyCreateTable(change: CreateTableChange, target: SchemaConfig): Promise<void>
@@ -2528,7 +2530,6 @@ class MongoAdapter extends configurable(mongoConnPipe, OrmAdapter) {
 	// mongo subset
 	async loadMigrations(historyConfig): Promise<{ id; appliedAt }[]>
 	async recordMigration(historyConfig, id, appliedAt): Promise<void>
-	async acquireMigrationLock(historyConfig, fn): Promise<unknown>
 	async applyAddIndex(change): Promise<void>
 	async applyDropIndex(change): Promise<void>
 	// no applyCreateTable etc — Mongo is schemaless
@@ -2603,7 +2604,7 @@ The runtime applies one **cluster-safe lock** for the entire run plus
 **per-migration tx**:
 
 ```ts
-await adapter.acquireMigrationLock(async () => {
+await adapter.lock(historyConfig, 'exclusive', async () => {
 	for (const m of pending) {
 		const wrap = m.tx !== false && hasSession ? (fn) => repo.session(fn) : (fn) => fn()
 
@@ -2680,7 +2681,7 @@ class OrmMigrationError extends EquippedError {
 
 `phase` discriminates failure location:
 
-- `'lock'` — `acquireMigrationLock` threw (cluster contention, network)
+- `'lock'` — exclusive adapter `lock` acquisition or release threw
 - `'load'` — `loadMigrations` threw, OR an orphan id was detected, OR
   `up({ to })` named an unknown id
 - `'session'` — `repo.session(...)` open/commit failed
@@ -3053,3 +3054,118 @@ diff never emits `addField` even when target schemas have fields the
 descriptor doesn't see. Symmetric with the runtime's per-variant
 narrowing — the same closed-set rule (§4.4) applies to codegen output
 as to authored `Migration.changes`.
+
+---
+
+## 17. Explicit storage locking — accepted direction
+
+This section describes the storage-lock contract. The Repo surface and InMemory,
+PostgreSQL and JSON implementations are available.
+
+The Repo entry point is `repo.lock(target, mode, fn)`, where `mode` is `shared`
+or `exclusive`. It resolves and validates `target` once through the active Repo
+configuration, then delegates to the adapter's structural `lock` method.
+`OrmLockError.reason` distinguishes `busy`, `acquisition-failed`,
+`ownership-lost`, `release-failed`, and `invalid-use`.
+
+The implementations are PostgreSQL, JSON and InMemory. An adapter
+declares locking support by implementing the storage-lock capability; absence
+means no support. Repo lock operations are exposed only for adapters declaring
+the capability, with runtime rejection for untyped or forged calls rather than
+an implicit fallback.
+
+A **storage lock** coordinates participating operations against the same underlying
+storage. Shared holders may coexist; an exclusive holder excludes other shared
+and exclusive holders. Locking is requested explicitly through the Repo rather
+than automatically applied to every query. Adapters own the storage-specific
+mechanism; applications choose which operations participate and which mode they
+need. Operations that do not participate are outside this coordination contract.
+
+A **lock target** is a logical name resolved once through the Repo's active
+resolver, scoped transforms and schema-config validation. The adapter derives
+its lock identity from the resolved physical target and underlying storage,
+so independent Repos addressing that same storage coordinate. The target is a
+coordination anchor, not a row lock or a restriction to queries on one table;
+its table or collection need not exist before acquisition. No unrelated global
+lock-name namespace or application-specific identity is introduced.
+
+Locking and transactions are independent adapter capabilities. A lock callback
+does not implicitly start a transaction; callers needing atomic work explicitly
+nest `repo.session(...)` inside the lock callback. Ownership spans that session's
+commit or rollback before the outer lock is released. Acquiring a new storage
+lock from inside an existing session is rejected rather than releasing ownership
+before that session completes. Nontransactional lock callbacks are allowed, but
+locking does not roll back their already-completed writes.
+
+**Lock scope lifetime** closes admission to new operations when the callback
+settles. Already-started protected operations must settle before ownership is
+released, including their transaction commit or rollback. Callers must await
+their work; delayed work using a closed ownership context fails rather than
+executing unlocked or implicitly acquiring new ownership.
+
+**Non-waiting acquisition** applies to contention for the requested storage lock:
+a conflicting request reports busy without invoking or queueing its callback.
+Compatible shared holders may coexist while their transactions still use the
+adapter's existing serialization. Shared access permits concurrency but does not
+promise parallel transaction execution or eliminate connection/transaction waits.
+Lock acquisition must precede any wait for transaction serialization, so such a
+wait cannot hide an initially conflicting holder.
+
+A **lock error** uses `OrmLockError` to distinguish contention from operational
+failure. Contention throws with `reason: 'busy'` and does not run the callback;
+success returns the callback's value unchanged. Connection failures, lost
+ownership and release failures must remain distinguishable from ordinary busy
+contention.
+
+If releasing ownership fails, that failure takes precedence over the callback's
+result or error. Preserve a callback failure as a secondary cause rather than
+discarding it or hiding uncertain cleanup behind it. A release failure does not
+imply that already-committed work was rolled back.
+
+**Nested lock reuse** permits shared-inside-shared and either mode inside an
+exclusive lock when the same live ownership context already holds the resolved
+lock target. Only the outermost owner releases the lock. Shared-to-exclusive
+upgrades are rejected. Reuse inside an active transaction is allowed because it
+acquires no new ownership; acquiring a new lock inside a transaction remains
+rejected.
+
+`Migrator.withLock()` uses the general storage-lock capability in exclusive mode
+on the Repo-resolved `_equipped_migrations` target for the entire run, reusing
+an existing compatible outer lock. For participating adapters, this replaces
+`acquireMigrationLock` without a compatibility alias; `withoutLock()` remains an
+explicit opt-out. `withLock()` requires the declared storage-lock capability;
+other methods do not substitute for it. Migration contention reports busy
+instead of waiting. This supersedes the participating adapters' migration-specific
+locking and waiting behavior described in §16 and the Repo-authority ADR;
+migration transaction boundaries remain separate.
+
+PostgreSQL derives its advisory-lock identity from the configured database and
+the Repo-resolved schema and table. It uses session-level
+`pg_try_advisory_lock[_shared]` ownership on a dedicated pool client, so no target
+table is required and contended acquisition does not wait. Protected queries,
+cursors and explicit sessions stay on that client until admitted work settles
+and the matching unlock succeeds; uncertain clients are destroyed instead of
+returned to the reusable pool.
+
+**At-most-once callback execution** applies to each lock and session invocation.
+Failure to acquire a lock invokes its callback zero times; successful acquisition
+invokes it once. Session callbacks on participating adapters are not replayed
+after transient failures or commit errors. Retrying application work requires
+a new caller invocation. Lock ownership must remain valid through settlement,
+and an unresolved commit outcome is reported as uncertain rather than as a
+rollback.
+
+JSON storage uses OS-owned shared/exclusive locks on a stable coordination file,
+separate from the atomically replaced data file. All logical lock targets within
+one backing file share the same lock identity; different files remain independent.
+Equivalent relative or absolute paths and symbolic links to the same backing file
+must coordinate together. Hard-linked backing files are rejected because atomic
+replacement of one pathname would split the shared storage identity.
+Shared holders may coexist, while write transactions remain separately serialized
+across clients of that file. Ownership lasts until protected work, including
+commit or rollback, settles. Initial platform support targets
+Linux x64, macOS arm64 and Windows x64, each subject to contention, process-death,
+paused-holder and transaction-publication qualification before support is claimed.
+Support is limited to local filesystems; shared network filesystems such as NFS
+and SMB are excluded. Unavailable native locking fails explicitly rather than
+falling back to polling markers or expiry-based takeover.

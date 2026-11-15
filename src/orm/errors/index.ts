@@ -1,4 +1,5 @@
 export * from './introspection.js'
+export * from './lock.js'
 export * from './migration.js'
 export * from './not-found.js'
 export * from './replay.js'

@@ -4,6 +4,7 @@ import { v, differ } from 'valleyed'
 
 import { configurable } from '../../../utilities/configurable.js'
 import type { FieldTypeName } from '../../adapter.js'
+import { OrmLockError } from '../../errors/lock.js'
 import { OrmValidationError } from '../../errors/validation.js'
 import { Filter, FilterGroup, type FilterChild } from '../../filter.js'
 import type { DiscoveredSchema, ForeignKeyAction } from '../../migrations/introspection-types.js'
@@ -21,7 +22,7 @@ import type {
 	RenameFieldChange,
 	RenameTableChange,
 } from '../../migrations/types.js'
-import { OrmAdapter, type AggregateSpec } from '../../orm-adapter.js'
+import { OrmAdapter, type AggregateSpec, type StorageLockMode } from '../../orm-adapter.js'
 import type { IterationQueryOptions, QueryOptions } from '../../query-options.js'
 import type { AnySchema } from '../../schema.js'
 import { IncOp, MaxOp, MinOp, MulOp, PatchOp, PullOp, PushOp, SetOp, UnsetOp, type AnyUpdateOp } from '../../updates.js'
@@ -270,7 +271,12 @@ function applyOps(doc: Record<string, unknown>, ops: AnyUpdateOp[]): Record<stri
 type SessionContext = {
 	admissionOwners: Set<InMemoryAdapter>
 	activeTransactions: Set<InMemoryAdapter>
+	lockScopes: Map<InMemoryAdapter, Map<string, LockScope>>
+	bypassLockTracking: boolean
 }
+
+type LockScope = { identity: string; mode: StorageLockMode; open: boolean; pending: Set<Promise<unknown>> }
+type LockState = { shared: Set<LockScope>; exclusive?: LockScope }
 
 const sessionContextStore = new AsyncLocalStorage<SessionContext>()
 
@@ -302,7 +308,7 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	readonly tables = new Map<string, TableMeta>()
 	readonly foreignKeys = new Map<string, ForeignKeyMeta>()
 
-	readonly #migrationLocks = new Map<string, Promise<void>>()
+	readonly #locks = new Map<string, LockState>()
 	#sessionAdmission: Promise<void> = Promise.resolve()
 
 	protected constructor(config: typeof InMemoryAdapter.Config) {
@@ -311,6 +317,22 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 
 	async #admit<T>(fn: () => Promise<T>): Promise<T> {
 		const current = sessionContextStore.getStore()
+		const scopes = current?.lockScopes.get(this)
+		if (scopes?.size) {
+			for (const scope of scopes.values()) {
+				if (!scope.open) throw new OrmLockError('invalid-use', scope.identity)
+			}
+			if (!current!.bypassLockTracking) {
+				const context: SessionContext = { ...current!, bypassLockTracking: true }
+				const operation = sessionContextStore.run(context, () => this.#admit(fn))
+				for (const scope of scopes.values()) scope.pending.add(operation)
+				try {
+					return await operation
+				} finally {
+					for (const scope of scopes.values()) scope.pending.delete(operation)
+				}
+			}
+		}
 		if (current?.admissionOwners.has(this)) return fn()
 
 		let release!: () => void
@@ -324,6 +346,10 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		const context: SessionContext = {
 			admissionOwners: current ? new Set(current.admissionOwners) : new Set(),
 			activeTransactions: current ? new Set(current.activeTransactions) : new Set(),
+			lockScopes: current
+				? new Map([...current.lockScopes].map(([adapter, owned]) => [adapter, new Map(owned)]))
+				: new Map(),
+			bypassLockTracking: current?.bypassLockTracking ?? false,
 		}
 		context.admissionOwners.add(this)
 		try {
@@ -784,6 +810,61 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		return resolveConfigName({} as AnySchema, config)
 	}
 
+	async lock<T>(config: InMemoryRepoConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
+		const identity = this.physicalTargetIdentity(config)
+		const current = sessionContextStore.getStore()
+		const existing = current?.lockScopes.get(this)?.get(identity)
+		if (existing) {
+			if (!existing.open || (existing.mode === 'shared' && mode === 'exclusive')) {
+				throw new OrmLockError('invalid-use', identity)
+			}
+			return fn()
+		}
+		if (current?.activeTransactions.has(this)) throw new OrmLockError('invalid-use', identity)
+
+		const state = this.#locks.get(identity) ?? { shared: new Set<LockScope>() }
+		if (state.exclusive || (mode === 'exclusive' && state.shared.size > 0)) throw new OrmLockError('busy', identity)
+		const scope: LockScope = { identity, mode, open: true, pending: new Set() }
+		if (mode === 'exclusive') state.exclusive = scope
+		else state.shared.add(scope)
+		this.#locks.set(identity, state)
+
+		const context: SessionContext = {
+			admissionOwners: current ? new Set(current.admissionOwners) : new Set(),
+			activeTransactions: current ? new Set(current.activeTransactions) : new Set(),
+			lockScopes: current
+				? new Map([...current.lockScopes].map(([adapter, owned]) => [adapter, new Map(owned)]))
+				: new Map(),
+			bypassLockTracking: false,
+		}
+		const owned = context.lockScopes.get(this) ?? new Map<string, LockScope>()
+		owned.set(identity, scope)
+		context.lockScopes.set(this, owned)
+
+		let result: T | undefined
+		let callbackError: unknown
+		let releaseError: unknown
+		try {
+			result = await sessionContextStore.run(context, fn)
+		} catch (error) {
+			callbackError = error
+		} finally {
+			scope.open = false
+			await Promise.allSettled([...scope.pending])
+			if (mode === 'exclusive') {
+				if (state.exclusive !== scope)
+					releaseError = new OrmLockError('ownership-lost', identity, { callbackCause: callbackError })
+				state.exclusive = undefined
+			} else if (!state.shared.delete(scope)) {
+				releaseError = new OrmLockError('ownership-lost', identity, { callbackCause: callbackError })
+			}
+			if (!state.exclusive && state.shared.size === 0) this.#locks.delete(identity)
+		}
+		if (releaseError !== undefined) throw releaseError
+		if (callbackError !== undefined) throw callbackError
+		return result as T
+	}
+
 	async introspectTarget(config: InMemoryRepoConfig): Promise<DiscoveredSchema | null> {
 		return this.#admit(async () => this.#introspectTarget(config))
 	}
@@ -832,25 +913,6 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 			}
 			return schemas
 		})
-	}
-
-	async acquireMigrationLock<T>(config: InMemoryRepoConfig, fn: () => Promise<T>): Promise<T> {
-		const current = sessionContextStore.getStore()
-		if (current?.admissionOwners.has(this)) return fn()
-
-		const identity = this.physicalTargetIdentity(config)
-		let release!: () => void
-		const next = new Promise<void>((r) => {
-			release = r
-		})
-		const prev = this.#migrationLocks.get(identity) ?? Promise.resolve()
-		this.#migrationLocks.set(identity, next)
-		await prev
-		try {
-			return await this.#admit(fn)
-		} finally {
-			release()
-		}
 	}
 
 	async session<T>(fn: () => Promise<T>): Promise<T> {
@@ -923,14 +985,14 @@ if (import.meta.vitest) {
 			expect(await use.findMany(FilterGroup.create())).toEqual([{ id: 'preserved' }])
 		})
 
-		test('migration locking admits nested sessions and recovers after failure', async () => {
+		test('exclusive storage locking admits nested sessions and recovers after failure', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const history = { table: '_equipped_migrations' }
 			const entered = deferred()
 			const releaseFailure = deferred()
 			const order: string[] = []
 
-			const failed = adapter.acquireMigrationLock(history, async () => {
+			const failed = adapter.lock(history, 'exclusive', async () => {
 				await adapter.session(async () => {
 					await adapter.recordMigration(history, 'rolled-back', 1)
 					entered.resolve()
@@ -939,27 +1001,31 @@ if (import.meta.vitest) {
 				})
 			})
 			await entered.promise
-			const next = adapter.acquireMigrationLock(history, async () => {
-				order.push('next')
-				await adapter.session(async () => adapter.recordMigration(history, 'committed', 2))
-			})
+			let nextRan = false
+			await expect(
+				adapter.lock(history, 'exclusive', async () => {
+					nextRan = true
+				}),
+			).rejects.toMatchObject({ reason: 'busy' })
+			expect(nextRan).toBe(false)
 			releaseFailure.resolve()
 
 			await expect(failed).rejects.toThrow('migration failed')
-			await next
+			await adapter.lock(history, 'exclusive', async () => {
+				order.push('next')
+				await adapter.session(async () => adapter.recordMigration(history, 'committed', 2))
+			})
 			expect(order).toEqual(['next'])
 			expect(await adapter.loadMigrations(history)).toEqual([{ id: 'committed', appliedAt: 2 }])
 		})
 
-		test('migration locking is re-entrant without taking a transaction snapshot', async () => {
+		test('exclusive storage locking is re-entrant without taking a transaction snapshot', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const history = { table: '_equipped_migrations' }
 
-			await adapter.acquireMigrationLock(history, async () => {
+			await adapter.lock(history, 'exclusive', async () => {
 				await adapter.recordMigration(history, 'outside-session', 1)
-				await adapter.acquireMigrationLock(history, async () =>
-					adapter.recordMigration(history, 'nested-lock', 2),
-				)
+				await adapter.lock(history, 'exclusive', async () => adapter.recordMigration(history, 'nested-lock', 2))
 				await expect(
 					adapter.session(async () => {
 						await adapter.recordMigration(history, 'rolled-back', 3)

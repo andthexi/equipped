@@ -1,5 +1,5 @@
 import type { FilterGroup } from '../filter.js'
-import type { AggregateSpec } from '../orm-adapter.js'
+import type { AggregateSpec, StorageLockMode } from '../orm-adapter.js'
 import type { IterationQueryOptions, QueryOptions } from '../query-options.js'
 import type { AnySchema } from '../schema.js'
 import type { AnyUpdateOp } from '../updates.js'
@@ -33,6 +33,7 @@ export type OrmAdapterLike<Config = unknown> = {
 	connect?(): Promise<void>
 	disconnect?(): Promise<void>
 	session?<T>(fn: () => Promise<T>): Promise<T>
+	lock?<T>(config: Config, mode: StorageLockMode, fn: () => Promise<T>): Promise<T>
 }
 
 export type OrmAdapterConfig<A extends OrmAdapterLike<any>> = A extends OrmAdapterLike<infer Config> ? Config : never

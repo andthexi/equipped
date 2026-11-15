@@ -7,6 +7,7 @@ import { v } from 'valleyed'
 import { EquippedError } from '../../../errors/index.js'
 import { configurable } from '../../../utilities/index.js'
 import type { FieldTypeName } from '../../adapter.js'
+import { OrmLockError } from '../../errors/index.js'
 import type { FilterGroup } from '../../filter.js'
 import type { DiscoveredSchema, ForeignKeyAction } from '../../migrations/introspection-types.js'
 import type {
@@ -22,7 +23,7 @@ import type {
 	RenameFieldChange,
 	RenameTableChange,
 } from '../../migrations/types.js'
-import { OrmAdapter, type AggregateSpec } from '../../orm-adapter.js'
+import { OrmAdapter, type AggregateSpec, type StorageLockMode } from '../../orm-adapter.js'
 import type { IterationQueryOptions, QueryOptions } from '../../query-options.js'
 import type { AnySchema } from '../../schema.js'
 import { flattenOps, type AnyUpdateOp } from '../../updates.js'
@@ -69,6 +70,15 @@ const DEFAULT_CURSOR_BATCH_SIZE = 1000
 type PostgresCursor<T extends Record<string, unknown>> = {
 	read: (rowCount: number) => Promise<T[]>
 	close: () => Promise<void>
+}
+
+type LockScope = {
+	client: PoolClient
+	identity: string
+	mode: StorageLockMode
+	open: boolean
+	lost: boolean
+	pending: Set<Promise<unknown>>
 }
 
 const FIELD_TYPE_TO_PG: Record<string, string> = {
@@ -130,7 +140,7 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 
 	readonly pool: Pool
 	#sessionStore = new AsyncLocalStorage<PoolClient | undefined>()
-	#migrationLockStore = new AsyncLocalStorage<PoolClient | undefined>()
+	#lockStore = new AsyncLocalStorage<LockScope | undefined>()
 
 	protected constructor(config: typeof PostgresAdapter.Config) {
 		super(config)
@@ -145,7 +155,31 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 	}
 
 	#getClient() {
-		return this.#sessionStore.getStore() ?? this.#migrationLockStore.getStore() ?? this.pool
+		const sessionClient = this.#sessionStore.getStore()
+		if (sessionClient) return sessionClient
+		const scope = this.#lockStore.getStore()
+		if (!scope) return this.pool
+		if (!scope.open) throw new OrmLockError('invalid-use', scope.identity)
+		if (scope.lost) throw new OrmLockError('ownership-lost', scope.identity)
+		return this.#trackedClient(scope)
+	}
+
+	#trackedClient(scope: LockScope): PoolClient {
+		return new Proxy(scope.client, {
+			get: (client, property, receiver) => {
+				if (property !== 'query') return Reflect.get(client, property, receiver)
+				return (...args: unknown[]) => {
+					if (!scope.open) throw new OrmLockError('invalid-use', scope.identity)
+					if (scope.lost) throw new OrmLockError('ownership-lost', scope.identity)
+					const result = (client.query as (...queryArgs: unknown[]) => unknown).apply(client, args)
+					if (!result || typeof (result as PromiseLike<unknown>).then !== 'function') return result
+					const pending = Promise.resolve(result)
+					scope.pending.add(pending)
+					pending.finally(() => scope.pending.delete(pending)).catch(() => {})
+					return pending
+				}
+			},
+		})
 	}
 
 	#resolveTableName(config: PostgresqlRepoConfig) {
@@ -308,9 +342,11 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		try {
 			const tableName = this.#resolveTableName(c)
 			const { sql, params } = buildSelectQuery(filter, options, tableName, schema.pkField.name)
-			const sessionClient = this.#sessionStore.getStore()
-			if (sessionClient) {
-				client = sessionClient
+			const scopedClient =
+				this.#sessionStore.getStore() ??
+				(this.#lockStore.getStore() ? (this.#getClient() as PoolClient) : undefined)
+			if (scopedClient) {
+				client = scopedClient
 			} else {
 				client = await this.pool.connect()
 				releaseClient = true
@@ -447,24 +483,77 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		await client.query(`INSERT INTO ${table} (id, applied_at) VALUES ($1, $2)`, [id, appliedAt])
 	}
 
-	async acquireMigrationLock<T>(config: PostgresqlRepoConfig, fn: () => Promise<T>): Promise<T> {
-		const activeClient = this.#sessionStore.getStore()
-		const client = activeClient ?? (await this.pool.connect())
-		const lockKey = this.#migrationHistoryIdentity(config)
-		try {
-			await client.query(`SELECT pg_advisory_lock(hashtextextended($1, 0))`, [lockKey])
-			try {
-				return activeClient ? await fn() : await this.#migrationLockStore.run(client, fn)
-			} finally {
-				await client.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [lockKey])
-			}
-		} finally {
-			if (!activeClient) client.release()
-		}
+	physicalTargetIdentity(config: PostgresqlRepoConfig): string {
+		return JSON.stringify([this.config.database, config.schema ?? 'public', config.table])
 	}
 
-	#migrationHistoryIdentity(config: PostgresqlRepoConfig): string {
-		return JSON.stringify([this.config.database, config.schema ?? 'public', config.table])
+	async lock<T>(config: PostgresqlRepoConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
+		const identity = this.physicalTargetIdentity(config)
+		const existing = this.#lockStore.getStore()
+		if (existing) {
+			if (!existing.open || existing.lost || existing.identity !== identity) {
+				throw new OrmLockError(existing.lost ? 'ownership-lost' : 'invalid-use', identity)
+			}
+			if (existing.mode === 'shared' && mode === 'exclusive') throw new OrmLockError('invalid-use', identity)
+			return fn()
+		}
+		if (this.#sessionStore.getStore()) throw new OrmLockError('invalid-use', identity)
+
+		let client: PoolClient
+		try {
+			client = await this.pool.connect()
+		} catch (cause) {
+			throw new OrmLockError('acquisition-failed', identity, { cause })
+		}
+
+		const scope: LockScope = { client, identity, mode, open: true, lost: false, pending: new Set() }
+		const onClientError = () => {
+			scope.lost = true
+		}
+		client.on?.('error', onClientError)
+		let acquired = false
+		let result: T | undefined
+		let callbackError: unknown
+		let releaseError: unknown
+		try {
+			const acquireFunction = mode === 'shared' ? 'pg_try_advisory_lock_shared' : 'pg_try_advisory_lock'
+			const acquisition = await client.query<{ acquired: boolean }>(
+				`SELECT ${acquireFunction}(hashtextextended($1, 0)) AS acquired`,
+				[identity],
+			)
+			acquired = acquisition.rows[0]?.acquired === true
+			if (!acquired) throw new OrmLockError('busy', identity)
+			try {
+				result = await this.#lockStore.run(scope, fn)
+			} catch (error) {
+				callbackError = error
+			}
+		} catch (error) {
+			if (error instanceof OrmLockError) throw error
+			throw new OrmLockError('acquisition-failed', identity, { cause: error })
+		} finally {
+			if (acquired) {
+				scope.open = false
+				await Promise.allSettled([...scope.pending])
+				const unlockFunction = mode === 'shared' ? 'pg_advisory_unlock_shared' : 'pg_advisory_unlock'
+				try {
+					const release = await client.query<{ released: boolean }>(
+						`SELECT ${unlockFunction}(hashtextextended($1, 0)) AS released`,
+						[identity],
+					)
+					if (scope.lost || release.rows[0]?.released !== true) {
+						releaseError = new OrmLockError('ownership-lost', identity, { callbackCause: callbackError })
+					}
+				} catch (cause) {
+					releaseError = new OrmLockError('release-failed', identity, { cause, callbackCause: callbackError })
+				}
+			}
+			client.off?.('error', onClientError)
+			client.release(releaseError !== undefined || scope.lost)
+		}
+		if (releaseError !== undefined) throw releaseError
+		if (callbackError !== undefined) throw callbackError
+		return result as T
 	}
 
 	async applyCreateTable(change: CreateTableChange<any>, target?: unknown): Promise<void> {
@@ -567,10 +656,6 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		await this.#getClient().query(
 			`ALTER TABLE ${quoteQualifiedIdentifier(this.#resolveTableName(config))} DROP CONSTRAINT "${change.name}"`,
 		)
-	}
-
-	physicalTargetIdentity(config: PostgresqlRepoConfig): string {
-		return JSON.stringify([config.schema ?? 'public', config.table])
 	}
 
 	async introspectTarget(config: PostgresqlRepoConfig): Promise<DiscoveredSchema | null> {
@@ -808,16 +893,24 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 
 	async session<T>(fn: () => Promise<T>): Promise<T> {
 		if (this.#sessionStore.getStore()) return fn()
-		let client = this.#migrationLockStore.getStore()
+		const lockScope = this.#lockStore.getStore()
+		if (lockScope && (!lockScope.open || lockScope.lost)) {
+			throw new OrmLockError(lockScope.lost ? 'ownership-lost' : 'invalid-use', lockScope.identity)
+		}
+		let client = lockScope ? this.#trackedClient(lockScope) : undefined
 		const releaseClient = !client
+		let transactionStarted = false
+		let commitAttempted = false
 		try {
 			client ??= await this.pool.connect()
 			await client.query('BEGIN')
+			transactionStarted = true
 			const result = await this.#sessionStore.run(client, fn)
+			commitAttempted = true
 			await client.query('COMMIT')
 			return result
 		} catch (error) {
-			if (client) {
+			if (client && transactionStarted && !commitAttempted) {
 				try {
 					await client.query('ROLLBACK')
 				} catch {
@@ -825,7 +918,11 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 				}
 			}
 			if (error instanceof EquippedError) throw error
-			throw new EquippedError('PostgreSQL session failed', { adapter: 'postgresql', operation: 'session' }, error)
+			throw new EquippedError(
+				commitAttempted ? 'PostgreSQL commit outcome is uncertain' : 'PostgreSQL session failed',
+				{ adapter: 'postgresql', operation: 'session', outcome: commitAttempted ? 'uncertain' : 'rolled-back' },
+				error,
+			)
 		} finally {
 			if (releaseClient) client?.release()
 		}
@@ -1460,109 +1557,55 @@ if (import.meta.vitest) {
 			expect(queries[0].params).toEqual(['0001-init', 1700000000000])
 		})
 
-		test('acquireMigrationLock holds one dedicated client for lock, callback, and unlock', async () => {
+		test('lock binds protected work to one client and uses non-waiting ownership', async () => {
 			const release = vi.fn()
 			const client = {
 				query: vi.fn(async (sql: string, params?: unknown[]) => {
 					queries.push({ sql, params })
-					return { rows: [] }
+					return { rows: [{ acquired: true, released: true }] }
 				}),
+				on: vi.fn(),
+				off: vi.fn(),
 				release,
 			}
 			;(adapter.pool as any).connect = vi.fn(async () => client)
 
-			const result = await adapter.acquireMigrationLock(
-				{ schema: 'tenant', table: '_equipped_migrations' },
-				async () => {
-					await adapter.recordMigration({ schema: 'tenant', table: '_equipped_migrations' }, '0001', 42)
-					return 42
-				},
-			)
+			const result = await adapter.lock({ schema: 'tenant', table: 'history' }, 'exclusive', async () => {
+				await adapter.recordMigration({ schema: 'tenant', table: 'history' }, '0001', 42)
+				return 42
+			})
+
 			expect(result).toBe(42)
-			expect(queries[0].sql).toContain('pg_advisory_lock')
-			expect(queries[0].params).toEqual([JSON.stringify(['testdb', 'tenant', '_equipped_migrations'])])
-			expect(queries[1].sql).toContain('INSERT INTO "tenant"."_equipped_migrations"')
+			expect(queries[0].sql).toContain('pg_try_advisory_lock')
+			expect(queries[0].params).toEqual([JSON.stringify(['testdb', 'tenant', 'history'])])
+			expect(queries[1].sql).toContain('INSERT INTO "tenant"."history"')
 			expect(queries[2].sql).toContain('pg_advisory_unlock')
-			expect(client.query).toHaveBeenCalledTimes(3)
-			expect(release).toHaveBeenCalledTimes(1)
+			expect(release).toHaveBeenCalledWith(false)
 		})
 
-		test('acquireMigrationLock unlocks and releases its dedicated client on error', async () => {
-			const release = vi.fn()
+		test('lock reports busy without invoking its callback', async () => {
+			const callback = vi.fn()
 			const client = {
-				query: vi.fn(async (sql: string, params?: unknown[]) => {
-					queries.push({ sql, params })
-					return { rows: [] }
-				}),
-				release,
-			}
-			;(adapter.pool as any).connect = vi.fn(async () => client)
-			await expect(
-				adapter.acquireMigrationLock({ table: '_equipped_migrations' }, async () => {
-					throw new Error('boom')
-				}),
-			).rejects.toThrow('boom')
-			expect(queries[0].sql).toContain('pg_advisory_lock')
-			expect(queries[1].sql).toContain('pg_advisory_unlock')
-			expect(release).toHaveBeenCalledTimes(1)
-		})
-
-		test('acquireMigrationLock releases its dedicated client when lock acquisition fails', async () => {
-			const release = vi.fn()
-			const client = {
-				query: vi.fn(async () => {
-					throw new Error('lock unavailable')
-				}),
-				release,
-			}
-			;(adapter.pool as any).connect = vi.fn(async () => client)
-
-			await expect(
-				adapter.acquireMigrationLock({ table: '_equipped_migrations' }, async () => {}),
-			).rejects.toThrow('lock unavailable')
-			expect(release).toHaveBeenCalledTimes(1)
-		})
-
-		test('acquireMigrationLock reuses the active transaction client', async () => {
-			const events: string[] = []
-			const release = vi.fn(() => events.push('release'))
-			const client = {
-				query: vi.fn(async (sql: string) => {
-					events.push(sql.includes('pg_advisory_') ? sql.match(/pg_advisory_\w+/)![0] : sql)
-					return { rows: [] }
-				}),
-				release,
-			}
-			;(adapter.pool as any).connect = vi.fn(async () => client)
-
-			await adapter.session(() =>
-				adapter.acquireMigrationLock({ table: '_equipped_migrations' }, async () => {
-					events.push('callback')
-				}),
-			)
-
-			expect((adapter.pool as any).connect).toHaveBeenCalledTimes(1)
-			expect(events).toEqual(['BEGIN', 'pg_advisory_lock', 'callback', 'pg_advisory_unlock', 'COMMIT', 'release'])
-		})
-
-		test('migration lock identity includes database, schema, and table without covered collisions', async () => {
-			const params: unknown[][] = []
-			const client = {
-				query: vi.fn(async (_sql: string, values?: unknown[]) => {
-					if (values) params.push(values)
-					return { rows: [] }
-				}),
+				query: vi.fn(async () => ({ rows: [{ acquired: false }] })),
+				on: vi.fn(),
+				off: vi.fn(),
 				release: vi.fn(),
 			}
 			;(adapter.pool as any).connect = vi.fn(async () => client)
 
-			await adapter.acquireMigrationLock({ schema: 'ab', table: 'c' }, async () => {})
-			await adapter.acquireMigrationLock({ schema: 'a', table: 'bc' }, async () => {})
-			await adapter.acquireMigrationLock({ schema: 'ab', table: 'c' }, async () => {})
+			await expect(adapter.lock({ table: 'history' }, 'shared', callback)).rejects.toMatchObject({
+				reason: 'busy',
+			})
+			expect(callback).not.toHaveBeenCalled()
+		})
 
-			expect(params[0]).toEqual(params[4])
-			expect(params[0]).not.toEqual(params[2])
-			expect(params[0]).toEqual([JSON.stringify(['testdb', 'ab', 'c'])])
+		test('storage lock identity includes database, schema, and table', () => {
+			expect(adapter.physicalTargetIdentity({ schema: 'ab', table: 'c' })).toBe(
+				JSON.stringify(['testdb', 'ab', 'c']),
+			)
+			expect(adapter.physicalTargetIdentity({ schema: 'a', table: 'bc' })).not.toBe(
+				adapter.physicalTargetIdentity({ schema: 'ab', table: 'c' }),
+			)
 		})
 
 		test('applyCreateTable generates correct DDL', async () => {
@@ -1918,7 +1961,7 @@ if (import.meta.vitest) {
 		test('type-level: PostgresAdapter declares all migration methods', () => {
 			expectTypeOf(adapter.loadMigrations).toBeFunction()
 			expectTypeOf(adapter.recordMigration).toBeFunction()
-			expectTypeOf(adapter.acquireMigrationLock).toBeFunction()
+			expectTypeOf(adapter.lock).toBeFunction()
 			expectTypeOf(adapter.applyCreateTable).toBeFunction()
 			expectTypeOf(adapter.applyDropTable).toBeFunction()
 			expectTypeOf(adapter.applyAddField).toBeFunction()
@@ -2012,7 +2055,8 @@ if (import.meta.vitest) {
 			let loadCalls = 0
 			const mockClient = {
 				query: async (sql: string, _params?: unknown[]) => {
-					if (sql.includes('pg_advisory_lock') || sql.includes('pg_advisory_unlock')) return { rows: [] }
+					if (sql.includes('pg_try_advisory_lock')) return { rows: [{ acquired: true }] }
+					if (sql.includes('pg_advisory_unlock')) return { rows: [{ released: true }] }
 					if (sql.includes('CREATE TABLE IF NOT EXISTS')) return { rows: [] }
 					if (sql.includes('SELECT id, applied_at')) {
 						loadCalls++
