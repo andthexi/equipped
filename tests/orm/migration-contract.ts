@@ -17,7 +17,7 @@ export type MigrationContractFixture<A extends MigrationAdapter> = {
 	runInScope<T>(scope: string, fn: () => Promise<T>): Promise<T>
 	cleanup(): Promise<void>
 	differentScopesRunConcurrently: boolean
-	nonWaitingLock?: boolean
+	contendedLockIsBusy: boolean
 }
 
 export type MigrationContractOptions<A extends MigrationAdapter> = {
@@ -100,8 +100,8 @@ export function migrationAdapterContract<A extends MigrationAdapter>({ createFix
 			])
 		}))
 
-	test('serializes runners sharing one history scope', () =>
-		withFixture(async ({ repo, runInScope, nonWaitingLock }) => {
+	test('handles concurrent runners according to the adapter lock policy', () =>
+		withFixture(async ({ repo, runInScope, contendedLockIsBusy }) => {
 			const entered = deferred()
 			const release = deferred()
 			let runs = 0
@@ -123,24 +123,18 @@ export function migrationAdapterContract<A extends MigrationAdapter>({ createFix
 			const first = run()
 			await timeout(entered.promise)
 			const second = run()
-			const secondResult = nonWaitingLock
-				? second.then(
-						() => undefined,
-						(error) => error,
-					)
-				: undefined
+			const secondOutcome = contendedLockIsBusy
+				? expect(second).rejects.toMatchObject({ phase: 'lock', cause: { reason: 'busy' } })
+				: expect(second).resolves.toEqual({ ran: [], skipped: ['0001'] })
 			await new Promise((resolve) => setTimeout(resolve, 50))
 			expect(runs).toBe(1)
-			if (nonWaitingLock) {
-				await expect(secondResult).resolves.toMatchObject({ phase: 'lock', cause: { reason: 'busy' } })
-			}
 			release.resolve()
 			expect(await timeout(first)).toEqual({ ran: ['0001'], skipped: [] })
-			if (!nonWaitingLock) expect(await timeout(second)).toEqual({ ran: [], skipped: ['0001'] })
+			await secondOutcome
 		}))
 
 	test('keeps different history scopes logically independent', () =>
-		withFixture(async ({ repo, runInScope, differentScopesRunConcurrently, nonWaitingLock }) => {
+		withFixture(async ({ repo, runInScope, differentScopesRunConcurrently }) => {
 			const bothEntered = deferred()
 			const release = deferred()
 			let entered = 0
@@ -167,7 +161,7 @@ export function migrationAdapterContract<A extends MigrationAdapter>({ createFix
 						.up(),
 				)
 			const first = run('a')
-			const second = nonWaitingLock ? first.then(() => run('b')) : run('b')
+			const second = differentScopesRunConcurrently ? run('b') : first.then(() => run('b'))
 			if (differentScopesRunConcurrently) {
 				await timeout(bothEntered.promise)
 				release.resolve()
