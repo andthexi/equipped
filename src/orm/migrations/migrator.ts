@@ -10,7 +10,12 @@ import { assertNormalisedChanges } from './validate.js'
 type RunResult = { ran: string[]; skipped: string[] }
 export type StatusEntry = { id: string; applied: boolean; appliedAt?: number }
 
-type HasAcquireMigrationLock<A> = 'acquireMigrationLock' extends keyof A
+type HasStorageLock<A> = 'storageLock' extends keyof A
+	? A['storageLock'] extends <T>(config: any, mode: any, fn: () => Promise<T>) => Promise<T>
+		? true
+		: false
+	: false
+type HasMigrationLock<A> = 'acquireMigrationLock' extends keyof A
 	? A['acquireMigrationLock'] extends <T>(config: any, fn: () => Promise<T>) => Promise<T>
 		? true
 		: false
@@ -41,7 +46,11 @@ type MigrationsStep<A extends OrmAdapterLike<any>> = {
 
 type LockPolicyStep<A extends OrmAdapterLike<any>> = {
 	withoutLock(): MigrationsStep<A>
-} & (HasAcquireMigrationLock<A> extends true ? { withLock(): MigrationsStep<A> } : {})
+} & (HasStorageLock<A> extends true
+	? { withLock(): MigrationsStep<A> }
+	: HasMigrationLock<A> extends true
+		? { withLock(): MigrationsStep<A> }
+		: {})
 
 export class Migrator<A extends OrmAdapterLike<any>> {
 	readonly #repo: Repo<A>
@@ -68,10 +77,20 @@ export class Migrator<A extends OrmAdapterLike<any>> {
 		this.#requireMethod('recordMigration')
 		const historyConfig = this.#repo.resolveConfig('_equipped_migrations')
 
-		const useLock = !this.#withoutLock && typeof this.#adapter.acquireMigrationLock === 'function'
+		const useLock = !this.#withoutLock && typeof this.#adapter.storageLock === 'function'
 		if (useLock) {
 			try {
-				return await this.#adapter.acquireMigrationLock!(historyConfig, () =>
+				return await this.#adapter.storageLock!(historyConfig, 'exclusive', () =>
+					this.#runPending(historyConfig, opts),
+				)
+			} catch (err) {
+				if (err instanceof OrmMigrationError) throw err
+				throw new OrmMigrationError({ id: '', phase: 'lock', cause: err })
+			}
+		}
+		if (!this.#withoutLock && typeof this.#adapter.acquireMigrationLock === 'function') {
+			try {
+				return await this.#adapter.acquireMigrationLock(historyConfig, () =>
 					this.#runPending(historyConfig, opts),
 				)
 			} catch (err) {
@@ -783,7 +802,7 @@ if (import.meta.vitest) {
 			expect(adapter.indexes.size).toBe(0)
 		})
 
-		test('simultaneous up() calls serialize via acquireMigrationLock', async () => {
+		test('simultaneous up() calls report busy without replaying migration work', async () => {
 			const { adapter: _adapter, repo } = makeEnv()
 			const order: string[] = []
 			let resolveGate!: () => void
@@ -823,12 +842,14 @@ if (import.meta.vitest) {
 
 			const p1 = migrator1.up()
 			const p2 = migrator2.up()
+			const p2Busy = expect(p2).rejects.toMatchObject({ phase: 'lock' })
 
 			await new Promise((r) => setTimeout(r, 10))
 			expect(order).toEqual(['0001-start'])
 
 			resolveGate()
-			await Promise.all([p1, p2])
+			await p1
+			await p2Busy
 
 			expect(order).toEqual(['0001-start', '0001-end', '0002'])
 		})
@@ -1131,9 +1152,9 @@ if (import.meta.vitest) {
 			}
 		})
 
-		test('failing acquireMigrationLock throws OrmMigrationError with phase lock', async () => {
+		test('failing storageLock throws OrmMigrationError with phase lock', async () => {
 			const { adapter, repo } = makeEnv()
-			adapter.acquireMigrationLock = async () => {
+			adapter.storageLock = async () => {
 				throw new Error('lock boom')
 			}
 			const m: Migration<typeof adapter> = { id: '0001', changes: [] }

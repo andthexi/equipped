@@ -22,6 +22,7 @@ describe('InMemoryAdapter migration contract', () => {
 				// In-memory keeps one adapter-wide rollback admission boundary while
 				// partitioning history and lock ownership by resolved identity.
 				differentScopesRunConcurrently: false,
+				contendedLockIsBusy: true,
 				runInScope: <T>(scope: string, fn: () => Promise<T>) =>
 					repo.resolve(
 						(config, name) =>
@@ -48,6 +49,7 @@ describe('JsonAdapter migration contract', () => {
 				repo,
 				// JSON protects one physical file, but histories inside it remain independent.
 				differentScopesRunConcurrently: false,
+				contendedLockIsBusy: false,
 				runInScope: <T>(scope: string, fn: () => Promise<T>) =>
 					repo.resolve(
 						(config, name) =>

@@ -3059,7 +3059,7 @@ as to authored `Migration.changes`.
 ## 17. Explicit storage locking — accepted direction
 
 This section describes the storage-lock contract. The Repo surface and InMemory
-implementation are available; PostgreSQL and JSON remain planned.
+and PostgreSQL implementations are available; JSON remains planned.
 
 The Repo entry point is `repo.lock(target, mode, fn)`, where `mode` is `shared`
 or `exclusive`. It resolves and validates `target` once through the active Repo
@@ -3067,7 +3067,7 @@ configuration, then delegates to the adapter's structural `storageLock` method.
 `OrmLockError.reason` distinguishes `busy`, `acquisition-failed`,
 `ownership-lost`, `release-failed`, and `invalid-use`.
 
-The planned implementations are PostgreSQL, JSON and InMemory. An adapter
+The implementations are PostgreSQL and InMemory, with JSON planned. An adapter
 declares locking support by implementing the storage-lock capability; absence
 means no support. Repo lock operations are exposed only for adapters declaring
 the capability, with runtime rejection for untyped or forged calls rather than
@@ -3137,6 +3137,14 @@ other methods do not substitute for it. Migration contention reports busy
 instead of waiting. This supersedes the participating adapters' migration-specific
 locking and waiting behavior described in §16 and the Repo-authority ADR;
 migration transaction boundaries remain separate.
+
+PostgreSQL derives its advisory-lock identity from the configured database and
+the Repo-resolved schema and table. It uses session-level
+`pg_try_advisory_lock[_shared]` ownership on a dedicated pool client, so no target
+table is required and contended acquisition does not wait. Protected queries,
+cursors and explicit sessions stay on that client until admitted work settles
+and the matching unlock succeeds; uncertain clients are destroyed instead of
+returned to the reusable pool.
 
 **At-most-once callback execution** applies to each lock and session invocation.
 Failure to acquire a lock invokes its callback zero times; successful acquisition
