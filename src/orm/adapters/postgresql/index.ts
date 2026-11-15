@@ -487,7 +487,7 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 		return JSON.stringify([this.config.database, config.schema ?? 'public', config.table])
 	}
 
-	async storageLock<T>(config: PostgresqlRepoConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
+	async lock<T>(config: PostgresqlRepoConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
 		const identity = this.physicalTargetIdentity(config)
 		const existing = this.#lockStore.getStore()
 		if (existing) {
@@ -1557,7 +1557,7 @@ if (import.meta.vitest) {
 			expect(queries[0].params).toEqual(['0001-init', 1700000000000])
 		})
 
-		test('storageLock binds protected work to one client and uses non-waiting ownership', async () => {
+		test('lock binds protected work to one client and uses non-waiting ownership', async () => {
 			const release = vi.fn()
 			const client = {
 				query: vi.fn(async (sql: string, params?: unknown[]) => {
@@ -1570,7 +1570,7 @@ if (import.meta.vitest) {
 			}
 			;(adapter.pool as any).connect = vi.fn(async () => client)
 
-			const result = await adapter.storageLock({ schema: 'tenant', table: 'history' }, 'exclusive', async () => {
+			const result = await adapter.lock({ schema: 'tenant', table: 'history' }, 'exclusive', async () => {
 				await adapter.recordMigration({ schema: 'tenant', table: 'history' }, '0001', 42)
 				return 42
 			})
@@ -1583,7 +1583,7 @@ if (import.meta.vitest) {
 			expect(release).toHaveBeenCalledWith(false)
 		})
 
-		test('storageLock reports busy without invoking its callback', async () => {
+		test('lock reports busy without invoking its callback', async () => {
 			const callback = vi.fn()
 			const client = {
 				query: vi.fn(async () => ({ rows: [{ acquired: false }] })),
@@ -1593,7 +1593,7 @@ if (import.meta.vitest) {
 			}
 			;(adapter.pool as any).connect = vi.fn(async () => client)
 
-			await expect(adapter.storageLock({ table: 'history' }, 'shared', callback)).rejects.toMatchObject({
+			await expect(adapter.lock({ table: 'history' }, 'shared', callback)).rejects.toMatchObject({
 				reason: 'busy',
 			})
 			expect(callback).not.toHaveBeenCalled()
@@ -1961,7 +1961,7 @@ if (import.meta.vitest) {
 		test('type-level: PostgresAdapter declares all migration methods', () => {
 			expectTypeOf(adapter.loadMigrations).toBeFunction()
 			expectTypeOf(adapter.recordMigration).toBeFunction()
-			expectTypeOf(adapter.storageLock).toBeFunction()
+			expectTypeOf(adapter.lock).toBeFunction()
 			expectTypeOf(adapter.applyCreateTable).toBeFunction()
 			expectTypeOf(adapter.applyDropTable).toBeFunction()
 			expectTypeOf(adapter.applyAddField).toBeFunction()

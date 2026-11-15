@@ -85,7 +85,7 @@ export abstract class OrmAdapter {
 	): Promise<Record<string, unknown>>
 	aggregate?(schema: AnySchema, config: unknown, spec: AggregateSpec): Promise<Array<Record<string, unknown>>>
 	session?<T>(fn: () => Promise<T>): Promise<T>
-	storageLock?<T>(config: unknown, mode: StorageLockMode, fn: () => Promise<T>): Promise<T>
+	lock?<T>(config: unknown, mode: StorageLockMode, fn: () => Promise<T>): Promise<T>
 
 	loadMigrations?(config: unknown): Promise<{ id: string; appliedAt: number }[]>
 	recordMigration?(config: unknown, id: string, appliedAt: number): Promise<void>

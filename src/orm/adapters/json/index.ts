@@ -353,7 +353,7 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 		return this.#withCurrentFile(true, async () => await this.#inMemory.recordMigration(config, id, appliedAt))
 	}
 
-	async storageLock<T>(_config: JsonAdapterConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
+	async lock<T>(_config: JsonAdapterConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
 		const paths = await this.#paths
 		const existing = fileLockStore.getStore()?.scopes.get(paths.identity)
 		if (existing) {
@@ -1079,12 +1079,12 @@ if (import.meta.vitest) {
 
 			let release!: () => void
 			const held = new Promise<void>((resolve) => (release = resolve))
-			const shared = first.storageLock({ table: 'one' }, 'shared', async () => held)
+			const shared = first.lock({ table: 'one' }, 'shared', async () => held)
 			await new Promise((resolve) => setTimeout(resolve, 20))
-			await expect(second.storageLock({ table: 'two' }, 'shared', async () => 'shared')).resolves.toBe('shared')
+			await expect(second.lock({ table: 'two' }, 'shared', async () => 'shared')).resolves.toBe('shared')
 			let called = false
 			await expect(
-				second.storageLock({ table: 'two' }, 'exclusive', async () => {
+				second.lock({ table: 'two' }, 'exclusive', async () => {
 					called = true
 				}),
 			).rejects.toMatchObject({ reason: 'busy' })
@@ -1105,9 +1105,9 @@ if (import.meta.vitest) {
 			await second.connect()
 			let release!: () => void
 			const gate = new Promise<void>((resolve) => (release = resolve))
-			const held = first.storageLock({ table: 'one' }, 'exclusive', async () => gate)
+			const held = first.lock({ table: 'one' }, 'exclusive', async () => gate)
 			await new Promise((resolve) => setTimeout(resolve, 20))
-			await expect(second.storageLock({ table: 'two' }, 'shared', async () => {})).rejects.toMatchObject({
+			await expect(second.lock({ table: 'two' }, 'shared', async () => {})).rejects.toMatchObject({
 				reason: 'busy',
 			})
 			release()
@@ -1130,7 +1130,7 @@ if (import.meta.vitest) {
 			const delayed = new Promise<unknown>((resolve, reject) => {
 				runDelayed = () => void use.createOne({ id: 'late', val: 1 }).then(resolve, reject)
 			})
-			await adapter.storageLock({ table: 'items' }, 'exclusive', async () => {
+			await adapter.lock({ table: 'items' }, 'exclusive', async () => {
 				setTimeout(runDelayed, 20)
 				void use.createOne({ id: 'admitted', val: 2 })
 			})
@@ -1358,13 +1358,13 @@ if (import.meta.vitest) {
 				resolveGate = r
 			})
 
-			const p1 = adapter.storageLock(historyConfig, 'exclusive', async () => {
+			const p1 = adapter.lock(historyConfig, 'exclusive', async () => {
 				order.push('p1-start')
 				await gate
 				order.push('p1-end')
 			})
 			await new Promise((r) => setTimeout(r, 100))
-			const p2 = adapter.storageLock(historyConfig, 'exclusive', async () => {
+			const p2 = adapter.lock(historyConfig, 'exclusive', async () => {
 				order.push('p2')
 			})
 			await expect(p2).rejects.toMatchObject({ reason: 'busy' })
@@ -1382,7 +1382,7 @@ if (import.meta.vitest) {
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
 
-			await adapter.storageLock(historyConfig, 'exclusive', async () => {
+			await adapter.lock(historyConfig, 'exclusive', async () => {
 				/* no-op */
 			})
 
@@ -1396,7 +1396,7 @@ if (import.meta.vitest) {
 			await adapter.connect()
 
 			await expect(
-				adapter.storageLock(historyConfig, 'exclusive', async () => {
+				adapter.lock(historyConfig, 'exclusive', async () => {
 					throw new Error('boom')
 				}),
 			).rejects.toThrow('boom')

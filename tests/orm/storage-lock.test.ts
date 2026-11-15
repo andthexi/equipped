@@ -53,14 +53,14 @@ describe('InMemory storage locking', () => {
 		const release = deferred()
 		let conflictingCalls = 0
 
-		const first = adapter.storageLock(config, 'shared', async () => {
+		const first = adapter.lock(config, 'shared', async () => {
 			entered.resolve()
 			await release.promise
 		})
 		await entered.promise
-		await expect(adapter.storageLock(config, 'shared', async () => 42)).resolves.toBe(42)
+		await expect(adapter.lock(config, 'shared', async () => 42)).resolves.toBe(42)
 		await expect(
-			adapter.storageLock(config, 'exclusive', async () => {
+			adapter.lock(config, 'exclusive', async () => {
 				conflictingCalls += 1
 			}),
 		).rejects.toMatchObject({ reason: 'busy' })
@@ -73,16 +73,16 @@ describe('InMemory storage locking', () => {
 		const adapter = InMemoryAdapter.create({})
 		const entered = deferred()
 		const release = deferred()
-		const first = adapter.storageLock({ table: 'users', prefix: 'tenant_' }, 'exclusive', async () => {
+		const first = adapter.lock({ table: 'users', prefix: 'tenant_' }, 'exclusive', async () => {
 			entered.resolve()
 			await release.promise
 		})
 		await entered.promise
 
-		await expect(
-			adapter.storageLock({ table: 'tenant_users' }, 'shared', async () => undefined),
-		).rejects.toMatchObject({ reason: 'busy' })
-		await expect(adapter.storageLock({ table: 'posts' }, 'exclusive', async () => 7)).resolves.toBe(7)
+		await expect(adapter.lock({ table: 'tenant_users' }, 'shared', async () => undefined)).rejects.toMatchObject({
+			reason: 'busy',
+		})
+		await expect(adapter.lock({ table: 'posts' }, 'exclusive', async () => 7)).resolves.toBe(7)
 		expect(await adapter.introspect()).toEqual([])
 		release.resolve()
 		await first
@@ -92,18 +92,18 @@ describe('InMemory storage locking', () => {
 		const adapter = InMemoryAdapter.create({})
 		const users = { table: 'users' }
 
-		await adapter.storageLock(users, 'shared', async () => {
-			await expect(adapter.storageLock(users, 'shared', async () => 1)).resolves.toBe(1)
-			await expect(adapter.storageLock(users, 'exclusive', async () => 2)).rejects.toMatchObject({
+		await adapter.lock(users, 'shared', async () => {
+			await expect(adapter.lock(users, 'shared', async () => 1)).resolves.toBe(1)
+			await expect(adapter.lock(users, 'exclusive', async () => 2)).rejects.toMatchObject({
 				reason: 'invalid-use',
 			})
 		})
-		await adapter.storageLock(users, 'exclusive', async () => {
-			await expect(adapter.storageLock(users, 'shared', async () => 3)).resolves.toBe(3)
-			await expect(adapter.storageLock(users, 'exclusive', async () => 4)).resolves.toBe(4)
+		await adapter.lock(users, 'exclusive', async () => {
+			await expect(adapter.lock(users, 'shared', async () => 3)).resolves.toBe(3)
+			await expect(adapter.lock(users, 'exclusive', async () => 4)).resolves.toBe(4)
 		})
 		await adapter.session(async () => {
-			await expect(adapter.storageLock(users, 'shared', async () => 5)).rejects.toMatchObject({
+			await expect(adapter.lock(users, 'shared', async () => 5)).rejects.toMatchObject({
 				reason: 'invalid-use',
 			})
 		})
@@ -117,7 +117,7 @@ describe('InMemory storage locking', () => {
 		let delayed!: Promise<unknown>
 		let sessionDone = false
 
-		await adapter.storageLock(users, 'exclusive', async () => {
+		await adapter.lock(users, 'exclusive', async () => {
 			void adapter
 				.session(async () => {
 					sessionEntered.resolve()

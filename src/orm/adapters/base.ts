@@ -33,7 +33,7 @@ export type OrmAdapterLike<Config = unknown> = {
 	connect?(): Promise<void>
 	disconnect?(): Promise<void>
 	session?<T>(fn: () => Promise<T>): Promise<T>
-	storageLock?<T>(config: Config, mode: StorageLockMode, fn: () => Promise<T>): Promise<T>
+	lock?<T>(config: Config, mode: StorageLockMode, fn: () => Promise<T>): Promise<T>
 }
 
 export type OrmAdapterConfig<A extends OrmAdapterLike<any>> = A extends OrmAdapterLike<infer Config> ? Config : never

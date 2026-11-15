@@ -308,7 +308,7 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	readonly tables = new Map<string, TableMeta>()
 	readonly foreignKeys = new Map<string, ForeignKeyMeta>()
 
-	readonly #storageLocks = new Map<string, LockState>()
+	readonly #locks = new Map<string, LockState>()
 	#sessionAdmission: Promise<void> = Promise.resolve()
 
 	protected constructor(config: typeof InMemoryAdapter.Config) {
@@ -810,7 +810,7 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		return resolveConfigName({} as AnySchema, config)
 	}
 
-	async storageLock<T>(config: InMemoryRepoConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
+	async lock<T>(config: InMemoryRepoConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
 		const identity = this.physicalTargetIdentity(config)
 		const current = sessionContextStore.getStore()
 		const existing = current?.lockScopes.get(this)?.get(identity)
@@ -822,12 +822,12 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		}
 		if (current?.activeTransactions.has(this)) throw new OrmLockError('invalid-use', identity)
 
-		const state = this.#storageLocks.get(identity) ?? { shared: new Set<LockScope>() }
+		const state = this.#locks.get(identity) ?? { shared: new Set<LockScope>() }
 		if (state.exclusive || (mode === 'exclusive' && state.shared.size > 0)) throw new OrmLockError('busy', identity)
 		const scope: LockScope = { identity, mode, open: true, pending: new Set() }
 		if (mode === 'exclusive') state.exclusive = scope
 		else state.shared.add(scope)
-		this.#storageLocks.set(identity, state)
+		this.#locks.set(identity, state)
 
 		const context: SessionContext = {
 			admissionOwners: current ? new Set(current.admissionOwners) : new Set(),
@@ -858,7 +858,7 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 			} else if (!state.shared.delete(scope)) {
 				releaseError = new OrmLockError('ownership-lost', identity, { callbackCause: callbackError })
 			}
-			if (!state.exclusive && state.shared.size === 0) this.#storageLocks.delete(identity)
+			if (!state.exclusive && state.shared.size === 0) this.#locks.delete(identity)
 		}
 		if (releaseError !== undefined) throw releaseError
 		if (callbackError !== undefined) throw callbackError
@@ -992,7 +992,7 @@ if (import.meta.vitest) {
 			const releaseFailure = deferred()
 			const order: string[] = []
 
-			const failed = adapter.storageLock(history, 'exclusive', async () => {
+			const failed = adapter.lock(history, 'exclusive', async () => {
 				await adapter.session(async () => {
 					await adapter.recordMigration(history, 'rolled-back', 1)
 					entered.resolve()
@@ -1003,7 +1003,7 @@ if (import.meta.vitest) {
 			await entered.promise
 			let nextRan = false
 			await expect(
-				adapter.storageLock(history, 'exclusive', async () => {
+				adapter.lock(history, 'exclusive', async () => {
 					nextRan = true
 				}),
 			).rejects.toMatchObject({ reason: 'busy' })
@@ -1011,7 +1011,7 @@ if (import.meta.vitest) {
 			releaseFailure.resolve()
 
 			await expect(failed).rejects.toThrow('migration failed')
-			await adapter.storageLock(history, 'exclusive', async () => {
+			await adapter.lock(history, 'exclusive', async () => {
 				order.push('next')
 				await adapter.session(async () => adapter.recordMigration(history, 'committed', 2))
 			})
@@ -1023,11 +1023,9 @@ if (import.meta.vitest) {
 			const adapter = InMemoryAdapter.create({})
 			const history = { table: '_equipped_migrations' }
 
-			await adapter.storageLock(history, 'exclusive', async () => {
+			await adapter.lock(history, 'exclusive', async () => {
 				await adapter.recordMigration(history, 'outside-session', 1)
-				await adapter.storageLock(history, 'exclusive', async () =>
-					adapter.recordMigration(history, 'nested-lock', 2),
-				)
+				await adapter.lock(history, 'exclusive', async () => adapter.recordMigration(history, 'nested-lock', 2))
 				await expect(
 					adapter.session(async () => {
 						await adapter.recordMigration(history, 'rolled-back', 3)

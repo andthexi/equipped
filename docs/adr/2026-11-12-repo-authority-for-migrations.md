@@ -14,7 +14,7 @@ An explicit migration-history-scope API was rejected because it could diverge
 history from the Repo-resolved changes it records.
 
 `Migrator.from(repo)` requires an immediate lock-policy decision. `withLock()`
-is exposed only when the Repo's adapter declares the general `storageLock`
+is exposed only when the Repo's adapter declares the general `lock`
 capability; `withoutLock()` is always available so opting out
 is explicit. The built surface is capability-narrowed: status and dry-run need
 `loadMigrations`, while applying also needs `recordMigration`. Construction

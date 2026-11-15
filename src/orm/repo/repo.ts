@@ -59,12 +59,12 @@ export class Repo<A extends OrmAdapterLike<any>> {
 	}
 
 	async lock<T>(target: string, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
-		const storageLock = this.#adapter.storageLock
-		if (typeof storageLock !== 'function') throw new TypeError('Repo adapter does not declare storage locking')
+		const lock = this.#adapter.lock
+		if (typeof lock !== 'function') throw new TypeError('Repo adapter does not declare locking')
 		if (typeof target !== 'string' || target.length === 0 || (mode !== 'shared' && mode !== 'exclusive')) {
 			throw new OrmLockError('invalid-use', String(target))
 		}
-		return storageLock.call(this.#adapter, this.resolveConfig(target), mode, fn) as Promise<T>
+		return lock.call(this.#adapter, this.resolveConfig(target), mode, fn) as Promise<T>
 	}
 
 	resolve<T>(resolver: (config: InferAdapterConfig<A>, name: string) => InferAdapterConfig<A>, fn: () => T): T {
@@ -95,7 +95,7 @@ class RepoBuilder<A extends OrmAdapterLike<any>> {
 
 export type RepoSurface<A extends OrmAdapterLike<any>> = Repo<A> &
 	(HasMethod<A, 'session'> extends true ? {} : { session: never }) &
-	(HasMethod<A, 'storageLock'> extends true ? {} : { lock: never })
+	(HasMethod<A, 'lock'> extends true ? {} : { lock: never })
 
 if (import.meta.vitest) {
 	const { describe, test, expect, expectTypeOf, vi } = import.meta.vitest

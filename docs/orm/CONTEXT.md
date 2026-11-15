@@ -2478,7 +2478,7 @@ without payoff — there's no per-migration return value to import).
 
 The **explicit lock-policy rule** requires `.withLock()` or `.withoutLock()`
 immediately after `.from(repo)`. `.withLock()` is visible only when the Repo's
-adapter declares `storageLock`; `.withoutLock()` is always visible so
+adapter declares `lock`; `.withoutLock()` is always visible so
 the safety tradeoff cannot be selected implicitly. The built Migrator is also
 capability-narrowed: `status()` and `dry()` require `loadMigrations`, while
 `up()` additionally requires `recordMigration`. An unsupported adapter can
@@ -2495,7 +2495,7 @@ The adapter declares two flat capability groups (§3.1):
 | `loadMigrations(historyConfig)`                 | yes (for any migrations) | returns applied `[{ id, appliedAt }]` |
 | `recordMigration(historyConfig, id, appliedAt)` | yes                      | marks one migration as applied        |
 
-Locked execution uses the adapter's general `storageLock(historyConfig,
+Locked execution uses the adapter's general `lock(historyConfig,
 'exclusive', fn)` capability. There is no migration-specific lock method.
 
 There is no `forgetMigration` — forward-only, no automatic un-record.
@@ -2510,7 +2510,7 @@ class PgAdapter extends configurable(pgConnPipe, OrmAdapter) {
 	// migration storage
 	async loadMigrations(): Promise<{ id: string; appliedAt: number }[]>
 	async recordMigration(id: string, appliedAt: number): Promise<void>
-	async storageLock<T>(config: SchemaConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T>
+	async lock<T>(config: SchemaConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T>
 
 	// declarative variant renderers (full SQL set: 11 methods)
 	async applyCreateTable(change: CreateTableChange, target: SchemaConfig): Promise<void>
@@ -2604,7 +2604,7 @@ The runtime applies one **cluster-safe lock** for the entire run plus
 **per-migration tx**:
 
 ```ts
-await adapter.storageLock(historyConfig, 'exclusive', async () => {
+await adapter.lock(historyConfig, 'exclusive', async () => {
 	for (const m of pending) {
 		const wrap = m.tx !== false && hasSession ? (fn) => repo.session(fn) : (fn) => fn()
 
@@ -2681,7 +2681,7 @@ class OrmMigrationError extends EquippedError {
 
 `phase` discriminates failure location:
 
-- `'lock'` — exclusive `storageLock` acquisition or release threw
+- `'lock'` — exclusive adapter `lock` acquisition or release threw
 - `'load'` — `loadMigrations` threw, OR an orphan id was detected, OR
   `up({ to })` named an unknown id
 - `'session'` — `repo.session(...)` open/commit failed
@@ -3064,7 +3064,7 @@ PostgreSQL and JSON implementations are available.
 
 The Repo entry point is `repo.lock(target, mode, fn)`, where `mode` is `shared`
 or `exclusive`. It resolves and validates `target` once through the active Repo
-configuration, then delegates to the adapter's structural `storageLock` method.
+configuration, then delegates to the adapter's structural `lock` method.
 `OrmLockError.reason` distinguishes `busy`, `acquisition-failed`,
 `ownership-lost`, `release-failed`, and `invalid-use`.
 
