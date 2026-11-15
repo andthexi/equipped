@@ -3053,3 +3053,103 @@ diff never emits `addField` even when target schemas have fields the
 descriptor doesn't see. Symmetric with the runtime's per-variant
 narrowing — the same closed-set rule (§4.4) applies to codegen output
 as to authored `Migration.changes`.
+
+---
+
+## 17. Explicit storage locking — accepted direction
+
+This section describes agreed design, not an implemented Repo capability.
+
+The planned implementations are PostgreSQL, JSON and InMemory. An adapter
+declares locking support by implementing the storage-lock capability; absence
+means no support. Repo lock operations are exposed only for adapters declaring
+the capability, with runtime rejection for untyped or forged calls rather than
+an implicit fallback.
+
+A **storage lock** coordinates participating operations against the same underlying
+storage. Shared holders may coexist; an exclusive holder excludes other shared
+and exclusive holders. Locking is requested explicitly through the Repo rather
+than automatically applied to every query. Adapters own the storage-specific
+mechanism; applications choose which operations participate and which mode they
+need. Operations that do not participate are outside this coordination contract.
+
+A **lock target** is a logical name resolved once through the Repo's active
+resolver, scoped transforms and schema-config validation. The adapter derives
+its lock identity from the resolved physical target and underlying storage,
+so independent Repos addressing that same storage coordinate. The target is a
+coordination anchor, not a row lock or a restriction to queries on one table;
+its table or collection need not exist before acquisition. No unrelated global
+lock-name namespace or application-specific identity is introduced.
+
+Locking and transactions are independent adapter capabilities. A lock callback
+does not implicitly start a transaction; callers needing atomic work explicitly
+nest `repo.session(...)` inside the lock callback. Ownership spans that session's
+commit or rollback before the outer lock is released. Acquiring a new storage
+lock from inside an existing session is rejected rather than releasing ownership
+before that session completes. Nontransactional lock callbacks are allowed, but
+locking does not roll back their already-completed writes.
+
+**Lock scope lifetime** closes admission to new operations when the callback
+settles. Already-started protected operations must settle before ownership is
+released, including their transaction commit or rollback. Callers must await
+their work; delayed work using a closed ownership context fails rather than
+executing unlocked or implicitly acquiring new ownership.
+
+**Non-waiting acquisition** applies to contention for the requested storage lock:
+a conflicting request reports busy without invoking or queueing its callback.
+Compatible shared holders may coexist while their transactions still use the
+adapter's existing serialization. Shared access permits concurrency but does not
+promise parallel transaction execution or eliminate connection/transaction waits.
+Lock acquisition must precede any wait for transaction serialization, so such a
+wait cannot hide an initially conflicting holder.
+
+A **lock error** uses `OrmLockError` to distinguish contention from operational
+failure. Contention throws with `reason: 'busy'` and does not run the callback;
+success returns the callback's value unchanged. Connection failures, lost
+ownership and release failures must remain distinguishable from ordinary busy
+contention.
+
+If releasing ownership fails, that failure takes precedence over the callback's
+result or error. Preserve a callback failure as a secondary cause rather than
+discarding it or hiding uncertain cleanup behind it. A release failure does not
+imply that already-committed work was rolled back.
+
+**Nested lock reuse** permits shared-inside-shared and either mode inside an
+exclusive lock when the same live ownership context already holds the resolved
+lock target. Only the outermost owner releases the lock. Shared-to-exclusive
+upgrades are rejected. Reuse inside an active transaction is allowed because it
+acquires no new ownership; acquiring a new lock inside a transaction remains
+rejected.
+
+`Migrator.withLock()` uses the general storage-lock capability in exclusive mode
+on the Repo-resolved `_equipped_migrations` target for the entire run, reusing
+an existing compatible outer lock. For participating adapters, this replaces
+`acquireMigrationLock` without a compatibility alias; `withoutLock()` remains an
+explicit opt-out. `withLock()` requires the declared storage-lock capability;
+other methods do not substitute for it. Migration contention reports busy
+instead of waiting. This supersedes the participating adapters' migration-specific
+locking and waiting behavior described in §16 and the Repo-authority ADR;
+migration transaction boundaries remain separate.
+
+**At-most-once callback execution** applies to each lock and session invocation.
+Failure to acquire a lock invokes its callback zero times; successful acquisition
+invokes it once. Session callbacks on participating adapters are not replayed
+after transient failures or commit errors. Retrying application work requires
+a new caller invocation. Lock ownership must remain valid through settlement,
+and an unresolved commit outcome is reported as uncertain rather than as a
+rollback.
+
+JSON storage uses OS-owned shared/exclusive locks on a stable coordination file,
+separate from the atomically replaced data file. All logical lock targets within
+one backing file share the same lock identity; different files remain independent.
+Equivalent relative or absolute paths and symbolic links to the same backing file
+must coordinate together. Hard-linked backing files are rejected because atomic
+replacement of one pathname would split the shared storage identity.
+Shared holders may coexist, while write transactions remain separately serialized
+across clients of that file. Ownership lasts until protected work, including
+commit or rollback, settles. Initial platform support targets
+Linux x64, macOS arm64 and Windows x64, each subject to contention, process-death,
+paused-holder and transaction-publication qualification before support is claimed.
+Support is limited to local filesystems; shared network filesystems such as NFS
+and SMB are excluded. Unavailable native locking fails explicitly rather than
+falling back to polling markers or expiry-based takeover.
