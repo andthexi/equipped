@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [5.3.8](https://github.com/andthexi/equipped/compare/v5.3.7...v5.3.8) (2026-11-15)
+
+### Features
+
+* **orm:** add in-memory storage locking ([209bf2f](https://github.com/andthexi/equipped/commit/209bf2fd1763432ccbddec1c8f19c7211d4a5b97))
+* **orm:** add native JSON storage locking ([591c329](https://github.com/andthexi/equipped/commit/591c329bb6ad56aeaf6d9a8ed1772d858da43e07))
+* **orm:** add postgresql storage locking ([25b4167](https://github.com/andthexi/equipped/commit/25b4167987d9d3cb78f4f5193ebcea0dd7e417ed))
+* **orm:** integrate migration storage locking ([1f5d093](https://github.com/andthexi/equipped/commit/1f5d09372d9ebc0372b7420d8ccbb1dccbbcb3e7))
+
 ## [5.3.7](https://github.com/andthexi/equipped/compare/v5.3.6...v5.3.7) (2026-11-13)
 
 ### Features
