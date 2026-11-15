@@ -3059,7 +3059,7 @@ as to authored `Migration.changes`.
 ## 17. Explicit storage locking — accepted direction
 
 This section describes the storage-lock contract. The Repo surface and InMemory
-implementation are available; PostgreSQL and JSON remain planned.
+and JSON implementations are available; PostgreSQL remains planned.
 
 The Repo entry point is `repo.lock(target, mode, fn)`, where `mode` is `shared`
 or `exclusive`. It resolves and validates `target` once through the active Repo

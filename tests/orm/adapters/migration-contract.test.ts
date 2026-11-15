@@ -46,6 +46,7 @@ describe('JsonAdapter migration contract', () => {
 			return {
 				adapter,
 				repo,
+				nonWaitingLock: true,
 				// JSON protects one physical file, but histories inside it remain independent.
 				differentScopesRunConcurrently: false,
 				runInScope: <T>(scope: string, fn: () => Promise<T>) =>
