@@ -17,6 +17,7 @@ export type MigrationContractFixture<A extends MigrationAdapter> = {
 	runInScope<T>(scope: string, fn: () => Promise<T>): Promise<T>
 	cleanup(): Promise<void>
 	differentScopesRunConcurrently: boolean
+	contendedLockIsBusy: boolean
 }
 
 export type MigrationContractOptions<A extends MigrationAdapter> = {
@@ -99,8 +100,8 @@ export function migrationAdapterContract<A extends MigrationAdapter>({ createFix
 			])
 		}))
 
-	test('serializes runners sharing one history scope', () =>
-		withFixture(async ({ repo, runInScope }) => {
+	test('handles concurrent runners according to the adapter lock policy', () =>
+		withFixture(async ({ repo, runInScope, contendedLockIsBusy }) => {
 			const entered = deferred()
 			const release = deferred()
 			let runs = 0
@@ -122,11 +123,14 @@ export function migrationAdapterContract<A extends MigrationAdapter>({ createFix
 			const first = run()
 			await timeout(entered.promise)
 			const second = run()
+			const secondOutcome = contendedLockIsBusy
+				? expect(second).rejects.toMatchObject({ phase: 'lock' })
+				: expect(second).resolves.toEqual({ ran: [], skipped: ['0001'] })
 			await new Promise((resolve) => setTimeout(resolve, 50))
 			expect(runs).toBe(1)
 			release.resolve()
 			expect(await timeout(first)).toEqual({ ran: ['0001'], skipped: [] })
-			expect(await timeout(second)).toEqual({ ran: [], skipped: ['0001'] })
+			await secondOutcome
 		}))
 
 	test('keeps different history scopes logically independent', () =>
