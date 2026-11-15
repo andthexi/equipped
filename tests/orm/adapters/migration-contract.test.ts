@@ -49,7 +49,7 @@ describe('JsonAdapter migration contract', () => {
 				repo,
 				// JSON protects one physical file, but histories inside it remain independent.
 				differentScopesRunConcurrently: false,
-				contendedLockIsBusy: false,
+				contendedLockIsBusy: true,
 				runInScope: <T>(scope: string, fn: () => Promise<T>) =>
 					repo.resolve(
 						(config, name) =>
@@ -58,7 +58,7 @@ describe('JsonAdapter migration contract', () => {
 					),
 				cleanup: async () => {
 					await adapter.disconnect()
-					await rm(dir, { recursive: true, force: true })
+					await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 				},
 			}
 		},

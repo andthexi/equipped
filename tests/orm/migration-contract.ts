@@ -124,7 +124,7 @@ export function migrationAdapterContract<A extends MigrationAdapter>({ createFix
 			await timeout(entered.promise)
 			const second = run()
 			const secondOutcome = contendedLockIsBusy
-				? expect(second).rejects.toMatchObject({ phase: 'lock' })
+				? expect(second).rejects.toMatchObject({ phase: 'lock', cause: { reason: 'busy' } })
 				: expect(second).resolves.toEqual({ ran: [], skipped: ['0001'] })
 			await new Promise((resolve) => setTimeout(resolve, 50))
 			expect(runs).toBe(1)
@@ -161,7 +161,7 @@ export function migrationAdapterContract<A extends MigrationAdapter>({ createFix
 						.up(),
 				)
 			const first = run('a')
-			const second = run('b')
+			const second = differentScopesRunConcurrently ? run('b') : first.then(() => run('b'))
 			if (differentScopesRunConcurrently) {
 				await timeout(bothEntered.promise)
 				release.resolve()

@@ -1,9 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { open, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, join, resolve } from 'node:path'
 
+import { tryLock, unlock, waitForLock } from 'fs-native-extensions'
 import { v } from 'valleyed'
 
 import { configurable } from '../../../utilities/configurable.js'
+import { OrmLockError } from '../../errors/lock.js'
 import type { FilterGroup } from '../../filter.js'
 import type { DiscoveredSchema } from '../../migrations/introspection-types.js'
 import type {
@@ -20,7 +23,8 @@ import type {
 	RenameFieldChange,
 	RenameTableChange,
 } from '../../migrations/types.js'
-import { OrmAdapter, type AggregateSpec } from '../../orm-adapter.js'
+import { OrmAdapter } from '../../orm-adapter.js'
+import type { StorageLockMode, AggregateSpec } from '../../orm-adapter.js'
 import type { IterationQueryOptions, QueryOptions } from '../../query-options.js'
 import type { AnySchema } from '../../schema.js'
 import type { AnyUpdateOp } from '../../updates.js'
@@ -33,8 +37,31 @@ const jsonConnectionPipe = () =>
 		filePath: v.string(),
 	})
 
-const fileLockStore = new AsyncLocalStorage<Set<string>>()
+type FileLockScope = { identity: string; mode: StorageLockMode; open: boolean; pending: Set<Promise<unknown>> }
+type FileLockContext = { scopes: Map<string, FileLockScope> }
+type CanonicalPaths = { identity: string; data: string; coordination: string; transaction: string }
+
+const fileLockStore = new AsyncLocalStorage<FileLockContext>()
 const fileSessionStore = new AsyncLocalStorage<Set<string>>()
+
+async function canonicalPaths(filePath: string): Promise<CanonicalPaths> {
+	const absolute = resolve(filePath)
+	let data: string
+	try {
+		data = await realpath(absolute)
+		const info = await stat(data)
+		if (info.nlink > 1) throw new Error(`JsonAdapter rejects hard-linked backing file: ${filePath}`)
+	} catch (error: any) {
+		if (error?.code !== 'ENOENT') throw error
+		data = join(await realpath(dirname(absolute)), basename(absolute))
+	}
+	return {
+		identity: data,
+		data,
+		coordination: data + '.lock',
+		transaction: data + '.transaction-lock',
+	}
+}
 
 export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 	readonly schemaConfigPipe = v.object({ table: v.string() })
@@ -47,9 +74,11 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 	readonly aggregateOps = this.#inMemory.aggregateOps
 
 	#operationQueue: Promise<unknown> = Promise.resolve()
+	readonly #paths: Promise<CanonicalPaths>
 
 	protected constructor(config: typeof JsonAdapter.Config) {
 		super(config)
+		this.#paths = canonicalPaths(config.filePath)
 	}
 
 	get stores() {
@@ -101,9 +130,11 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 
 	async #atomicWrite(): Promise<void> {
 		const data = this.#serialize()
-		const tmpPath = this.config.filePath + '.tmp.' + process.pid + '.' + Date.now()
+		const paths = await this.#paths
+		const tmpPath =
+			paths.data + '.tmp.' + process.pid + '.' + Date.now() + '.' + Math.random().toString(36).slice(2)
 		await writeFile(tmpPath, data, 'utf-8')
-		await rename(tmpPath, this.config.filePath)
+		await rename(tmpPath, paths.data)
 	}
 
 	#enqueue<T>(run: () => Promise<T>): Promise<T> {
@@ -115,62 +146,58 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 		return next
 	}
 
-	async #withFileLock<T>(run: () => Promise<T>): Promise<T> {
-		const lockPath = this.#lockPath()
-		const activeLocks = fileLockStore.getStore()
+	async #withTransactionLock<T>(run: () => Promise<T>): Promise<T> {
+		const lockPath = (await this.#paths).transaction
+		const activeLocks = fileSessionStore.getStore()
 		if (activeLocks?.has(lockPath)) return run()
 		return this.#enqueue(async () => {
-			await this.#acquireLockFile()
+			const handle = await open(lockPath, 'a+')
 			try {
-				return await fileLockStore.run(new Set([...(activeLocks ?? []), lockPath]), run)
+				await waitForLock(handle.fd)
+				return await fileSessionStore.run(new Set([...(activeLocks ?? []), lockPath]), run)
 			} finally {
-				await this.#releaseLockFile()
+				try {
+					unlock(handle.fd)
+				} finally {
+					await handle.close()
+				}
 			}
 		})
 	}
 
-	async #acquireLockFile(): Promise<void> {
-		const lockPath = this.#lockPath()
-		const deadline = Date.now() + 30_000
-		while (true) {
-			try {
-				const handle = await open(lockPath, 'wx')
-				await handle.close()
-				return
-			} catch (err: any) {
-				if (err.code !== 'EEXIST') throw err
-				if (Date.now() > deadline) throw new Error('Timed out waiting for json adapter file lock')
-				await new Promise((resolve) => setTimeout(resolve, 50))
-			}
+	#trackLockWork<T>(run: () => Promise<T>): Promise<T> {
+		const scopes = fileLockStore.getStore()?.scopes
+		if (!scopes?.size) return run()
+		for (const scope of scopes.values()) {
+			if (!scope.open) return Promise.reject(new OrmLockError('invalid-use', scope.identity))
 		}
-	}
-
-	async #releaseLockFile(): Promise<void> {
-		await unlink(this.#lockPath()).catch(() => {})
-	}
-
-	#lockPath(): string {
-		return this.config.filePath + '.lock'
+		const operation = run()
+		for (const scope of scopes.values()) scope.pending.add(operation)
+		void operation
+			.finally(() => {
+				for (const scope of scopes.values()) scope.pending.delete(operation)
+			})
+			.catch(() => {})
+		return operation
 	}
 
 	async #withCurrentFile<T>(persist: boolean, run: () => Promise<T>): Promise<T> {
-		if (fileSessionStore.getStore()?.has(this.#lockPath())) return run()
-		return this.#withFileLock(async () => {
-			await this.#loadFromDisk()
-			const result = await run()
-			if (persist) await this.#atomicWrite()
-			return result
+		return this.#trackLockWork(async () => {
+			const transaction = (await this.#paths).transaction
+			if (fileSessionStore.getStore()?.has(transaction)) return run()
+			return this.#withTransactionLock(async () => {
+				await this.#loadFromDisk()
+				const result = await run()
+				if (persist) await this.#atomicWrite()
+				return result
+			})
 		})
-	}
-
-	async #persistCurrentFileIfNeeded(shouldPersist: boolean): Promise<void> {
-		if (shouldPersist && !fileSessionStore.getStore()?.has(this.#lockPath())) await this.#atomicWrite()
 	}
 
 	async #loadFromDisk(): Promise<void> {
 		let raw: string
 		try {
-			raw = await readFile(this.config.filePath, 'utf-8')
+			raw = await readFile((await this.#paths).data, 'utf-8')
 		} catch (error: any) {
 			if (error?.code !== 'ENOENT') throw error
 			this.#clearInMemory()
@@ -240,7 +267,7 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 	}
 
 	async connect(): Promise<void> {
-		await this.#withFileLock(async () => await this.#loadFromDisk())
+		await this.#withTransactionLock(async () => await this.#loadFromDisk())
 	}
 
 	async disconnect(): Promise<void> {
@@ -256,19 +283,11 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 	}
 
 	async updateByPk(schema: AnySchema, config: unknown, pk: unknown, ops: AnyUpdateOp[]) {
-		return this.#withCurrentFile(false, async () => {
-			const result = await this.#inMemory.updateByPk(schema, config, pk, ops)
-			await this.#persistCurrentFileIfNeeded(result !== null)
-			return result
-		})
+		return this.#withCurrentFile(true, async () => await this.#inMemory.updateByPk(schema, config, pk, ops))
 	}
 
 	async deleteByPk(schema: AnySchema, config: unknown, pk: unknown) {
-		return this.#withCurrentFile(false, async () => {
-			const result = await this.#inMemory.deleteByPk(schema, config, pk)
-			await this.#persistCurrentFileIfNeeded(result !== null)
-			return result
-		})
+		return this.#withCurrentFile(true, async () => await this.#inMemory.deleteByPk(schema, config, pk))
 	}
 
 	async findMany(schema: AnySchema, config: unknown, group: FilterGroup, options?: QueryOptions) {
@@ -289,19 +308,11 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 	}
 
 	async updateMany(schema: AnySchema, config: unknown, group: FilterGroup, data: Record<string, unknown>) {
-		return this.#withCurrentFile(false, async () => {
-			const result = await this.#inMemory.updateMany(schema, config, group, data)
-			await this.#persistCurrentFileIfNeeded(result.length > 0)
-			return result
-		})
+		return this.#withCurrentFile(true, async () => await this.#inMemory.updateMany(schema, config, group, data))
 	}
 
 	async deleteMany(schema: AnySchema, config: unknown, filter: FilterGroup) {
-		return this.#withCurrentFile(false, async () => {
-			const result = await this.#inMemory.deleteMany(schema, config, filter)
-			await this.#persistCurrentFileIfNeeded(result.length > 0)
-			return result
-		})
+		return this.#withCurrentFile(true, async () => await this.#inMemory.deleteMany(schema, config, filter))
 	}
 
 	async upsertOne(
@@ -322,16 +333,15 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 	}
 
 	async session<T>(fn: () => Promise<T>): Promise<T> {
-		const lockPath = this.#lockPath()
-		const activeSessions = fileSessionStore.getStore()
-		if (activeSessions?.has(lockPath)) return this.#inMemory.session(fn)
-		return this.#withFileLock(async () => {
-			await this.#loadFromDisk()
-			const result = await fileSessionStore.run(new Set([...(activeSessions ?? []), lockPath]), async () =>
-				this.#inMemory.session(fn),
-			)
-			await this.#atomicWrite()
-			return result
+		return this.#trackLockWork(async () => {
+			const lockPath = (await this.#paths).transaction
+			if (fileSessionStore.getStore()?.has(lockPath)) return this.#inMemory.session(fn)
+			return this.#withTransactionLock(async () => {
+				await this.#loadFromDisk()
+				const result = await this.#inMemory.session(fn)
+				await this.#atomicWrite()
+				return result
+			})
 		})
 	}
 
@@ -344,7 +354,67 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 	}
 
 	async acquireMigrationLock<T>(_config: JsonAdapterConfig, fn: () => Promise<T>): Promise<T> {
-		return this.#withFileLock(fn)
+		return this.storageLock(_config, 'exclusive', fn)
+	}
+
+	async storageLock<T>(_config: JsonAdapterConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
+		const paths = await this.#paths
+		const existing = fileLockStore.getStore()?.scopes.get(paths.identity)
+		if (existing) {
+			if (!existing.open || (existing.mode === 'shared' && mode === 'exclusive')) {
+				throw new OrmLockError('invalid-use', paths.identity)
+			}
+			return this.#trackLockWork(fn)
+		}
+		if (fileSessionStore.getStore()?.has(paths.transaction)) throw new OrmLockError('invalid-use', paths.identity)
+
+		const handle = await open(paths.coordination, 'a+')
+		let acquired: boolean
+		try {
+			acquired = tryLock(handle.fd, { shared: mode === 'shared' })
+		} catch (cause) {
+			await handle.close()
+			throw new OrmLockError('acquisition-failed', paths.identity, { cause })
+		}
+		if (!acquired) {
+			await handle.close()
+			throw new OrmLockError('busy', paths.identity)
+		}
+
+		const scope: FileLockScope = { identity: paths.identity, mode, open: true, pending: new Set() }
+		const parent = fileLockStore.getStore()
+		const scopes = new Map(parent?.scopes)
+		scopes.set(paths.identity, scope)
+		let result: T | undefined
+		let callbackError: unknown
+		let releaseError: unknown
+		try {
+			result = await fileLockStore.run({ scopes }, fn)
+		} catch (error) {
+			callbackError = error
+		} finally {
+			scope.open = false
+			await Promise.allSettled([...scope.pending])
+			try {
+				unlock(handle.fd)
+			} catch (cause) {
+				releaseError = new OrmLockError('release-failed', paths.identity, {
+					cause,
+					callbackCause: callbackError,
+				})
+			}
+			try {
+				await handle.close()
+			} catch (cause) {
+				releaseError ??= new OrmLockError('release-failed', paths.identity, {
+					cause,
+					callbackCause: callbackError,
+				})
+			}
+		}
+		if (releaseError !== undefined) throw releaseError
+		if (callbackError !== undefined) throw callbackError
+		return result as T
 	}
 
 	async applyCreateTable(change: CreateTableChange<any>, target?: unknown): Promise<void> {
@@ -1005,6 +1075,73 @@ if (import.meta.vitest) {
 	})
 
 	describe('json adapter — concurrent writes serialize', () => {
+		test('storage locks are file-wide, shared-compatible and non-waiting on conflicts', async () => {
+			const first = JsonAdapter.create({ filePath })
+			const second = JsonAdapter.create({ filePath })
+			await first.connect()
+			await second.connect()
+
+			let release!: () => void
+			const held = new Promise<void>((resolve) => (release = resolve))
+			const shared = first.storageLock({ table: 'one' }, 'shared', async () => held)
+			await new Promise((resolve) => setTimeout(resolve, 20))
+			await expect(second.storageLock({ table: 'two' }, 'shared', async () => 'shared')).resolves.toBe('shared')
+			let called = false
+			await expect(
+				second.storageLock({ table: 'two' }, 'exclusive', async () => {
+					called = true
+				}),
+			).rejects.toMatchObject({ reason: 'busy' })
+			expect(called).toBe(false)
+			release()
+			await shared
+		})
+
+		test('equivalent paths and symlinks coordinate and hard-linked data files are rejected', async () => {
+			const { link, symlink, writeFile: wf } = await import('node:fs/promises')
+			const relative = join(tmpDir, '.', 'test.json')
+			const alias = join(tmpDir, 'alias.json')
+			await wf(filePath, '{}')
+			await symlink(filePath, alias)
+			const first = JsonAdapter.create({ filePath: relative })
+			const second = JsonAdapter.create({ filePath: alias })
+			await first.connect()
+			await second.connect()
+			let release!: () => void
+			const gate = new Promise<void>((resolve) => (release = resolve))
+			const held = first.storageLock({ table: 'one' }, 'exclusive', async () => gate)
+			await new Promise((resolve) => setTimeout(resolve, 20))
+			await expect(second.storageLock({ table: 'two' }, 'shared', async () => {})).rejects.toMatchObject({
+				reason: 'busy',
+			})
+			release()
+			await held
+
+			const hardLink = join(tmpDir, 'hard.json')
+			await link(filePath, hardLink)
+			await expect(JsonAdapter.create({ filePath: hardLink }).connect()).rejects.toThrow(/hard-linked/)
+		})
+
+		test('a lock drains admitted operations and rejects work started from its expired context', async () => {
+			const schema = Schema.from('items')
+				.pk('id', v.string(), () => 'i')
+				.field('val', v.number())
+				.build()
+			const adapter = JsonAdapter.create({ filePath })
+			await adapter.connect()
+			const use = adapter.use(schema, { table: 'items' })
+			let runDelayed!: () => void
+			const delayed = new Promise<unknown>((resolve, reject) => {
+				runDelayed = () => void use.createOne({ id: 'late', val: 1 }).then(resolve, reject)
+			})
+			await adapter.storageLock({ table: 'items' }, 'exclusive', async () => {
+				setTimeout(runDelayed, 20)
+				void use.createOne({ id: 'admitted', val: 2 })
+			})
+			await expect(delayed).rejects.toMatchObject({ reason: 'invalid-use' })
+			await expect(use.findOne(FilterGroup.create().eq('id', 'admitted'))).resolves.toMatchObject({ val: 2 })
+		})
+
 		test('parallel writes from same process all persist', async () => {
 			const schema = Schema.from('items')
 				.pk('id', v.string(), () => 'i')
@@ -1215,7 +1352,7 @@ if (import.meta.vitest) {
 	})
 
 	describe('json adapter — acquireMigrationLock', () => {
-		test('file lock serialises concurrent calls', async () => {
+		test('migration locking uses non-waiting exclusive storage locking', async () => {
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
 
@@ -1234,18 +1371,17 @@ if (import.meta.vitest) {
 			const p2 = adapter.acquireMigrationLock(historyConfig, async () => {
 				order.push('p2')
 			})
-
-			await new Promise((r) => setTimeout(r, 100))
+			await expect(p2).rejects.toMatchObject({ reason: 'busy' })
 			expect(order).toEqual(['p1-start'])
 
 			resolveGate()
-			await Promise.all([p1, p2])
-			expect(order).toEqual(['p1-start', 'p1-end', 'p2'])
+			await p1
+			expect(order).toEqual(['p1-start', 'p1-end'])
 
 			await adapter.disconnect()
 		})
 
-		test('lock file is cleaned up after successful execution', async () => {
+		test('stable coordination file remains after successful execution', async () => {
 			const { access } = await import('node:fs/promises')
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
@@ -1254,11 +1390,11 @@ if (import.meta.vitest) {
 				/* no-op */
 			})
 
-			await expect(access(filePath + '.lock')).rejects.toThrow()
+			await expect(access(filePath + '.lock')).resolves.toBeUndefined()
 			await adapter.disconnect()
 		})
 
-		test('lock file is cleaned up after failed execution', async () => {
+		test('stable coordination file remains after failed execution', async () => {
 			const { access } = await import('node:fs/promises')
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
@@ -1269,7 +1405,7 @@ if (import.meta.vitest) {
 				}),
 			).rejects.toThrow('boom')
 
-			await expect(access(filePath + '.lock')).rejects.toThrow()
+			await expect(access(filePath + '.lock')).resolves.toBeUndefined()
 			await adapter.disconnect()
 		})
 	})
@@ -1377,7 +1513,7 @@ if (import.meta.vitest) {
 			await a2.disconnect()
 		})
 
-		test('file lock serialises concurrent migrator.up() runs', async () => {
+		test('concurrent migrator reports busy without replaying work', async () => {
 			const order: string[] = []
 			let resolveGate!: () => void
 			const gate = new Promise<void>((r) => {
@@ -1422,13 +1558,14 @@ if (import.meta.vitest) {
 			const migrator2 = Migrator.from(repo2).withLock().migrations(migrations).build()
 
 			const p1 = migrator1.up()
+			while (order.length === 0) await new Promise((resolve) => setTimeout(resolve, 1))
 			const p2 = migrator2.up()
 
-			await new Promise((r) => setTimeout(r, 200))
+			await expect(p2).rejects.toMatchObject({ phase: 'lock', cause: { reason: 'busy' } })
 			expect(order).toEqual(['0001-start'])
 
 			resolveGate()
-			await Promise.all([p1, p2])
+			await p1
 
 			expect(order).toEqual(['0001-start', '0001-end', '0002'])
 
