@@ -15,12 +15,6 @@ type HasStorageLock<A> = 'storageLock' extends keyof A
 		? true
 		: false
 	: false
-type HasMigrationLock<A> = 'acquireMigrationLock' extends keyof A
-	? A['acquireMigrationLock'] extends <T>(config: any, fn: () => Promise<T>) => Promise<T>
-		? true
-		: false
-	: false
-
 type HasHistoryMethod<A, K extends 'loadMigrations' | 'recordMigration'> = K extends keyof A
 	? A[K] extends (...args: infer Args) => any
 		? K extends 'loadMigrations'
@@ -46,11 +40,7 @@ type MigrationsStep<A extends OrmAdapterLike<any>> = {
 
 type LockPolicyStep<A extends OrmAdapterLike<any>> = {
 	withoutLock(): MigrationsStep<A>
-} & (HasStorageLock<A> extends true
-	? { withLock(): MigrationsStep<A> }
-	: HasMigrationLock<A> extends true
-		? { withLock(): MigrationsStep<A> }
-		: {})
+} & (HasStorageLock<A> extends true ? { withLock(): MigrationsStep<A> } : {})
 
 export class Migrator<A extends OrmAdapterLike<any>> {
 	readonly #repo: Repo<A>
@@ -88,16 +78,7 @@ export class Migrator<A extends OrmAdapterLike<any>> {
 				throw new OrmMigrationError({ id: '', phase: 'lock', cause: err })
 			}
 		}
-		if (!this.#withoutLock && typeof this.#adapter.acquireMigrationLock === 'function') {
-			try {
-				return await this.#adapter.acquireMigrationLock(historyConfig, () =>
-					this.#runPending(historyConfig, opts),
-				)
-			} catch (err) {
-				if (err instanceof OrmMigrationError) throw err
-				throw new OrmMigrationError({ id: '', phase: 'lock', cause: err })
-			}
-		}
+		if (!this.#withoutLock) throw new TypeError('locked migrations require adapter.storageLock')
 		return this.#runPending(historyConfig, opts)
 	}
 
@@ -190,18 +171,22 @@ export class Migrator<A extends OrmAdapterLike<any>> {
 				}
 			},
 		})
-		return { withoutLock: () => policy(true), withLock: () => policy(false) } as LockPolicyStep<A>
+		return {
+			withoutLock: () => policy(true),
+			...(typeof adapter.storageLock === 'function' ? { withLock: () => policy(false) } : {}),
+		} as LockPolicyStep<A>
 	}
 }
 
 if (import.meta.vitest) {
-	const { describe, test, expect, expectTypeOf } = import.meta.vitest
+	const { describe, test, expect, expectTypeOf, vi } = import.meta.vitest
 	const { v } = await import('valleyed')
 	const { InMemoryAdapter } = await import('../adapters/in-memory/index.js')
 	const { Schema } = await import('../schema.js')
 	const { Repo } = await import('../repo/repo.js')
 	const { OrmValidationError } = await import('../errors/validation.js')
 	const { OrmMigrationError } = await import('../errors/migration.js')
+	const { OrmAdapter } = await import('../orm-adapter.js')
 
 	const UserSchema = Schema.from('users')
 		.pk('id', v.string(), () => `u-${Math.random().toString(36).slice(2)}`)
@@ -854,6 +839,42 @@ if (import.meta.vitest) {
 			expect(order).toEqual(['0001-start', '0001-end', '0002'])
 		})
 
+		test('withLock reuses compatible outer ownership for the resolved history target', async () => {
+			const { adapter, repo } = makeEnv()
+			let runs = 0
+			const migrator = Migrator.from(repo)
+				.withLock()
+				.migrations([
+					{
+						id: '0001',
+						changes: [{ kind: 'execute', up: async () => void runs++ }],
+					},
+				])
+				.build()
+
+			await adapter.storageLock(historyConfig, 'exclusive', () => migrator.up())
+			expect(runs).toBe(1)
+		})
+
+		test('withoutLock runs without acquiring general storage ownership', async () => {
+			const { adapter, repo } = makeEnv()
+			const lock = vi.spyOn(adapter, 'storageLock')
+			let runs = 0
+			const migrator = Migrator.from(repo)
+				.withoutLock()
+				.migrations([
+					{
+						id: '0001',
+						changes: [{ kind: 'execute', up: async () => void runs++ }],
+					},
+				])
+				.build()
+
+			await migrator.up()
+			expect(runs).toBe(1)
+			expect(lock).not.toHaveBeenCalled()
+		})
+
 		test('tx:false retries cleanly from scratch after failure', async () => {
 			const { adapter: _adapter, repo } = makeEnv()
 			let callCount = 0
@@ -885,14 +906,14 @@ if (import.meta.vitest) {
 			expect(callCount).toBe(2)
 		})
 
-		test('type-level: withoutLock() rejected when adapter declares acquireMigrationLock', () => {
+		test('type-level: withLock() is available when adapter declares storageLock', () => {
 			const { repo } = makeEnv()
 			const step = Migrator.from(repo).withLock().migrations([])
 			expectTypeOf(step).toHaveProperty('build')
 			expectTypeOf(step).not.toHaveProperty('withoutLock')
 		})
 
-		test('type-level: withoutLock() accepted when adapter lacks acquireMigrationLock', async () => {
+		test('type-level: withoutLock() remains available when adapter lacks storageLock', async () => {
 			const { OrmAdapter } = await import('../orm-adapter.js')
 			class NoLockAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({ table: v.string() })
@@ -910,6 +931,42 @@ if (import.meta.vitest) {
 			const step = Migrator.from(nlRepo).withoutLock().migrations([])
 			expectTypeOf(step).toHaveProperty('build')
 			expectTypeOf(Migrator.from(nlRepo)).not.toHaveProperty('withLock')
+		})
+
+		test('migration-specific locking does not expose or back withLock', async () => {
+			const migrationLock = vi.fn(async <T>(_config: unknown, fn: () => Promise<T>) => fn())
+			class LegacyLockAdapter extends OrmAdapter {
+				readonly schemaConfigPipe = v.object({ table: v.string() })
+				readonly supportedFieldTypes = ['string'] as const
+				async loadMigrations(_config: unknown) {
+					return []
+				}
+				async recordMigration(_config: unknown, _id: string, _appliedAt: number) {}
+				acquireMigrationLock = migrationLock
+			}
+			const adapter = new (LegacyLockAdapter as any)() as LegacyLockAdapter
+			const repo = new Repo({ adapter, resolve: (name) => ({ table: name }) })
+			const policy = Migrator.from(repo)
+
+			expectTypeOf(policy).not.toHaveProperty('withLock')
+			expect((policy as any).withLock).toBeUndefined()
+			expect(migrationLock).not.toHaveBeenCalled()
+		})
+
+		test('forged locked migrator rejects when the general storage lock capability is absent', async () => {
+			class NoLockHistoryAdapter extends OrmAdapter {
+				readonly schemaConfigPipe = v.object({ table: v.string() })
+				readonly supportedFieldTypes = ['string'] as const
+				async loadMigrations(_config: unknown) {
+					return []
+				}
+				async recordMigration(_config: unknown, _id: string, _appliedAt: number) {}
+			}
+			const adapter = new (NoLockHistoryAdapter as any)() as NoLockHistoryAdapter
+			const repo = new Repo({ adapter, resolve: (name) => ({ table: name }) })
+
+			const forged = new Migrator(repo, adapter, [], false)
+			await expect(forged.up()).rejects.toThrow('locked migrations require adapter.storageLock')
 		})
 
 		test('type-level: built terminals follow migration history capabilities', async () => {

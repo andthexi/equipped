@@ -308,7 +308,6 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 	readonly tables = new Map<string, TableMeta>()
 	readonly foreignKeys = new Map<string, ForeignKeyMeta>()
 
-	readonly #migrationLocks = new Map<string, Promise<void>>()
 	readonly #storageLocks = new Map<string, LockState>()
 	#sessionAdmission: Promise<void> = Promise.resolve()
 
@@ -916,25 +915,6 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 		})
 	}
 
-	async acquireMigrationLock<T>(config: InMemoryRepoConfig, fn: () => Promise<T>): Promise<T> {
-		const current = sessionContextStore.getStore()
-		if (current?.admissionOwners.has(this)) return fn()
-
-		const identity = this.physicalTargetIdentity(config)
-		let release!: () => void
-		const next = new Promise<void>((r) => {
-			release = r
-		})
-		const prev = this.#migrationLocks.get(identity) ?? Promise.resolve()
-		this.#migrationLocks.set(identity, next)
-		await prev
-		try {
-			return await this.#admit(fn)
-		} finally {
-			release()
-		}
-	}
-
 	async session<T>(fn: () => Promise<T>): Promise<T> {
 		const current = sessionContextStore.getStore()
 		if (current?.activeTransactions.has(this)) return fn()
@@ -1005,14 +985,14 @@ if (import.meta.vitest) {
 			expect(await use.findMany(FilterGroup.create())).toEqual([{ id: 'preserved' }])
 		})
 
-		test('migration locking admits nested sessions and recovers after failure', async () => {
+		test('exclusive storage locking admits nested sessions and recovers after failure', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const history = { table: '_equipped_migrations' }
 			const entered = deferred()
 			const releaseFailure = deferred()
 			const order: string[] = []
 
-			const failed = adapter.acquireMigrationLock(history, async () => {
+			const failed = adapter.storageLock(history, 'exclusive', async () => {
 				await adapter.session(async () => {
 					await adapter.recordMigration(history, 'rolled-back', 1)
 					entered.resolve()
@@ -1021,25 +1001,31 @@ if (import.meta.vitest) {
 				})
 			})
 			await entered.promise
-			const next = adapter.acquireMigrationLock(history, async () => {
-				order.push('next')
-				await adapter.session(async () => adapter.recordMigration(history, 'committed', 2))
-			})
+			let nextRan = false
+			await expect(
+				adapter.storageLock(history, 'exclusive', async () => {
+					nextRan = true
+				}),
+			).rejects.toMatchObject({ reason: 'busy' })
+			expect(nextRan).toBe(false)
 			releaseFailure.resolve()
 
 			await expect(failed).rejects.toThrow('migration failed')
-			await next
+			await adapter.storageLock(history, 'exclusive', async () => {
+				order.push('next')
+				await adapter.session(async () => adapter.recordMigration(history, 'committed', 2))
+			})
 			expect(order).toEqual(['next'])
 			expect(await adapter.loadMigrations(history)).toEqual([{ id: 'committed', appliedAt: 2 }])
 		})
 
-		test('migration locking is re-entrant without taking a transaction snapshot', async () => {
+		test('exclusive storage locking is re-entrant without taking a transaction snapshot', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const history = { table: '_equipped_migrations' }
 
-			await adapter.acquireMigrationLock(history, async () => {
+			await adapter.storageLock(history, 'exclusive', async () => {
 				await adapter.recordMigration(history, 'outside-session', 1)
-				await adapter.acquireMigrationLock(history, async () =>
+				await adapter.storageLock(history, 'exclusive', async () =>
 					adapter.recordMigration(history, 'nested-lock', 2),
 				)
 				await expect(

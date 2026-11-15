@@ -353,10 +353,6 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 		return this.#withCurrentFile(true, async () => await this.#inMemory.recordMigration(config, id, appliedAt))
 	}
 
-	async acquireMigrationLock<T>(_config: JsonAdapterConfig, fn: () => Promise<T>): Promise<T> {
-		return this.storageLock(_config, 'exclusive', fn)
-	}
-
 	async storageLock<T>(_config: JsonAdapterConfig, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
 		const paths = await this.#paths
 		const existing = fileLockStore.getStore()?.scopes.get(paths.identity)
@@ -1351,7 +1347,7 @@ if (import.meta.vitest) {
 		})
 	})
 
-	describe('json adapter — acquireMigrationLock', () => {
+	describe('json adapter — migration storage locking', () => {
 		test('migration locking uses non-waiting exclusive storage locking', async () => {
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
@@ -1362,13 +1358,13 @@ if (import.meta.vitest) {
 				resolveGate = r
 			})
 
-			const p1 = adapter.acquireMigrationLock(historyConfig, async () => {
+			const p1 = adapter.storageLock(historyConfig, 'exclusive', async () => {
 				order.push('p1-start')
 				await gate
 				order.push('p1-end')
 			})
 			await new Promise((r) => setTimeout(r, 100))
-			const p2 = adapter.acquireMigrationLock(historyConfig, async () => {
+			const p2 = adapter.storageLock(historyConfig, 'exclusive', async () => {
 				order.push('p2')
 			})
 			await expect(p2).rejects.toMatchObject({ reason: 'busy' })
@@ -1386,7 +1382,7 @@ if (import.meta.vitest) {
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
 
-			await adapter.acquireMigrationLock(historyConfig, async () => {
+			await adapter.storageLock(historyConfig, 'exclusive', async () => {
 				/* no-op */
 			})
 
@@ -1400,7 +1396,7 @@ if (import.meta.vitest) {
 			await adapter.connect()
 
 			await expect(
-				adapter.acquireMigrationLock(historyConfig, async () => {
+				adapter.storageLock(historyConfig, 'exclusive', async () => {
 					throw new Error('boom')
 				}),
 			).rejects.toThrow('boom')
