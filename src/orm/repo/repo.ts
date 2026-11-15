@@ -1,5 +1,7 @@
 import type { InferAdapterConfig } from '../adapter.js'
 import type { OrmAdapterLike } from '../adapters/base.js'
+import { OrmLockError } from '../errors/index.js'
+import type { StorageLockMode } from '../orm-adapter.js'
 import type { IterationOptions } from '../query-options.js'
 import { composeSchemaConfig } from '../schema-validations.js'
 import type { AnySchema } from '../schema.js'
@@ -56,6 +58,15 @@ export class Repo<A extends OrmAdapterLike<any>> {
 		return this.#adapter.session?.(fn) ?? fn()
 	}
 
+	async lock<T>(target: string, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
+		const storageLock = this.#adapter.storageLock
+		if (typeof storageLock !== 'function') throw new TypeError('Repo adapter does not declare storage locking')
+		if (typeof target !== 'string' || target.length === 0 || (mode !== 'shared' && mode !== 'exclusive')) {
+			throw new OrmLockError('invalid-use', String(target))
+		}
+		return storageLock.call(this.#adapter, this.resolveConfig(target), mode, fn) as Promise<T>
+	}
+
 	resolve<T>(resolver: (config: InferAdapterConfig<A>, name: string) => InferAdapterConfig<A>, fn: () => T): T {
 		return run<InferAdapterConfig<A>, T>(this, resolver, fn)
 	}
@@ -83,7 +94,8 @@ class RepoBuilder<A extends OrmAdapterLike<any>> {
 }
 
 export type RepoSurface<A extends OrmAdapterLike<any>> = Repo<A> &
-	(HasMethod<A, 'session'> extends true ? {} : { session: never })
+	(HasMethod<A, 'session'> extends true ? {} : { session: never }) &
+	(HasMethod<A, 'storageLock'> extends true ? {} : { lock: never })
 
 if (import.meta.vitest) {
 	const { describe, test, expect, expectTypeOf, vi } = import.meta.vitest

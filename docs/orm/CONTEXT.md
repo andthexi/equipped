@@ -3058,7 +3058,14 @@ as to authored `Migration.changes`.
 
 ## 17. Explicit storage locking — accepted direction
 
-This section describes agreed design, not an implemented Repo capability.
+This section describes the storage-lock contract. The Repo surface and InMemory
+implementation are available; PostgreSQL and JSON remain planned.
+
+The Repo entry point is `repo.lock(target, mode, fn)`, where `mode` is `shared`
+or `exclusive`. It resolves and validates `target` once through the active Repo
+configuration, then delegates to the adapter's structural `storageLock` method.
+`OrmLockError.reason` distinguishes `busy`, `acquisition-failed`,
+`ownership-lost`, `release-failed`, and `invalid-use`.
 
 The planned implementations are PostgreSQL, JSON and InMemory. An adapter
 declares locking support by implementing the storage-lock capability; absence
