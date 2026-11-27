@@ -59,9 +59,9 @@ if (import.meta.vitest) {
 	type EventContext = import('./registry.js').EventContext
 
 	const CounterSchema = Schema.from('counters')
-		.pk('id', v.string(), () => `c-${Math.random()}`)
-		.field('name', v.string())
-		.field('count', v.number())
+		.pk('id', { input: v.string(), generate: () => `c-${Math.random()}` })
+		.field('name', { input: v.string() })
+		.field('count', { input: v.number() })
 		.build()
 
 	function makeRepo() {

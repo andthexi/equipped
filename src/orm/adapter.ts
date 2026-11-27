@@ -54,7 +54,7 @@ type ToFieldTypeName<T> = T extends undefined
 								: never
 
 type SchemaFieldTypeNames<S extends AnySchema> = {
-	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, infer P, any>
+	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, any, infer P, any>
 		? ToFieldTypeName<PipeOutput<P>>
 		: never
 }[keyof SchemaFields<S>]
@@ -113,7 +113,7 @@ if (import.meta.vitest) {
 				readonly supportedFieldTypes = [] as const
 			}
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			type Result = SchemaCompatible<EmptyAdapter, typeof _TestSchema>
 			expectTypeOf<Result>().toBeNever()
@@ -125,7 +125,7 @@ if (import.meta.vitest) {
 				readonly supportedFieldTypes = ['string'] as const
 			}
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			type Result = SchemaCompatible<StringAdapter, typeof _TestSchema>
 			expectTypeOf<Result>().toEqualTypeOf<typeof _TestSchema>()
@@ -137,8 +137,8 @@ if (import.meta.vitest) {
 				readonly supportedFieldTypes = ['string'] as const
 			}
 			const _SchemaWithNumber = Schema.from('nums')
-				.pk('id', v.string(), () => 'x')
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('age', { input: v.number() })
 				.build()
 			type Result = SchemaCompatible<StringOnlyAdapter, typeof _SchemaWithNumber>
 			expectTypeOf<Result>().toBeNever()

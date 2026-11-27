@@ -122,8 +122,8 @@ if (import.meta.vitest) {
 		test('builds and queries through a generic schema-config resolver', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const schema = Schema.from('generic_resolver')
-				.pk('id', v.string(), () => 'generic-id')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'generic-id' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = buildRepo(adapter, (name) => ({ table: `scoped_${name}` }))
 
@@ -135,7 +135,7 @@ if (import.meta.vitest) {
 		test('types base resolvers and scoped transforms with logical names', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const schema = Schema.from('typed_logical_name')
-				.pk('id', v.string(), () => 'typed-id')
+				.pk('id', { input: v.string(), generate: () => 'typed-id' })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => {
@@ -168,7 +168,7 @@ if (import.meta.vitest) {
 
 			const adapter = new TransformingConfigAdapter()
 			const schema = Schema.from('transformed_resolver')
-				.pk('id', v.string(), () => 'unused')
+				.pk('id', { input: v.string(), generate: () => 'unused' })
 				.build()
 			const repo = buildRepo(adapter, (name) => name)
 
@@ -183,7 +183,7 @@ if (import.meta.vitest) {
 				use: (schema: AnySchema, config: { table: string }) => storage.use(schema, config),
 			}
 			const schema = Schema.from('legacy_resolver')
-				.pk('id', v.string(), () => 'legacy-id')
+				.pk('id', { input: v.string(), generate: () => 'legacy-id' })
 				.build()
 			const repo = buildRepo(adapter, (name) => ({ table: name }))
 
@@ -195,8 +195,8 @@ if (import.meta.vitest) {
 		test('Repo.from(adapter).resolve(...).build() creates a working repo', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
@@ -210,8 +210,8 @@ if (import.meta.vitest) {
 		test('repo.on(schema) returns a SchemaRef', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
@@ -237,34 +237,34 @@ if (import.meta.vitest) {
 		let orgCounter = 0
 
 		const UserSchema = Schema.from('users')
-			.pk('id', v.string(), () => `u${++userCounter}`)
-			.field('email', v.string())
-			.field('name', v.string())
-			.field('orgId', v.optional(v.string()), { onCreate: () => undefined })
-			.field('createdAt', v.number(), { onCreate: () => 1000 })
+			.pk('id', { input: v.string(), generate: () => `u${++userCounter}` })
+			.field('email', { input: v.string() })
+			.field('name', { input: v.string() })
+			.field('orgId', { input: v.optional(v.string()), onCreate: () => undefined })
+			.field('createdAt', { input: v.number(), onCreate: () => 1000 })
 			.build()
 
 		const PostSchema = Schema.from('posts')
-			.pk('id', v.string(), () => `p${++postCounter}`)
-			.field('title', v.string())
-			.field('userId', v.string())
+			.pk('id', { input: v.string(), generate: () => `p${++postCounter}` })
+			.field('title', { input: v.string() })
+			.field('userId', { input: v.string() })
 			.build()
 
 		const ProfileSchema = Schema.from('profiles')
-			.pk('id', v.string(), () => `pr${++profileCounter}`)
-			.field('bio', v.string())
-			.field('userId', v.string())
+			.pk('id', { input: v.string(), generate: () => `pr${++profileCounter}` })
+			.field('bio', { input: v.string() })
+			.field('userId', { input: v.string() })
 			.build()
 
 		const OrgSchema = Schema.from('orgs')
-			.pk('id', v.string(), () => `o${++orgCounter}`)
-			.field('name', v.string())
+			.pk('id', { input: v.string(), generate: () => `o${++orgCounter}` })
+			.field('name', { input: v.string() })
 			.build()
 
 		const PersonSchema = Schema.from('people')
-			.pk('id', v.string(), () => `person-${++userCounter}`)
-			.field('firstName', v.string())
-			.field('lastName', v.string())
+			.pk('id', { input: v.string(), generate: () => `person-${++userCounter}` })
+			.field('firstName', { input: v.string() })
+			.field('lastName', { input: v.string() })
 			.computed(
 				'fullName',
 				['firstName', 'lastName'],
@@ -507,9 +507,9 @@ if (import.meta.vitest) {
 
 		test('all().iterate uses adapter iterateMany without findMany emulation', async () => {
 			const TestSchema = Schema.from('iter_repo_users')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
+				.field('age', { input: v.number() })
 				.build()
 			let findManyCalls = 0
 			let capturedOptions: unknown
@@ -556,8 +556,8 @@ if (import.meta.vitest) {
 
 		test('all().iterate accepts batchSize and forwards it only to iterateMany', async () => {
 			const TestSchema = Schema.from('iter_batch_users')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const events: unknown[] = []
 
@@ -602,8 +602,8 @@ if (import.meta.vitest) {
 
 		test('all().iterate validates batchSize before adapter iteration runs', async () => {
 			const TestSchema = Schema.from('iter_invalid_batch_users')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			let iterateManyCalls = 0
 
@@ -837,7 +837,7 @@ if (import.meta.vitest) {
 				.resolve((name) => ({ table: name }))
 				.build()
 			const TestSchema = Schema.from('raw_test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 
 			const result = await repo.on(TestSchema).raw('SELECT * FROM raw_test WHERE id = $1', ['abc'])
@@ -866,7 +866,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ col: 'test' }))
 				.build()
 			const TestSchema = Schema.from('mongo_test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 
 			const result = await repo.on(TestSchema).raw([{ $count: 'total' }])
@@ -949,7 +949,7 @@ if (import.meta.vitest) {
 
 		test('one().id().find() returns seeded document and null for missing', async () => {
 			const TestSchema = Schema.from('findbytest')
-				.pk('id', v.string(), () => 'gen')
+				.pk('id', { input: v.string(), generate: () => 'gen' })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const repo = Repo.from(adapter)
@@ -1151,9 +1151,9 @@ if (import.meta.vitest) {
 
 		test('all().where().update() applies auto-bump for onUpdate fields', async () => {
 			const AutoSchema = Schema.from('auto')
-				.pk('id', v.string(), () => `a${++userCounter}`)
-				.field('name', v.string())
-				.field('updatedAt', v.number(), { onCreate: () => 0, onUpdate: () => 9999 })
+				.pk('id', { input: v.string(), generate: () => `a${++userCounter}` })
+				.field('name', { input: v.string() })
+				.field('updatedAt', { input: v.number(), onCreate: () => 0, onUpdate: () => 9999 })
 				.build()
 			const repo = makeRepo()
 			await repo.on(AutoSchema).one().create({ name: 'A' })
@@ -1521,8 +1521,8 @@ if (import.meta.vitest) {
 			}
 			type A = MinimalAdapter
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			type S = typeof _TestSchema
 			type One = import('./builders.js').OneBuilderSurface<S, A, 'id'>
@@ -1606,12 +1606,12 @@ if (import.meta.vitest) {
 			}
 		}
 		const _S = Schema.from('items')
-			.pk('id', v.string(), () => 'x')
-			.field('name', v.string())
-			.field('amount', v.number())
-			.field('active', v.boolean())
-			.field('tags', v.array(v.string()))
-			.field('meta', v.object({ x: v.number() }))
+			.pk('id', { input: v.string(), generate: () => 'x' })
+			.field('name', { input: v.string() })
+			.field('amount', { input: v.number() })
+			.field('active', { input: v.boolean() })
+			.field('tags', { input: v.array(v.string()) })
+			.field('meta', { input: v.object({ x: v.number() }) })
 			.build()
 		type S = typeof _S
 		type A = AggAdapter
@@ -1719,12 +1719,12 @@ if (import.meta.vitest) {
 
 	describe('repo.on().all().where().find() end-to-end', () => {
 		const TestSchema = Schema.from('e2e')
-			.pk('id', v.string(), () => `e-${Math.random().toString(36).slice(2)}`)
-			.field('name', v.string())
-			.field('age', v.number())
-			.field('active', v.boolean())
-			.field('tags', v.array(v.string()))
-			.field('score', v.optional(v.number()), { onCreate: () => undefined })
+			.pk('id', { input: v.string(), generate: () => `e-${Math.random().toString(36).slice(2)}` })
+			.field('name', { input: v.string() })
+			.field('age', { input: v.number() })
+			.field('active', { input: v.boolean() })
+			.field('tags', { input: v.array(v.string()) })
+			.field('score', { input: v.optional(v.number()), onCreate: () => undefined })
 			.build()
 
 		function makeE2eRepo() {
@@ -2023,10 +2023,10 @@ if (import.meta.vitest) {
 	describe('one().id().update() (replaces updateByPk)', () => {
 		let viewCounter = 0
 		const ItemSchema = Schema.from('items')
-			.pk('id', v.string(), () => `item-${++viewCounter}`)
-			.field('title', v.string())
-			.field('views', v.number())
-			.field('updatedAt', v.number(), { onCreate: () => 1000, onUpdate: () => Date.now() })
+			.pk('id', { input: v.string(), generate: () => `item-${++viewCounter}` })
+			.field('title', { input: v.string() })
+			.field('views', { input: v.number() })
+			.field('updatedAt', { input: v.number(), onCreate: () => 1000, onUpdate: () => Date.now() })
 			.build()
 
 		function makeUpdateRepo() {
@@ -2090,12 +2090,12 @@ if (import.meta.vitest) {
 		let upsertCounter = 0
 
 		const UpsertSchema = Schema.from('upserts')
-			.pk('id', v.string(), () => `up-${++upsertCounter}`)
-			.field('email', v.string())
-			.field('name', v.string())
-			.field('views', v.number())
-			.field('createdAt', v.number(), { onCreate: () => 1000 })
-			.field('updatedAt', v.number(), { onCreate: () => 1000, onUpdate: () => 9999 })
+			.pk('id', { input: v.string(), generate: () => `up-${++upsertCounter}` })
+			.field('email', { input: v.string() })
+			.field('name', { input: v.string() })
+			.field('views', { input: v.number() })
+			.field('createdAt', { input: v.number(), onCreate: () => 1000 })
+			.field('updatedAt', { input: v.number(), onCreate: () => 1000, onUpdate: () => 9999 })
 			.build()
 
 		function makeUpsertRepo() {
@@ -2358,13 +2358,13 @@ if (import.meta.vitest) {
 
 	describe('repo.session — transactional behaviour', () => {
 		const SchemaA = Schema.from('accounts')
-			.pk('id', v.string(), () => `a-${Math.random().toString(36).slice(2)}`)
-			.field('balance', v.number())
+			.pk('id', { input: v.string(), generate: () => `a-${Math.random().toString(36).slice(2)}` })
+			.field('balance', { input: v.number() })
 			.build()
 		const SchemaB = Schema.from('ledger')
-			.pk('id', v.string(), () => `l-${Math.random().toString(36).slice(2)}`)
-			.field('amount', v.number())
-			.field('accountId', v.string())
+			.pk('id', { input: v.string(), generate: () => `l-${Math.random().toString(36).slice(2)}` })
+			.field('amount', { input: v.number() })
+			.field('accountId', { input: v.string() })
 			.build()
 
 		function makeSessionRepo() {
@@ -2532,7 +2532,7 @@ if (import.meta.vitest) {
 				return origUse(schema, config as { table: string })
 			})
 			const schema = Schema.from('fresh_config')
-				.pk('id', v.string(), () => 'fresh-id')
+				.pk('id', { input: v.string(), generate: () => 'fresh-id' })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => {
@@ -2561,8 +2561,8 @@ if (import.meta.vitest) {
 			})
 
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
@@ -2588,8 +2588,8 @@ if (import.meta.vitest) {
 			})
 
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
@@ -2614,8 +2614,8 @@ if (import.meta.vitest) {
 			})
 
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
@@ -2654,8 +2654,8 @@ if (import.meta.vitest) {
 			})
 
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
@@ -2761,9 +2761,9 @@ if (import.meta.vitest) {
 		}
 
 		const TestSchema = Schema.from('class_test')
-			.pk('id', v.string(), () => `ct-${Math.random().toString(36).slice(2, 8)}`)
-			.field('name', v.string())
-			.field('age', v.number())
+			.pk('id', { input: v.string(), generate: () => `ct-${Math.random().toString(36).slice(2, 8)}` })
+			.field('name', { input: v.string() })
+			.field('age', { input: v.number() })
 			.build()
 
 		test('Repo.from(classAdapter).resolve(...).build() creates a working repo', async () => {
@@ -2851,10 +2851,10 @@ if (import.meta.vitest) {
 
 	describe('repo.on().aggregate() end-to-end', () => {
 		const OrderSchema = Schema.from('orders')
-			.pk('id', v.string(), () => `o-${Math.random().toString(36).slice(2, 8)}`)
-			.field('product', v.string())
-			.field('amount', v.number())
-			.field('region', v.string())
+			.pk('id', { input: v.string(), generate: () => `o-${Math.random().toString(36).slice(2, 8)}` })
+			.field('product', { input: v.string() })
+			.field('amount', { input: v.number() })
+			.field('region', { input: v.string() })
 			.build()
 
 		function makeAggRepo() {

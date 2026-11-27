@@ -559,9 +559,9 @@ if (import.meta.vitest) {
 
 		test('CRUD: create, find, update, delete round-trip', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
+				.field('age', { input: v.number() })
 				.build()
 
 			const adapter = JsonAdapter.create({ filePath })
@@ -601,9 +601,9 @@ if (import.meta.vitest) {
 
 		test('supports nested filters, ordering, select, offset and limit', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
+				.field('age', { input: v.number() })
 				.build()
 
 			const adapter = JsonAdapter.create({ filePath })
@@ -634,8 +634,8 @@ if (import.meta.vitest) {
 
 		test('count delegates to the in-memory store and persists separately from query options', async () => {
 			const schema = Schema.from('count_users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
 				.build()
 
 			const adapter = JsonAdapter.create({ filePath })
@@ -653,9 +653,9 @@ if (import.meta.vitest) {
 
 		test('iterateMany with batchSize matches findMany through in-memory delegation', async () => {
 			const schema = Schema.from('json_iter_users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
+				.field('age', { input: v.number() })
 				.build()
 
 			const adapter = JsonAdapter.create({ filePath })
@@ -691,10 +691,10 @@ if (import.meta.vitest) {
 
 		test('supports update operators and rollback on failed session', async () => {
 			const schema = Schema.from('docs')
-				.pk('id', v.string(), () => 'd1')
-				.field('count', v.number())
-				.field('tags', v.array(v.string()))
-				.field('meta', v.object({ a: v.number() }))
+				.pk('id', { input: v.string(), generate: () => 'd1' })
+				.field('count', { input: v.number() })
+				.field('tags', { input: v.array(v.string()) })
+				.field('meta', { input: v.object({ a: v.number() }) })
 				.build()
 
 			const adapter = JsonAdapter.create({ filePath })
@@ -726,8 +726,8 @@ if (import.meta.vitest) {
 
 		test('upsertOne inserts when missing and updates when existing', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'i')
-				.field('val', v.number())
+				.pk('id', { input: v.string(), generate: () => 'i' })
+				.field('val', { input: v.number() })
 				.build()
 
 			const adapter = JsonAdapter.create({ filePath })
@@ -749,8 +749,8 @@ if (import.meta.vitest) {
 	describe('json adapter — persistence', () => {
 		test('root and nested sessions commit and roll back without deadlocking', async () => {
 			const schema = Schema.from('docs')
-				.pk('id', v.string(), () => 'd')
-				.field('value', v.number())
+				.pk('id', { input: v.string(), generate: () => 'd' })
+				.field('value', { input: v.number() })
 				.build()
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
@@ -785,8 +785,8 @@ if (import.meta.vitest) {
 
 		test('lazy discovery and table rename/drop remain consistent across reloads', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
 				.build()
 			const first = JsonAdapter.create({ filePath })
 			await first.connect()
@@ -818,8 +818,8 @@ if (import.meta.vitest) {
 
 		test('state persists across adapter restarts', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
 				.build()
 
 			const a1 = JsonAdapter.create({ filePath })
@@ -842,8 +842,8 @@ if (import.meta.vitest) {
 
 		test('failed session does not persist rolled-back state to disk', async () => {
 			const schema = Schema.from('docs')
-				.pk('id', v.string(), () => 'd')
-				.field('val', v.number())
+				.pk('id', { input: v.string(), generate: () => 'd' })
+				.field('val', { input: v.number() })
 				.build()
 
 			const a1 = JsonAdapter.create({ filePath })
@@ -876,8 +876,8 @@ if (import.meta.vitest) {
 		test('file is valid JSON after every write', async () => {
 			const { readFile: rf } = await import('node:fs/promises')
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'i')
-				.field('val', v.number())
+				.pk('id', { input: v.string(), generate: () => 'i' })
+				.field('val', { input: v.number() })
 				.build()
 
 			const adapter = JsonAdapter.create({ filePath })
@@ -895,8 +895,8 @@ if (import.meta.vitest) {
 		test('no .tmp files remain after writes complete', async () => {
 			const { readdir } = await import('node:fs/promises')
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'i')
-				.field('val', v.number())
+				.pk('id', { input: v.string(), generate: () => 'i' })
+				.field('val', { input: v.number() })
 				.build()
 
 			const adapter = JsonAdapter.create({ filePath })
@@ -916,9 +916,9 @@ if (import.meta.vitest) {
 
 	describe('json adapter — aggregate delegation', () => {
 		const orderSchema = Schema.from('orders')
-			.pk('id', v.string(), () => 'o')
-			.field('amount', v.number())
-			.field('region', v.string())
+			.pk('id', { input: v.string(), generate: () => 'o' })
+			.field('amount', { input: v.number() })
+			.field('region', { input: v.string() })
 			.build()
 
 		const orderSeed = [
@@ -1042,8 +1042,8 @@ if (import.meta.vitest) {
 
 		test('aggregate delegates to same in-memory instance used by CRUD', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'i')
-				.field('val', v.number())
+				.pk('id', { input: v.string(), generate: () => 'i' })
+				.field('val', { input: v.number() })
 				.build()
 
 			const adapter = JsonAdapter.create({ filePath })
@@ -1120,8 +1120,8 @@ if (import.meta.vitest) {
 
 		test('a lock drains admitted operations and rejects work started from its expired context', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'i')
-				.field('val', v.number())
+				.pk('id', { input: v.string(), generate: () => 'i' })
+				.field('val', { input: v.number() })
 				.build()
 			const adapter = JsonAdapter.create({ filePath })
 			await adapter.connect()
@@ -1140,8 +1140,8 @@ if (import.meta.vitest) {
 
 		test('parallel writes from same process all persist', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'i')
-				.field('val', v.number())
+				.pk('id', { input: v.string(), generate: () => 'i' })
+				.field('val', { input: v.number() })
 				.build()
 
 			const adapter = JsonAdapter.create({ filePath })
@@ -1164,8 +1164,8 @@ if (import.meta.vitest) {
 
 		test('writes from separate stale adapter instances merge against the latest file', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'i')
-				.field('val', v.number())
+				.pk('id', { input: v.string(), generate: () => 'i' })
+				.field('val', { input: v.number() })
 				.build()
 			const first = JsonAdapter.create({ filePath })
 			const second = JsonAdapter.create({ filePath })
@@ -1186,8 +1186,8 @@ if (import.meta.vitest) {
 
 		test('stale read-only disconnect does not overwrite newer writes', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'i')
-				.field('val', v.number())
+				.pk('id', { input: v.string(), generate: () => 'i' })
+				.field('val', { input: v.number() })
 				.build()
 			const staleReader = JsonAdapter.create({ filePath })
 			await staleReader.connect()
@@ -1408,8 +1408,8 @@ if (import.meta.vitest) {
 
 	describe('json adapter — end-to-end migrations via Migrator', () => {
 		const UserSchema = Schema.from('users')
-			.pk('id', v.string(), () => `u-${Math.random().toString(36).slice(2)}`)
-			.field('email', v.string())
+			.pk('id', { input: v.string(), generate: () => `u-${Math.random().toString(36).slice(2)}` })
+			.field('email', { input: v.string() })
 			.build()
 
 		function makeEnv() {

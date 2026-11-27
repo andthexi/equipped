@@ -1018,7 +1018,7 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const use = adapter.use(schema, { table: 'test' })
@@ -1079,7 +1079,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 
 			const _one = repo.on(_TestSchema).one()
@@ -1108,7 +1108,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const _ref = repo.on(_TestSchema)
 
@@ -1124,7 +1124,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const _ref = repo.on(_TestSchema)
 
@@ -1136,8 +1136,8 @@ if (import.meta.vitest) {
 			const { FilterGroup } = await import('../../filter.js')
 
 			const schema = Schema.from('pg_count')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			let capturedSql: unknown
@@ -1158,7 +1158,7 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_raw')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			let capturedCommand: unknown
@@ -1181,7 +1181,7 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_raw2')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			let capturedParams: unknown
@@ -1199,8 +1199,8 @@ if (import.meta.vitest) {
 			const { OrderBy } = await import('../../query-options.js')
 
 			const schema = Schema.from('pg_iter')
-				.pk('id', v.string(), () => 'x')
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('age', { input: v.number() })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			let capturedCursor: Cursor<Record<string, unknown>> | undefined
@@ -1257,7 +1257,7 @@ if (import.meta.vitest) {
 			const { FilterGroup } = await import('../../filter.js')
 
 			const schema = Schema.from('pg_iter_break')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const release = vi.fn()
@@ -1286,7 +1286,7 @@ if (import.meta.vitest) {
 			const { FilterGroup } = await import('../../filter.js')
 
 			const schema = Schema.from('pg_iter_throw')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const release = vi.fn()
@@ -1315,7 +1315,7 @@ if (import.meta.vitest) {
 			const { FilterGroup } = await import('../../filter.js')
 
 			const schema = Schema.from('pg_iter_session')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const events: string[] = []
@@ -1377,9 +1377,9 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_agg')
-				.pk('id', v.string(), () => 'x')
-				.field('amount', v.number())
-				.field('region', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('amount', { input: v.number() })
+				.field('region', { input: v.string() })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			let capturedSql: unknown
@@ -1406,8 +1406,8 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_agg_types')
-				.pk('id', v.string(), () => 'x')
-				.field('amount', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('amount', { input: v.number() })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			;(adapter.pool as any).query = async () => ({
@@ -1434,8 +1434,8 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_agg_minmax')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			;(adapter.pool as any).query = async () => ({
@@ -1460,8 +1460,8 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_agg_group')
-				.pk('id', v.string(), () => 'x')
-				.field('region', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('region', { input: v.string() })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			;(adapter.pool as any).query = async () => ({
@@ -1493,7 +1493,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 
 			const _ref = repo.on(_TestSchema)
@@ -2045,8 +2045,8 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve(() => ({ table: 'test', schema: undefined }))

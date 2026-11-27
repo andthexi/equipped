@@ -20,6 +20,7 @@ import type {
 	RenameTableChange,
 } from './migrations/types.js'
 import type { IterationQueryOptions, QueryOptions } from './query-options.js'
+import { validateOutputRow, validateOutputRows } from './schema-validations.js'
 import type { AnySchema } from './schema.js'
 import type { AnyUpdateOp } from './updates.js'
 
@@ -127,36 +128,43 @@ export abstract class OrmAdapter {
 			iterateMany: (filter, opts) => self.iterateMany?.(schema, config, filter, opts) ?? emptyIterator(),
 			findOne: async (filter) => {
 				const rows = await use.findMany(filter, { limit: 1 })
-				return rows[0] ?? null
+				const pk = schema.pkField.name
+				const validated = validateOutputRows(schema, rows, 'findOne', [pk], { maximum: 1 })
+				if (validated.length === 0) return null
+				return { ...rows[0], [pk]: validated[0][pk] }
 			},
 			count: (filter) =>
 				self.count?.(schema, config, filter) ?? Promise.reject(new Error('count not implemented')),
 			createOne: async (d) => {
 				const rows = await use.createMany([d])
-				return rows[0]
+				return validateOutputRows(schema, rows, 'createOne', undefined, { exact: 1 })[0]
 			},
 			createMany: (d) => self.createMany?.(schema, config, d) ?? Promise.resolve([]),
 			updateMany: (filter, d) => self.updateMany?.(schema, config, filter, d) ?? Promise.resolve([]),
 			updateOne: async (filter, d) => {
 				const match = await use.findOne(filter)
-				if (!match) return null
+				if (match === null) return null
 				const pk = schema.pkField.name
-				const pkFilter = FilterGroup.create().eq(pk, match[pk])
+				const pkValue = match[pk]
+				const pkFilter = FilterGroup.create().eq(pk, pkValue)
 				const rows = await use.updateMany(pkFilter, d)
-				return rows[0] ?? null
+				return validateOutputRows(schema, rows, 'updateOne', undefined, { maximum: 1 })[0] ?? null
 			},
 			upsertOne: (filter, create, ops) =>
 				self.upsertOne?.(schema, config, filter, create, ops) ??
 				Promise.reject(new Error('upsertOne not implemented')),
 			deleteOne: async (filter) => {
 				const row = await use.findOne(filter)
-				if (!row) return null
+				if (row === null) return null
 				const pk = schema.pkField.name
+				const pkValue = row[pk]
 				if (self.deleteByPk) {
-					await self.deleteByPk(schema, config, row[pk])
+					const deleted = await self.deleteByPk(schema, config, pkValue)
+					validateOutputRow(schema, deleted, 'deleteOne')
 				} else if (self.deleteMany) {
-					const pkFilter = FilterGroup.create().eq(pk, row[pk])
-					await self.deleteMany(schema, config, pkFilter)
+					const pkFilter = FilterGroup.create().eq(pk, pkValue)
+					const deleted = await self.deleteMany(schema, config, pkFilter)
+					validateOutputRows(schema, deleted, 'deleteOne')
 				}
 				return row
 			},
@@ -303,7 +311,7 @@ if (import.meta.vitest) {
 			}
 
 			const TestSchema = Schema.from('bridge_test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = new (BridgeAdapter as any)() as BridgeAdapter
 			const ormUse = adapter.use(TestSchema, { table: 'bridge_test' })
@@ -341,8 +349,8 @@ if (import.meta.vitest) {
 			}
 
 			const TestSchema = Schema.from('upd_test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = new (UpdateAdapter as any)() as UpdateAdapter
 			const ormUse = adapter.use(TestSchema, { table: 'upd_test' })
@@ -370,7 +378,7 @@ if (import.meta.vitest) {
 			}
 
 			const TestSchema = Schema.from('iter_no_fallback')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = new (FindOnlyAdapter as any)() as FindOnlyAdapter
 			const rows: Record<string, unknown>[] = []
@@ -405,7 +413,7 @@ if (import.meta.vitest) {
 			}
 
 			const TestSchema = Schema.from('del_test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = new (DeleteAdapter as any)() as DeleteAdapter
 			const ormUse = adapter.use(TestSchema, { table: 'del_test' })

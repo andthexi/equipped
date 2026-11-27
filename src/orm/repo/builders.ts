@@ -6,7 +6,7 @@ import { FilterGroup, type FilterFactory } from '../filter.js'
 import type { AggregateSpec } from '../orm-adapter.js'
 import { OrderBy, type IterationOptions } from '../query-options.js'
 import type { AnyPreloadDef } from '../relations.js'
-import type { SchemaCreateInput, SchemaUpdateInput } from '../schema-validations.js'
+import { validateOutputRows, type SchemaCreateInput, type SchemaUpdateInput } from '../schema-validations.js'
 import type { AnySchema, SchemaOutput } from '../schema.js'
 import { applyComputedSelection, planSelection } from './internals/computeds.js'
 import {
@@ -103,10 +103,30 @@ export class SchemaContext<S extends AnySchema> {
 	async shapeRows<Sel extends string, P extends readonly AnyPreloadDef[]>(
 		select: readonly Sel[] | undefined,
 		preloads: P,
-		rows: Record<string, unknown>[],
+		rows: unknown,
+		operation = 'findMany',
+		cardinality?: { exact?: number; maximum?: number },
+		validateOutput = true,
 	): Promise<SelectedWithPreloads<S, Sel, P>[]> {
 		const plan = planSelection(this.schema, select)
-		const selected = applyComputedSelection(this.schema, rows, plan)
+		const selectedPersisted = select?.length ? select.filter((field) => field in this.schema.fields) : undefined
+		let validated = validateOutput
+			? validateOutputRows(this.schema, rows, operation, selectedPersisted, cardinality)
+			: (rows as Record<string, unknown>[])
+		if (validateOutput && plan.adapterSelect && Array.isArray(rows)) {
+			const requested = new Set(selectedPersisted ?? Object.keys(this.schema.fields))
+			validated = validated.map((row, index) => {
+				const source = rows[index]
+				if (source == null || typeof source !== 'object' || Array.isArray(source)) return row
+				const withDependencies = { ...row }
+				for (const dependency of plan.adapterSelect!) {
+					if (!requested.has(dependency) && dependency in source)
+						withDependencies[dependency] = source[dependency]
+				}
+				return withDependencies
+			})
+		}
+		const selected = applyComputedSelection(this.schema, validated, plan)
 		if (preloads.length === 0) return selected as SelectedWithPreloads<S, Sel, P>[]
 		return (await resolvePreloads(selected, preloads, this.getUse)) as SelectedWithPreloads<S, Sel, P>[]
 	}
@@ -114,11 +134,12 @@ export class SchemaContext<S extends AnySchema> {
 	async shapeOneRow<Sel extends string, P extends readonly AnyPreloadDef[]>(
 		select: readonly Sel[] | undefined,
 		preloads: P,
-		row: Record<string, unknown> | null,
+		row: unknown,
+		operation = 'findOne',
 	): Promise<SelectedWithPreloads<S, Sel, P> | null> {
-		if (!row) return null
-		const [resolved] = await this.shapeRows(select, preloads, [row])
-		return resolved ?? null
+		if (row === null) return null
+		const [resolved] = await this.shapeRows(select, preloads, [row], operation, { exact: 1 })
+		return resolved
 	}
 
 	get use() {
@@ -673,9 +694,9 @@ if (import.meta.vitest) {
 
 		test('update() executes and returns updated row', async () => {
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => `u-${Math.random().toString(36).slice(2, 8)}`)
-				.field('email', v.string())
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => `u-${Math.random().toString(36).slice(2, 8)}` })
+				.field('email', { input: v.string() })
+				.field('name', { input: v.string() })
 				.build()
 
 			const created = await repo.on(UserSchema).one().create({ email: 'up@test.com', name: 'Before' })
@@ -687,9 +708,9 @@ if (import.meta.vitest) {
 
 		test('find() returns rows', async () => {
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => `u-${Math.random().toString(36).slice(2, 8)}`)
-				.field('email', v.string())
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => `u-${Math.random().toString(36).slice(2, 8)}` })
+				.field('email', { input: v.string() })
+				.field('name', { input: v.string() })
 				.build()
 
 			await repo
@@ -710,9 +731,9 @@ if (import.meta.vitest) {
 
 		test('write branches do not leak filters', async () => {
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => `u-${Math.random().toString(36).slice(2, 8)}`)
-				.field('email', v.string())
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => `u-${Math.random().toString(36).slice(2, 8)}` })
+				.field('email', { input: v.string() })
+				.field('name', { input: v.string() })
 				.build()
 
 			await repo
@@ -734,9 +755,9 @@ if (import.meta.vitest) {
 
 	describe('.required() modifier', () => {
 		const UserSchema = Schema.from('users')
-			.pk('id', v.string(), () => `u-${Math.random().toString(36).slice(2, 8)}`)
-			.field('email', v.string())
-			.field('name', v.string())
+			.pk('id', { input: v.string(), generate: () => `u-${Math.random().toString(36).slice(2, 8)}` })
+			.field('email', { input: v.string() })
+			.field('name', { input: v.string() })
 			.build()
 
 		let repo: any
@@ -945,20 +966,20 @@ if (import.meta.vitest) {
 		let postCounter = 0
 
 		const ItemSchema = Schema.from('paged_items')
-			.pk('id', v.string(), () => `item-${++itemCounter}`)
-			.field('position', v.number())
-			.field('name', v.string())
+			.pk('id', { input: v.string(), generate: () => `item-${++itemCounter}` })
+			.field('position', { input: v.number() })
+			.field('name', { input: v.string() })
 			.build()
 
 		const UserSchema = Schema.from('query_shape_users')
-			.pk('id', v.string(), () => `user-${++userCounter}`)
-			.field('name', v.string())
+			.pk('id', { input: v.string(), generate: () => `user-${++userCounter}` })
+			.field('name', { input: v.string() })
 			.build()
 
 		const PostSchema = Schema.from('query_shape_posts')
-			.pk('id', v.string(), () => `post-${++postCounter}`)
-			.field('userId', v.string())
-			.field('title', v.string())
+			.pk('id', { input: v.string(), generate: () => `post-${++postCounter}` })
+			.field('userId', { input: v.string() })
+			.field('title', { input: v.string() })
 			.build()
 
 		const UserRels = Relations.from(UserSchema).hasMany('posts', PostSchema.fields.userId).build()
@@ -1412,8 +1433,8 @@ if (import.meta.vitest) {
 
 	describe('type-level: paginate surface', () => {
 		const _TestSchema = Schema.from('paginate_type_users')
-			.pk('id', v.string(), () => 'x')
-			.field('name', v.string())
+			.pk('id', { input: v.string(), generate: () => 'x' })
+			.field('name', { input: v.string() })
 			.build()
 		type S = typeof _TestSchema
 

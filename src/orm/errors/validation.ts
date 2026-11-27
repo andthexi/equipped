@@ -8,6 +8,7 @@ export type OrmValidationErrorKind =
 	| 'upsert-filter-incompatible'
 	| 'aggregate'
 	| 'query-shape'
+	| 'output'
 	| 'changes'
 
 export type OrmValidationFailure = {
@@ -72,6 +73,7 @@ if (import.meta.vitest) {
 			'undeclared-op',
 			'upsert-filter-incompatible',
 			'query-shape',
+			'output',
 			'changes',
 		] as const)('kind %s still works', (kind) => {
 			const err = new OrmValidationError(kind, 'users', 'createOne', [])

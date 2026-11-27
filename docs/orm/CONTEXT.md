@@ -18,12 +18,6 @@ is handed validated input.
 Each section below is the canonical reference for one layer or cross-cutting
 concern. Sections 13 and 14 cover principles and explicit non-goals.
 
-**Accepted design, not implemented:** [§18](#18-output-validation-and-atomic-mutations--accepted-design)
-records mandatory query-output validation and atomic schema-aware mutations.
-Its explicit revisions take precedence over the historical input-only validation
-and mutation-boundary descriptions where they conflict. Earlier API examples
-describe the shipped surface until that design is implemented; they are not
-compatibility overloads promised by the new design.
 
 ---
 
@@ -49,11 +43,11 @@ not aware of adapters.
 
 ```ts
 const UserSchema = Schema.from('users')
-	.pk('id', v.string(), () => crypto.randomUUID())
-	.field('email', v.string())
-	.field('age', v.number())
-	.field('createdAt', v.number(), { onCreate: () => Date.now() })
-	.field('updatedAt', v.number(), { onUpdate: () => Date.now() })
+	.pk('id', { input: v.string(), generate: () => crypto.randomUUID() })
+	.field('email', { input: v.string() })
+	.field('age', { input: v.number() })
+	.field('createdAt', { input: v.number(), onCreate: () => Date.now() })
+	.field('updatedAt', { input: v.number(), onUpdate: () => Date.now() })
 	.build()
 ```
 
@@ -256,8 +250,8 @@ Vocabulary:
   that share field sets (timestamps, tenant ids, soft-delete columns) are
   expressed as a userland factory function that takes a name and returns
   a partially-built `SchemaBuilder`, e.g.
-  `withCommonFields(name) => Schema.from(name).pk(...).field('createdAt', ...).field('updatedAt', ...)`,
-  consumed as `withCommonFields('users').field('email', v.string()).build()`.
+  `withCommonFields(name) => Schema.from(name).pk(...).field('createdAt', { input: ... }).field('updatedAt', { input: ... })`,
+  consumed as `withCommonFields('users').field('email', { input: v.string() }).build()`.
   The library ships **no** Mixin artifact, no `.use(fieldSet)` builder
   step, and no other composition primitive — the typed accumulator on
   `SchemaBuilder` flows through factory-function returns naturally, and
@@ -1650,7 +1644,10 @@ The source variable is a const in the outer lexical scope, so FK refs that
 point at the source (`belongsTo`'s FK) reference it directly:
 
 ```ts
-const UserSchema = Schema.from('users').pk('id', v.string()).field('orgId', v.string()).build()
+const UserSchema = Schema.from('users')
+	.pk('id', { input: v.string(), generate: () => crypto.randomUUID() })
+	.field('orgId', { input: v.string() })
+	.build()
 
 const UserRels = Relations.from(UserSchema)
 	.hasMany('posts', PostSchema.fields.userId)
@@ -1718,9 +1715,9 @@ declarations would force in JS without macros.
 
 ```ts
 const PostTagSchema = Schema.from('post_tags')
-	.pk('id', v.string(), () => 'pt-id')
-	.field('postId', v.string())
-	.field('tagId', v.string())
+	.pk('id', { input: v.string(), generate: () => 'pt-id' })
+	.field('postId', { input: v.string() })
+	.field('tagId', { input: v.string() })
 	.build()
 
 const PostRels = Relations.from(PostSchema).hasMany('postTags', PostTagSchema.fields.postId).build()
@@ -2194,11 +2191,11 @@ The library owns a fixed `EventLogSchema` exported from
 
 ```ts
 const EventLogSchema = Schema.from('event_log')
-	.pk('key', v.string()) // time-sortable id
-	.field('name', v.string()) // handler name
-	.field('ts', v.number()) // ms timestamp
-	.field('body', v.object({}).passthrough()) // validated payload
-	.field('by', v.optional(v.string())) // who fired (nullable)
+	.pk('key', { input: v.string(), generate: () => crypto.randomUUID() }) // time-sortable id
+	.field('name', { input: v.string() }) // handler name
+	.field('ts', { input: v.number() }) // ms timestamp
+	.field('body', { input: v.object({}).passthrough() }) // validated payload
+	.field('by', { input: v.optional(v.string()) }) // who fired (nullable)
 	.build()
 ```
 
@@ -3200,10 +3197,13 @@ falling back to polling markers or expiry-based takeover.
 
 ## 18. Output validation and atomic mutations — accepted design
 
-**Status:** Accepted design; not implemented. These contracts were settled
-during the design follow-up to [issue #196](https://github.com/andthexi/equipped/issues/196).
-Delivery boundaries are explicitly listed in §18.7; design acceptance is not
-implementation or release authorization.
+**Status:** Partially implemented. Slice #198 delivers schema input/output
+contracts and ordinary Repo record validation. Computed/preload/iteration,
+aggregate, and atomic-mutation contracts remain assigned to later slices. These
+contracts were settled during the design follow-up to
+[issue #196](https://github.com/andthexi/equipped/issues/196). Delivery
+boundaries are explicitly listed in §18.7; design acceptance is not release
+authorization.
 
 The [schema input/output ADR](../adr/2026-11-27-schema-input-output-contracts.md)
 and [atomic mutation ADR](../adr/2026-11-27-atomic-mutation-output-boundary.md)

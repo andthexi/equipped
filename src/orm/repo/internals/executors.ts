@@ -1,10 +1,11 @@
-import { assertNormalisedAggregate, assertNormalisedFilter, type FilterGroup } from '../../filter.js'
+import { assertNormalisedAggregate, assertNormalisedFilter, FilterGroup } from '../../filter.js'
 import type { AggregateSpec } from '../../orm-adapter.js'
 import type { IterationOptions, OrderBy } from '../../query-options.js'
 import type { AnyPreloadDef } from '../../relations.js'
 import {
 	validateCreate,
 	validateCreateMany,
+	validateOutputRows,
 	validateUpdate,
 	validateUpsertConflicts,
 	type SchemaCreateInput,
@@ -34,9 +35,10 @@ export async function runOneRead<S extends AnySchema, Sel extends string, P exte
 ): Promise<SelectedWithPreloads<S, Sel, P> | null> {
 	assertNormalisedFilter(context.schema, state.where)
 	assertNormalisedFindReadShape(context.schema, 'findOne', state)
-	const row = await context.use.findOne(state.where)
-	if (!row) return null
-	return context.shapeOneRow(state.select, state.preloads, row)
+	const plan = planSelection(context.schema, state.select as readonly string[] | undefined)
+	const rows = await context.use.findMany(state.where, { select: plan.adapterSelect, limit: 1 })
+	const [row] = await context.shapeRows(state.select, state.preloads, rows, 'findOne', { maximum: 1 })
+	return row ?? null
 }
 
 export async function runAllRead<S extends AnySchema, Sel extends string, P extends readonly AnyPreloadDef[]>(
@@ -59,7 +61,7 @@ export async function runAllRead<S extends AnySchema, Sel extends string, P exte
 		limit: query.limit,
 		offset: query.offset,
 	})
-	return context.shapeRows(state.select, state.preloads, rows)
+	return context.shapeRows(state.select, state.preloads, rows, 'findMany')
 }
 
 export async function runAllCount<S extends AnySchema>(
@@ -109,7 +111,7 @@ export async function runAllPaginate<S extends AnySchema, Sel extends string, P 
 			select: plan.adapterSelect,
 			orderBy: [...state.orderBy],
 		})
-		const items = await context.shapeRows(state.select, state.preloads, rows)
+		const items = await context.shapeRows(state.select, state.preloads, rows, 'paginate')
 		return toPaginated(items, items.length, query.limit, query.current)
 	}
 	const [rows, total] = await Promise.all([
@@ -121,7 +123,7 @@ export async function runAllPaginate<S extends AnySchema, Sel extends string, P 
 		}),
 		use.count(state.where),
 	])
-	const items = await context.shapeRows(state.select, state.preloads, rows)
+	const items = await context.shapeRows(state.select, state.preloads, rows, 'paginate')
 	return toPaginated(items, total, query.limit, query.current)
 }
 
@@ -148,7 +150,7 @@ export async function* runAllIterate<S extends AnySchema, Sel extends string, P 
 		offset: query.offset,
 		...(query.batchSize === undefined ? {} : { batchSize: query.batchSize }),
 	})) {
-		const shaped = await context.shapeRows(state.select, state.preloads, [row])
+		const shaped = await context.shapeRows(state.select, state.preloads, [row], 'iterate', undefined, false)
 		const first = shaped[0]
 		if (first) yield first
 	}
@@ -160,8 +162,8 @@ export async function runOneCreate<S extends AnySchema, Sel extends string, P ex
 	data: SchemaCreateInput<S>,
 ): Promise<SelectedWithPreloads<S, Sel, P>> {
 	const validated = validateCreate(context.schema, data as any)
-	const row = await context.use.createOne(validated as any)
-	const [resolved] = await context.shapeRows(state.select, state.preloads, [row])
+	const rows = await context.use.createMany([validated as any])
+	const [resolved] = await context.shapeRows(state.select, state.preloads, rows, 'createOne', { exact: 1 })
 	return resolved
 }
 
@@ -172,7 +174,7 @@ export async function runAllCreate<S extends AnySchema, Sel extends string, P ex
 ): Promise<SelectedWithPreloads<S, Sel, P>[]> {
 	const validated = validateCreateMany(context.schema, data as any)
 	const rows = await context.use.createMany(validated as any)
-	return context.shapeRows(state.select, state.preloads, rows)
+	return context.shapeRows(state.select, state.preloads, rows, 'createMany', { exact: data.length })
 }
 
 export async function runOneUpdate<S extends AnySchema, Sel extends string, P extends readonly AnyPreloadDef[]>(
@@ -182,8 +184,14 @@ export async function runOneUpdate<S extends AnySchema, Sel extends string, P ex
 ): Promise<SelectedWithPreloads<S, Sel, P> | null> {
 	assertNormalisedFilter(context.schema, state.where)
 	const validated = validateUpdate(context.schema, data as any)
-	const row = await context.use.updateOne(state.where, validated as any)
-	return context.shapeOneRow(state.select, state.preloads, row)
+	const pkName = context.schema.pkField.name
+	const matches = await context.use.findMany(state.where, { select: [pkName], limit: 1 })
+	const [match] = validateOutputRows(context.schema, matches, 'updateOne', [pkName], { maximum: 1 })
+	if (!match) return null
+	const pkFilter = FilterGroup.create().eq(context.schema.pkField, match[pkName] as any)
+	const rows = await context.use.updateMany(pkFilter, validated as any)
+	const [row] = await context.shapeRows(state.select, state.preloads, rows, 'updateOne', { maximum: 1 })
+	return row ?? null
 }
 
 export async function runAllUpdate<S extends AnySchema, Sel extends string, P extends readonly AnyPreloadDef[]>(
@@ -194,7 +202,7 @@ export async function runAllUpdate<S extends AnySchema, Sel extends string, P ex
 	assertNormalisedFilter(context.schema, state.where)
 	const validated = validateUpdate(context.schema, data as any)
 	const rows = await context.use.updateMany(state.where, validated as any)
-	return context.shapeRows(state.select, state.preloads, rows)
+	return context.shapeRows(state.select, state.preloads, rows, 'updateMany')
 }
 
 export async function runOneUpsert<S extends AnySchema, Sel extends string, P extends readonly AnyPreloadDef[]>(
@@ -223,7 +231,8 @@ export async function runOneUpsert<S extends AnySchema, Sel extends string, P ex
 		validateUpsertConflicts(context.schema, data.create as Record<string, unknown>, ops)
 	}
 	const row = await context.use.upsertOne(state.where, create as any, ops)
-	return (await context.shapeOneRow(state.select, state.preloads, row)) as SelectedWithPreloads<S, Sel, P>
+	const [resolved] = await context.shapeRows(state.select, state.preloads, [row], 'upsertOne', { exact: 1 })
+	return resolved
 }
 
 export async function runOneDelete<S extends AnySchema, Sel extends string, P extends readonly AnyPreloadDef[]>(
@@ -232,7 +241,7 @@ export async function runOneDelete<S extends AnySchema, Sel extends string, P ex
 ): Promise<SelectedWithPreloads<S, Sel, P> | null> {
 	assertNormalisedFilter(context.schema, state.where)
 	const row = await context.use.deleteOne(state.where)
-	return context.shapeOneRow(state.select, state.preloads, row)
+	return context.shapeOneRow(state.select, state.preloads, row, 'deleteOne')
 }
 
 export async function runAllDelete<S extends AnySchema, Sel extends string, P extends readonly AnyPreloadDef[]>(
@@ -241,7 +250,7 @@ export async function runAllDelete<S extends AnySchema, Sel extends string, P ex
 ): Promise<SelectedWithPreloads<S, Sel, P>[]> {
 	assertNormalisedFilter(context.schema, state.where)
 	const rows = await context.use.deleteMany(state.where)
-	return context.shapeRows(state.select, state.preloads, rows)
+	return context.shapeRows(state.select, state.preloads, rows, 'deleteMany')
 }
 
 export async function runAggregate<S extends AnySchema>(

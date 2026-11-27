@@ -46,9 +46,9 @@ if (import.meta.vitest) {
 	const { EventLogSchema } = await import('./schema.js')
 
 	const UserSchema = Schema.from('users')
-		.pk('id', v.string(), () => `u-${Math.random()}`)
-		.field('email', v.string())
-		.field('createdAt', v.number(), { onCreate: () => Date.now() })
+		.pk('id', { input: v.string(), generate: () => `u-${Math.random()}` })
+		.field('email', { input: v.string() })
+		.field('createdAt', { input: v.number(), onCreate: () => Date.now() })
 		.build()
 
 	function makeRepo() {

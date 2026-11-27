@@ -9,7 +9,7 @@ import type { AnyUpdateOp } from './updates.js'
 
 type AnyOrmClass =
 	| Field<any, any>
-	| SchemaField<any, any, any>
+	| SchemaField<any, any, any, any>
 	| ComputedField<any, any, any>
 	| Schema<any, any, any>
 	| AnyRelDef
