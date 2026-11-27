@@ -18,6 +18,13 @@ is handed validated input.
 Each section below is the canonical reference for one layer or cross-cutting
 concern. Sections 13 and 14 cover principles and explicit non-goals.
 
+**Accepted design, not implemented:** [§18](#18-output-validation-and-atomic-mutations--accepted-design)
+records mandatory query-output validation and atomic schema-aware mutations.
+Its explicit revisions take precedence over the historical input-only validation
+and mutation-boundary descriptions where they conflict. Earlier API examples
+describe the shipped surface until that design is implemented; they are not
+compatibility overloads promised by the new design.
+
 ---
 
 ## 1. Definitions (the four artifact kinds)
@@ -27,6 +34,9 @@ static factory method `X.from(args)` that returns a builder, terminated by
 `.build()` (the **builder-chain rule** — see §2).
 
 ### 1.1 Schema
+
+The accepted input/output declaration split is recorded in [§18.2](#182-schema-declarations).
+The declaration example below still describes the shipped API.
 
 A **Schema** is a typed description of a single document shape — its name, its
 PK field, its data fields, and any computed fields. A Schema is
@@ -493,6 +503,12 @@ implements `findMany` but leaves `queryableOps = []`, the filter chain
 time check needed.
 
 ### 3.4 Per-op gating, parity, and the no-emulation rule
+
+The accepted runtime missing-capability policy is recorded in
+[§18.5](#185-mutation-transaction-boundary): unsupported invocations throw
+`TypeError` rather than silently succeeding or using nontransactional fallbacks.
+This supplements compile-time narrowing; supported methods' valid empty results
+and intentionally optional lifecycle hooks remain unchanged.
 
 **Per-op gating** is the TypeScript-level mechanism by which an undeclared op
 becomes a compile error. The op-list declarations (`queryableOps`, `updateOps`)
@@ -1325,8 +1341,13 @@ resolution pipeline; the tx connection routing happens inside the adapter.
 
 ## 7. Validation flow
 
-Validation runs once, in the package, at the Repo-entry boundary. Adapters
-never re-validate.
+The shipped input-validation flow runs in the package at the Repo-entry
+boundary; adapters receive validated input. The accepted design adds mandatory
+output validation before result consumption or exposure, described in
+[§18.3](#183-output-validation-boundaries), without asking Consumers to repeat
+checks after calls. The input-only validate-once description below remains
+historical for that part of the pipeline, not a prohibition on the accepted
+output boundary.
 
 ### 7.1 Repo-entry boundary and the validate-once rule
 
@@ -1470,6 +1491,11 @@ all failures across documents, and throws one `OrmValidationError` if any.
 ---
 
 ## 8. Transactions & sessions
+
+Explicit session behavior below remains in effect. The accepted mutation
+contract additionally requires paired `session()` / `ensureSession()` support;
+see [§18.5](#185-mutation-transaction-boundary). The adapter still owns transaction
+propagation and explicit-session nesting. No rollback-only behavior is added.
 
 ### 8.1 Session contract
 
@@ -3169,3 +3195,239 @@ paused-holder and transaction-publication qualification before support is claime
 Support is limited to local filesystems; shared network filesystems such as NFS
 and SMB are excluded. Unavailable native locking fails explicitly rather than
 falling back to polling markers or expiry-based takeover.
+
+---
+
+## 18. Output validation and atomic mutations — accepted design
+
+**Status:** Accepted design; not implemented. These contracts were settled
+during the design follow-up to [issue #196](https://github.com/andthexi/equipped/issues/196).
+Delivery boundaries are explicitly listed in §18.7; design acceptance is not
+implementation or release authorization.
+
+The [schema input/output ADR](../adr/2026-11-27-schema-input-output-contracts.md)
+and [atomic mutation ADR](../adr/2026-11-27-atomic-mutation-output-boundary.md)
+record the trade-offs. This section owns the resulting behavior contract.
+
+### 18.1 Language and scope
+
+- An **input pipe** accepts write input and may transform it into the persisted
+  representation.
+- An **output pipe** validates the persisted representation returned by storage
+  or produced by a generator. It preserves that representation apart from
+  native Valleyed stripping.
+- The **query output shape** is the selected record shape, computed values,
+  related documents, or aggregate/scalar envelope promised by a Repo query.
+- The **output boundary** is the schema-aware point where storage-returned data
+  is validated before internal consumption or exposure to the caller.
+- An **atomic mutation** combines an ordinary Repo write and its complete
+  validated result assembly within one transaction. It does not mean
+  whole-record replacement or certification of every unreturned changed field.
+- **Nontransactional acceptance** is the explicit `.allowNonTransactional()`
+  choice on an individual mutation chain whose adapter lacks transactions.
+  It accepts possible persistence despite a later failure, not unchecked output.
+- An **ensured session** joins the adapter's active transaction or opens an owned
+  one, without changing explicit-session nesting policy.
+
+Ordinary schema-aware Repo results are covered. Caller-chosen `raw()` and direct
+adapter/driver calls remain outside automatic output validation, and callers own
+their checks there. Type overrides are not runtime validation. Calls inside an
+ordinary Repo helper are not caller-chosen escapes and must be covered before
+their returned data is used or discarded.
+
+### 18.2 Schema declarations
+
+Field declarations use a required options object:
+
+```text
+.field(name, { input, output?, onCreate?, onUpdate? })
+.pk(name, { input, output?, generate })
+.computed(name, { deps, output, compute })
+```
+
+- `input` is required for persisted fields and primary keys. Primary-key
+  `generate` remains required. `onCreate` / `onUpdate` remain optional field
+  generators in that same object. Computed fields have no write input.
+- Require `output` when the input pipe's input and output types differ. Allow
+  an explicit output override when they match. Omitting it means the author
+  guarantees that the input pipe is safe to reuse for stored values.
+- The output pipe accepts and returns the input pipe's output type. Equal types
+  do not prove absence of transformations or defaults; authors must not use
+  output transforms/defaults to conceal invalid stored values. There is no
+  automatic inference of safe reuse from runtime pipe internals.
+- Caller-supplied values use the input pipe. `generate`, `onCreate`, and
+  `onUpdate` produce persisted values and use the output pipe before writing;
+  input transformations are not replayed on generator output.
+- No old positional-pipe declaration overload or legacy `.pipe` alias is
+  retained as a compatibility mechanism. The exact updated internal field
+  representation follows these two responsibilities, without a second schema
+  source of truth.
+- `PatchOp` remains an explicitly selected escape from nested input-pipe
+  validation. Its ordinary Repo response is still subject to output validation.
+
+### 18.3 Output validation boundaries
+
+- Validate the query output shape, not the full underlying record after a
+  partial select. Top-level selection remains unchanged; selecting a JSON field
+  validates its complete returned nested value. Preserve required/optional field
+  semantics rather than making the whole record optional.
+- Validate fetched computed dependencies and relationship keys before using
+  them. Retain hidden dependencies until computation/preload attachment is
+  complete, then apply the caller's projection. Do not fetch other fields solely
+  because a mutation changed them; output validity is not mutation-state validity.
+- Validate containers before field access. Only literal `null` means a valid
+  no-match for nullable single-row operations. `undefined`, `false`, numbers and
+  malformed records fail output validation. `.required()` keeps its not-found
+  error for valid `null`, not for malformed values.
+- Validate multi-row containers and rows together. A valid empty array is
+  retained; any invalid row rejects the result, with no filtering of bad rows.
+  Create responses must contain exactly as many records as submitted, including
+  exactly one for single create and zero for empty input. Update/delete counts
+  remain match-dependent.
+- Top-level and preloaded documents share the same validation/assembly behavior,
+  including computed values and recursive preloads. Validate each fetched target
+  before grouping, key use, recursion, or computation. An invalid related
+  document fails the result rather than becoming a missing relation.
+- Iteration validates each document and its requested output before yielding.
+  Stop at the first invalid document and close the underlying iterator/cursor.
+  Prior yields cannot be retracted; do not skip invalid documents, buffer the
+  whole result, or fetch later documents merely to collect additional failures.
+- Preserve Valleyed's native object stripping. Use its all-errors compilation
+  for the applicable document or fetched batch, retaining nested failures in
+  `PipeError` rather than implementing another recursive error collector.
+- Report validation failures through `OrmValidationError` with `kind: 'output'`,
+  keeping schema/operation context and failure locations. Retain validator
+  details, causes, and rejected values; Consumers own sanitization before logging
+  or exposing errors. Storage execution and transaction-settlement failures
+  remain distinguishable from invalid data.
+- Validate internal responses implementing ordinary Repo operations, including
+  lookup results used for mutation IDs and mutation responses discarded by
+  helpers. A final public-result check alone is insufficient.
+
+### 18.4 Scalar and aggregate output
+
+- `.count()`, aggregate `count`, and `countDistinct` return nonnegative safe
+  integers. Validate before pagination calculations; no coercion or rounding at
+  the validation boundary. Legitimate backend decoding remains separate.
+- `countDistinct` counts distinct non-null, non-missing values; zero contributing
+  values produce `0`. Align adapters rather than counting absence as a value.
+- `min` / `max` return a source-field output value or `null` when no non-null
+  value exists. Validate non-null values with that field's output pipe. A missing
+  alias is invalid output, not absence.
+- `sum` / `avg` return a finite number or `null` when no non-null numeric inputs
+  contribute. Ignore null/missing inputs; preserve genuine zero. Do not reuse
+  source-field bounds for derived sums/averages. Align adapter null semantics
+  without treating conversion/defaulting as validation.
+- Ungrouped empty input has one summary before `having`: counts are `0` and
+  `min` / `max` / `sum` / `avg` are `null`. Adapters must establish this bucket
+  before applying `having`, not synthesize it after a filter rejects it.
+- Ungrouped queries without `having` require exactly one adapter result row;
+  with `having`, zero or one is valid and zero becomes public `null`. Multiple
+  rows fail validation rather than being truncated. Ungrouped return types are
+  `R | null`; grouped results remain `R[]`, including valid `[]`.
+- Grouped output validates each group key with its field's output pipe and each
+  aggregate alias with its operation-specific pipe. One invalid group fails the
+  entire result; preserve native stripping. These checks do not certify every
+  source document that the database internally aggregated.
+
+### 18.5 Mutation transaction boundary
+
+- Transactional adapters declare both `session(fn)` and `ensureSession(fn)`.
+  Each takes `() => Promise<T>` and returns `Promise<T>`. An incomplete pair is a
+  type/configuration error, never an implicit nontransactional fallback.
+- Repo calls adapter-owned `ensureSession` for ordinary schema-aware mutation
+  execution and complete output assembly. Without an active transaction it opens
+  one, validates internal responses/computed values/preloads, assembles the
+  result, then commits. Successful owned calls resolve only after commit.
+- With an active transaction, `ensureSession` joins it without a new transaction,
+  savepoint, or independent commit. A validated mutation result within an outer
+  session does not certify that session's eventual commit.
+- Explicit `session()` retains adapter-defined nesting. Transaction detection,
+  context propagation, native locking/connection use, and settlement stay in the
+  adapter; no Repo-owned transaction handle or context replaces them.
+- Preserve ordinary exception propagation: an uncaught error in a session
+  callback triggers rollback, with that same error propagating after successful
+  rollback. Catch outside the session for rollback. Catching inside may permit
+  commit; no rollback-only marker, poisoned state, or refusal of later operations
+  merely because an earlier error was caught.
+- Nontransactional adapters' mutation terminals are unavailable until
+  `.allowNonTransactional()` on the individual chain. The modifier is unavailable
+  on transactional adapters and never disables an existing transaction. Untyped
+  or forged calls without required acceptance fail before writing.
+- Unsupported ORM invocations throw `TypeError`, supplementing capability
+  narrowing. This covers missing adapter methods, mutations without transaction
+  support or explicit acceptance, and incomplete `session`/`ensureSession` pairs.
+  Check composite helpers' required capabilities before internal calls or callback
+  execution. Replace existing missing-method plain errors and silent empty-result,
+  empty-iterator, no-op deletion, and session callback fallbacks. Do not change
+  supported methods' valid `null`/`[]` results, optional lifecycle hooks, or
+  classification of genuine storage and validation failures.
+- Explicitly accepted nontransactional execution still validates output. A write
+  applied before response validation fails remains applied; validation does not
+  undo it. Propagate the ordinary `OrmValidationError` without a persistence-outcome
+  field or wrapper: `.allowNonTransactional()` already expresses the caller's
+  acceptance. Input rejection, valid no-match results, and other execution
+  failures do not themselves prove that a write occurred. No rollback is claimed.
+- Observable rollback failure and uncertain commit must be reported truthfully,
+  using the existing `EquippedError` with structured
+  `context.phase: 'commit' | 'rollback'` and `context.outcome: 'uncertain'`.
+  Retain the underlying settlement error and any original callback error; no new
+  error class is added. Successful rollback propagates the original callback
+  error unchanged. Never use the validation exception as proof that nothing
+  changed when rollback cannot be confirmed. No silent downgrade, retry, callback
+  replay, compensating mutation, repair, or distributed transaction is introduced.
+  Existing explicit storage locks remain independent and span participating work
+  through settlement.
+
+### 18.6 Verification contract
+
+Use real InMemory Repo operations with controlled malformed adapter responses.
+Verify input transformations versus output validation, generated persisted
+values, selections, hidden dependencies, computeds, preloads, container and
+cardinality failures, aggregate semantics, iteration cleanup, and diagnostic
+retention. Confirm standalone transactional writes and explicit grouped work
+roll back on escaping failures, and preserve the original validation error after
+successful rollback. Use a controlled nontransactional adapter to verify refusal
+before writing and truthful accepted weaker semantics. Check incomplete
+capability pairs, same-adapter join behavior, and no automatic replay.
+
+Exercise unsupported calls through the runtime boundary as well as ordinary type
+checks: confirm `TypeError` for every affected missing capability, with no
+callback or underlying query/write dispatched. Preserve valid no-match/empty
+results from supported methods and optional lifecycle behavior.
+
+Controlled transaction-settlement failures must verify the existing
+`EquippedError` carries the accepted phase and uncertain outcome while retaining
+underlying errors, distinct from unchanged callback-error propagation after
+successful rollback. Include controlled PostgreSQL rollback-failure coverage for
+the reporting correction in issue #195. This does not establish live backend
+rollback qualification.
+
+Owning docs, standard TypeScript checks, and applicable repository quality gates
+must cover the changed surface. InMemory tests and controlled driver failures do
+not qualify live persistent backends. No live database setup/probe is authorized
+by these design decisions. No separate Consumer repository wrapper or generic
+test-registration framework is required.
+
+### 18.7 Delivery boundaries
+
+- Pre-dispatch capability refusal uses `TypeError`; no extra persistence-outcome
+  metadata is added to ordinary nontransactional output-validation errors.
+  Settlement uncertainty uses the accepted `EquippedError` phase/outcome contract.
+- Include the bounded PostgreSQL rollback-reporting correction from
+  [issue #195](https://github.com/andthexi/equipped/issues/195) in the transaction
+  Slice, with controlled failure tests for the accepted settlement-error contract.
+  It is included work, not an external prerequisite. Do not add live database
+  setup, automatic retries, or broader transaction redesign, and do not claim
+  runtime qualification from source inspection. Design acceptance does not itself
+  authorize implementation.
+- These decisions supply the dependency contract assumed for the separate
+  [Gorchestra Change #66](https://github.com/andthexi/gorchestra/issues/66) review.
+  They do not revise its issue bodies, authorize Core implementation or upgrade
+  its installed Equipped version.
+- Persisted results are trusted only within the stated schema-aware scope;
+  ownership, authorization, domain invariants, safe response projection, and
+  multi-operation transaction grouping remain Consumer/domain responsibilities.
+- Patch input semantics, nested-selection expansion, raw/direct validation,
+  unreturned mutation-state certification, compatibility layers, automatic
+  recovery, and new transaction control APIs are outside this design.

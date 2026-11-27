@@ -1,0 +1,38 @@
+# Atomic schema-aware mutations and adapter-owned session composition
+
+**Status:** Accepted design; not implemented.
+
+A database write can succeed before Repo rejects its returned data. Output validation alone therefore cannot promise that a rejected mutation left storage unchanged. Equipped will encompass each ordinary schema-aware mutation and its complete output pipeline in an adapter-owned transaction when supported. Explicit sessions still group multiple domain operations. The accepted contract is recorded in [ORM context §18](../orm/CONTEXT.md#18-output-validation-and-atomic-mutations--accepted-design).
+
+## Decision
+
+- Transactional adapters implement both `session<T>(fn: () => Promise<T>): Promise<T>` and `ensureSession<T>(fn: () => Promise<T>): Promise<T>`. An incomplete pair is a type/configuration error, not a nontransactional fallback.
+- `ensureSession(fn)` joins the active transaction or opens an owned transaction when none is active. It does not create an independent commit or savepoint when joining. Adapters own transaction detection, context propagation, backend connections and settlement.
+- Repo uses `ensureSession` around ordinary create, update, upsert and delete execution, including internal responses, computed evaluation, requested preloads and validated result assembly. An owned transaction commits only after the complete pipeline succeeds, and the outer operation resolves only after successful commit.
+- Explicit `session()` retains adapter-defined nesting semantics. An operation inside a caller-owned transaction returns a validated result within that transaction, not a claim that the enclosing transaction is committed.
+- Preserve ordinary throw-to-rollback semantics. An uncaught callback error triggers rollback and the same error propagates when rollback succeeds. Catch outside the session to ensure rollback. Catching inside may permit commit; no rollback-only marker, poisoned transaction state, new transaction handle or implicit recovery is introduced.
+- Nontransactional adapters expose mutation terminals only after `.allowNonTransactional()` on the individual mutation chain. The modifier is unavailable on transactional adapters; it never disables a transaction. Untyped or forged calls without the required acceptance fail before writing.
+- Output validation remains mandatory in explicitly nontransactional execution. If a write is applied before its response fails validation, it remains applied; validation does not undo it. Propagate the ordinary `OrmValidationError` without an additional persistence-outcome field or wrapper. The caller explicitly accepted this limitation through `.allowNonTransactional()`. This does not imply that input rejection, no-match results, or other execution failures prove a write occurred.
+- Transaction capability absence, malformed capability pairs, transaction-start failures and validation failures must not select a silent fallback. No callback retry, compensating write, automatic repair or distributed transaction is added.
+- Standardize unsupported ORM invocation handling on `TypeError`, alongside compile-time capability narrowing. A mutation without transaction support or explicit nontransactional acceptance, an incomplete `session`/`ensureSession` pair, or invocation of a missing adapter method fails before executing its callback or dispatching that operation. Replace existing missing-method plain errors and silent empty-result, empty-iterator, no-op deletion, or nontransactional session fallbacks. Check composite helpers' required capabilities before their internal calls; legitimate no-match/empty results from supported methods and intentionally optional lifecycle hooks remain unchanged.
+- After successful rollback, propagate the original callback error, including `OrmValidationError`, unchanged. Report observable rollback failure or an unconfirmed commit outcome through the existing `EquippedError`, with structured `context.phase: 'rollback' | 'commit'` and `context.outcome: 'uncertain'`. Retain the underlying settlement error and any original callback error without presenting either as proof that storage was unchanged. No new settlement-error class is introduced.
+- Include the bounded PostgreSQL rollback-reporting correction described in [issue #195](https://github.com/andthexi/equipped/issues/195) in this Change's transaction Slice. Stop suppressing observed rollback failures and test the accepted error classification and diagnostic retention with controlled driver failures. This is included scope, not an external prerequisite; it authorizes no live database setup, automatic retries, or broader transaction redesign. Implementation still requires separate authorization.
+
+## Considered options
+
+- **Require Core or other Consumers to transact every individual write for output validation.** Rejected: Repo owns the write/result contract; requiring a wrapper at each call preserves the omission problem. Consumers still own larger domain transaction boundaries.
+- **Call `session()` indiscriminately for mutations.** Rejected: adapters can define nested session behavior differently. Join-or-open needs a distinct `ensureSession` contract rather than assuming nested sessions are always flat.
+- **Repo-owned transaction context or handles.** Rejected: adapters already own backend-specific routing and lifetime. Repo requests the guarantee, not the mechanism.
+- **Repo-wide nontransactional opt-in.** Rejected: one setting would silently weaken unrelated mutations. Acceptance belongs to the specific mutation chain.
+- **Expose the opt-in as a no-op on transactional adapters.** Rejected: unnecessary surface that suggests transactions can be disabled.
+- **Add persistence-outcome metadata to nontransactional output-validation errors.** Rejected: the caller explicitly chose nontransactional execution and owns its consequences; retain the ordinary validation error and document that applied writes are not undone.
+- **Preserve inconsistent runtime missing-capability responses.** Rejected: unsupported calls must not resemble successful empty queries or completed writes. Use the existing Repo lock/Migrator `TypeError` convention consistently; do not replace genuine storage or validation errors with misuse errors.
+- **Mark a transaction rollback-only after any caught validation error.** Reconsidered and rejected: ordinary uncaught-throw session behavior is the accepted policy. Explicit caller exception handling remains meaningful.
+
+## Consequences and existing contracts
+
+This narrows the statement in the [ALS resolver ADR](2026-05-05-library-owned-als-runtime-resolver.md) that the framework has no role in transaction semantics: Repo now requires a mutation/result atomicity guarantee, but does not take ownership of transaction propagation. The [InMemory root-session ADR](2026-11-12-in-memory-root-session-serialization.md) remains valid: its flat nested sessions and admission snapshot remain adapter mechanisms; `ensureSession` joins the same active transaction.
+
+Partial updates and `PatchOp` can execute atomically; atomicity does not mean whole-record replacement. Output validation only certifies the returned query shape and internally required dependencies, not every unreturned changed field. Raw/direct calls remain escape hatches. Nontransactional adapters cannot guarantee undo, and successful shape validation cannot establish a successful commit.
+
+At-most-once callback policy is retained; `ensureSession` must not turn a one-call mutation into automatically replayed work. Existing explicit storage-lock policy remains separate, with ownership spanning mutation/session settlement when the caller participates in a lock.
