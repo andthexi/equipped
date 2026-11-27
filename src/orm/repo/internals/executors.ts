@@ -1,3 +1,4 @@
+import { validateAggregateOutput, validateNonNegativeSafeIntegerOutput } from '../../aggregate-validations.js'
 import { assertNormalisedAggregate, assertNormalisedFilter, FilterGroup } from '../../filter.js'
 import type { AggregateSpec } from '../../orm-adapter.js'
 import type { IterationOptions, OrderBy } from '../../query-options.js'
@@ -78,7 +79,8 @@ export async function runAllCount<S extends AnySchema>(
 	state: { where: FilterGroup },
 ): Promise<number> {
 	assertNormalisedFilter(context.schema, state.where)
-	return context.use.count(state.where)
+	const count = await context.use.count(state.where)
+	return validateNonNegativeSafeIntegerOutput(context.schema, count, 'count')
 }
 
 function toPaginated<T>(items: T[], total: number, limit: number | undefined, current: number): Paginated<T> {
@@ -136,8 +138,9 @@ export async function runAllPaginate<S extends AnySchema, Sel extends string, P 
 		}),
 		use.count(state.where),
 	])
+	const validatedTotal = validateNonNegativeSafeIntegerOutput(context.schema, total, 'paginate')
 	const items = await context.shapeRows(state.select, state.preloads, rows, 'paginate')
-	return toPaginated(items, total, query.limit, query.current)
+	return toPaginated(items, validatedTotal, query.limit, query.current)
 }
 
 export async function* runAllIterate<S extends AnySchema, Sel extends string, P extends readonly AnyPreloadDef[]>(
@@ -275,5 +278,6 @@ export async function runAggregate<S extends AnySchema>(
 	spec: AggregateSpec,
 ): Promise<Array<Record<string, unknown>>> {
 	assertNormalisedAggregate(context.schema, context.use, spec)
-	return context.use.aggregate(spec)
+	const rows = await context.use.aggregate(spec)
+	return validateAggregateOutput(context.schema, spec, rows)
 }

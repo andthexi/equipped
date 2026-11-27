@@ -942,6 +942,62 @@ if (import.meta.vitest) {
 			expect(json.aggregateOps).toEqual(['count', 'countDistinct', 'sum', 'avg', 'min', 'max'])
 		})
 
+		test('empty, all-null, and mixed aggregates follow nullable in-memory semantics', async () => {
+			let id = 0
+			const SparseSchema = Schema.from('sparse_aggregate_values')
+				.pk('id', { input: v.string(), generate: () => `s-${++id}` })
+				.field('value', { input: v.optional(v.nullable(v.number())) })
+				.field('label', { input: v.optional(v.nullable(v.string())) })
+				.build()
+			const adapter = JsonAdapter.create({ filePath })
+			await adapter.connect()
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
+			const empty = await repo
+				.on(SparseSchema)
+				.aggregate()
+				.sum(SparseSchema.fields.value, 'total')
+				.avg(SparseSchema.fields.value, 'average')
+				.countDistinct(SparseSchema.fields.label, 'uniqueLabels')
+				.run()
+			expect(empty).toEqual({ total: null, average: null, uniqueLabels: 0 })
+
+			await repo
+				.on(SparseSchema)
+				.all()
+				.create([
+					{ value: null, label: null },
+					{ value: undefined, label: undefined },
+				])
+			const allNull = await repo
+				.on(SparseSchema)
+				.aggregate()
+				.sum(SparseSchema.fields.value, 'total')
+				.avg(SparseSchema.fields.value, 'average')
+				.countDistinct(SparseSchema.fields.label, 'uniqueLabels')
+				.run()
+			expect(allNull).toEqual({ total: null, average: null, uniqueLabels: 0 })
+
+			await repo
+				.on(SparseSchema)
+				.all()
+				.create([
+					{ value: 0, label: 'x' },
+					{ value: 4, label: 'x' },
+					{ value: undefined, label: 'y' },
+				])
+			const mixed = await repo
+				.on(SparseSchema)
+				.aggregate()
+				.sum(SparseSchema.fields.value, 'total')
+				.avg(SparseSchema.fields.value, 'average')
+				.countDistinct(SparseSchema.fields.label, 'uniqueLabels')
+				.run()
+			expect(mixed).toEqual({ total: 4, average: 2, uniqueLabels: 2 })
+			await adapter.disconnect()
+		})
+
 		test('count returns identical result to in-memory', async () => {
 			const adapter = await makeSeededAdapter()
 			const result = await adapter.aggregate(

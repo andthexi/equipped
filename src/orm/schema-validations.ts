@@ -72,12 +72,18 @@ function outputFailure(cause: unknown, field?: string, rowIndex?: number): OrmVa
 	return { cause, ...(field === undefined ? {} : { field }), ...(rowIndex === undefined ? {} : { rowIndex }) }
 }
 
-export function validateFieldOutput(schema: AnySchema, fieldName: string, value: unknown, operation: string): unknown {
+export function validateFieldOutput(
+	schema: AnySchema,
+	fieldName: string,
+	value: unknown,
+	operation: string,
+	rowIndex?: number,
+): unknown {
 	const field = schema.fields[fieldName]
 	if (!field) throw new TypeError(`Unknown schema field "${fieldName}" on ${schema.name}`)
 	const result = compileOutput(field.output)(value)
 	if (result instanceof PipeError) {
-		throw new OrmValidationError('output', schema.name, operation, [outputFailure(result, fieldName)])
+		throw new OrmValidationError('output', schema.name, operation, [outputFailure(result, fieldName, rowIndex)])
 	}
 	return result
 }

@@ -534,7 +534,7 @@ export class AggregateBuilder<
 		})
 	}
 
-	groupBy<F extends readonly Field<string | number | boolean | Date>[]>(
+	groupBy<F extends readonly Field<string | number | boolean | Date | null | undefined>[]>(
 		...fields: HasGroupBy extends true ? [never] : [...F]
 	): AggregateBuilder<S, A, Aggs, GroupKeys & FieldsToGroupKeys<F>, true, HasWhere, HasHaving> {
 		return new AggregateBuilder<S, A, Aggs, GroupKeys & FieldsToGroupKeys<F>, true, HasWhere, HasHaving>(
@@ -575,10 +575,10 @@ export class AggregateBuilder<
 	}
 
 	sum<K extends string>(
-		field: Field<number>,
+		field: Field<number | null | undefined>,
 		...[alias]: K extends keyof Aggs ? [never] : [alias: K]
-	): AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving> {
-		return new AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(
+	): AggregateBuilder<S, A, Aggs & Record<K, number | null>, GroupKeys, HasGroupBy, HasWhere, HasHaving> {
+		return new AggregateBuilder<S, A, Aggs & Record<K, number | null>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(
 			this.#context,
 			{
 				...this.#state,
@@ -588,10 +588,10 @@ export class AggregateBuilder<
 	}
 
 	avg<K extends string>(
-		field: Field<number>,
+		field: Field<number | null | undefined>,
 		...[alias]: K extends keyof Aggs ? [never] : [alias: K]
-	): AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving> {
-		return new AggregateBuilder<S, A, Aggs & Record<K, number>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(
+	): AggregateBuilder<S, A, Aggs & Record<K, number | null>, GroupKeys, HasGroupBy, HasWhere, HasHaving> {
+		return new AggregateBuilder<S, A, Aggs & Record<K, number | null>, GroupKeys, HasGroupBy, HasWhere, HasHaving>(
 			this.#context,
 			{
 				...this.#state,
@@ -600,13 +600,13 @@ export class AggregateBuilder<
 		)
 	}
 
-	min<F extends Field<number | string | Date>, K extends string>(
+	min<F extends Field<number | string | Date | null | undefined>, K extends string>(
 		field: F,
 		...[alias]: K extends keyof Aggs ? [never] : [alias: K]
 	): AggregateBuilder<
 		S,
 		A,
-		Aggs & Record<K, F extends Field<infer V> ? V : never>,
+		Aggs & Record<K, F extends Field<infer V> ? Exclude<V, null | undefined> | null : never>,
 		GroupKeys,
 		HasGroupBy,
 		HasWhere,
@@ -615,7 +615,7 @@ export class AggregateBuilder<
 		return new AggregateBuilder<
 			S,
 			A,
-			Aggs & Record<K, F extends Field<infer V> ? V : never>,
+			Aggs & Record<K, F extends Field<infer V> ? Exclude<V, null | undefined> | null : never>,
 			GroupKeys,
 			HasGroupBy,
 			HasWhere,
@@ -626,13 +626,13 @@ export class AggregateBuilder<
 		})
 	}
 
-	max<F extends Field<number | string | Date>, K extends string>(
+	max<F extends Field<number | string | Date | null | undefined>, K extends string>(
 		field: F,
 		...[alias]: K extends keyof Aggs ? [never] : [alias: K]
 	): AggregateBuilder<
 		S,
 		A,
-		Aggs & Record<K, F extends Field<infer V> ? V : never>,
+		Aggs & Record<K, F extends Field<infer V> ? Exclude<V, null | undefined> | null : never>,
 		GroupKeys,
 		HasGroupBy,
 		HasWhere,
@@ -641,7 +641,7 @@ export class AggregateBuilder<
 		return new AggregateBuilder<
 			S,
 			A,
-			Aggs & Record<K, F extends Field<infer V> ? V : never>,
+			Aggs & Record<K, F extends Field<infer V> ? Exclude<V, null | undefined> | null : never>,
 			GroupKeys,
 			HasGroupBy,
 			HasWhere,
@@ -654,7 +654,7 @@ export class AggregateBuilder<
 
 	async run(
 		..._: [keyof Aggs] extends [never] ? [never] : []
-	): Promise<HasGroupBy extends true ? (Aggs & GroupKeys)[] : Aggs> {
+	): Promise<HasGroupBy extends true ? (Aggs & GroupKeys)[] : Aggs | null> {
 		const spec: AggregateSpec = {
 			aggregates: this.#aggregates,
 			groupBy: this.#groupBy,
@@ -669,7 +669,7 @@ export class AggregateBuilder<
 		if (this.#groupBy.length > 0) {
 			return rows as any
 		}
-		return rows[0] as any
+		return (rows[0] ?? null) as any
 	}
 }
 

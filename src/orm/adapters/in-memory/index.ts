@@ -563,16 +563,22 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 						result[agg.alias] = groupRows.length
 						break
 					case 'countDistinct': {
-						const vals = new Set(groupRows.map((r) => JSON.stringify(r[agg.field!])))
+						const vals = new Set(
+							groupRows
+								.map((row) => row[agg.field!])
+								.filter((value) => value !== null && value !== undefined)
+								.map((value) => JSON.stringify(value)),
+						)
 						result[agg.alias] = vals.size
 						break
 					}
 					case 'sum':
-						result[agg.alias] = groupRows.reduce((acc, r) => acc + Number(r[agg.field!] ?? 0), 0)
-						break
 					case 'avg': {
-						const sum = groupRows.reduce((acc, r) => acc + Number(r[agg.field!] ?? 0), 0)
-						result[agg.alias] = groupRows.length > 0 ? sum / groupRows.length : 0
+						const values = groupRows
+							.map((row) => row[agg.field!])
+							.filter((value): value is number => value !== null && value !== undefined)
+						const sum = values.reduce((acc, value) => acc + value, 0)
+						result[agg.alias] = values.length === 0 ? null : agg.fn === 'sum' ? sum : sum / values.length
 						break
 					}
 					case 'min': {

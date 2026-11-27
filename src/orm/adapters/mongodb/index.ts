@@ -881,11 +881,64 @@ if (import.meta.vitest) {
 					groupBy: [],
 				},
 			)
-			expect(capturedPipeline).toEqual([
-				{ $group: { _id: null, total: { $sum: 1 }, revenue: { $sum: '$amount' } } },
-				{ $project: { _id: 0, total: 1, revenue: 1 } },
-			])
+			const pipeline = capturedPipeline as any[]
+			const branch = pipeline[0].$facet.__equipped_aggregate_rows
+			expect(branch[0].$group).toMatchObject({
+				_id: null,
+				total: { $sum: 1 },
+				revenue: { $sum: '$amount' },
+			})
+			expect(pipeline[1].$project.__equipped_aggregate_rows.$cond[2]).toEqual([{ total: 0, revenue: null }])
 			expect(result).toEqual(mockResults)
+		})
+
+		test('Repo validates controlled Mongo aggregate results and empty having output', async () => {
+			const { Schema } = await import('../../schema.js')
+			const { Repo } = await import('../../repo/repo.js')
+			const { v } = await import('valleyed')
+			let resultRows: Array<Record<string, unknown>> = [{ total: null, average: null, unique: 0 }]
+			let capturedPipeline: unknown
+			const schema = Schema.from('mongo_aggregate_repo')
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('amount', { input: v.optional(v.nullable(v.number())) })
+				.field('label', { input: v.optional(v.nullable(v.string())) })
+				.build()
+			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
+			;(adapter.client as any).db = () => ({
+				collection: () => ({
+					aggregate: (pipeline: unknown) => {
+						capturedPipeline = pipeline
+						return { toArray: async () => resultRows }
+					},
+				}),
+			})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ db: 'testdb', col: name }))
+				.build()
+			const query = () =>
+				repo
+					.on(schema)
+					.aggregate()
+					.sum(schema.fields.amount, 'total')
+					.avg(schema.fields.amount, 'average')
+					.countDistinct(schema.fields.label, 'unique')
+
+			expect(await query().run()).toEqual({ total: null, average: null, unique: 0 })
+			expect((capturedPipeline as any)[0].$facet).toBeDefined()
+
+			resultRows = [{ total: 0, average: 0, unique: 2 }]
+			expect(await query().run()).toEqual({ total: 0, average: 0, unique: 2 })
+
+			resultRows = []
+			expect(
+				await query()
+					.having((q) => q.gt('unique', 0))
+					.run(),
+			).toBeNull()
+			await expect(query().run()).rejects.toMatchObject({ kind: 'output' })
+
+			resultRows = [{ total: Number.POSITIVE_INFINITY, average: 0, unique: 1 }]
+			await expect(query().run()).rejects.toMatchObject({ kind: 'output' })
 		})
 
 		test('aggregate with where and groupBy produces correct pipeline', async () => {
