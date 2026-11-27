@@ -130,9 +130,11 @@ export class SchemaBuilder<
 		P extends Pipe<any, any>,
 	>(
 		name: K extends keyof SchemaPersistedOutput<Schema<N, PKField, F, C>> | keyof C ? never : K,
-		deps: Deps,
-		pipe: P,
-		compute: (data: Pick<SchemaPersistedOutput<Schema<N, PKField, F, C>>, Deps[number]>) => PipeOutput<P>,
+		options: {
+			deps: Deps
+			output: P
+			compute: (data: Pick<SchemaPersistedOutput<Schema<N, PKField, F, C>>, Deps[number]>) => PipeOutput<P>
+		},
 	): SchemaBuilder<
 		N,
 		PKField,
@@ -141,7 +143,11 @@ export class SchemaBuilder<
 			[Key in keyof C | K]: Key extends K ? ComputedField<K, P, Deps> : Key extends keyof C ? C[Key] : never
 		}
 	> {
-		const nextComputed = { ...this.#computedDefs, [name]: new ComputedField(name as K, pipe, deps, compute as any) }
+		const { deps, output, compute } = options
+		const nextComputed = {
+			...this.#computedDefs,
+			[name]: new ComputedField(name as K, output, deps, compute as any),
+		}
 		return new SchemaBuilder(this.#name, this.#pkField, { ...this.#fieldDefs }, nextComputed) as any
 	}
 
@@ -354,7 +360,11 @@ if (import.meta.vitest) {
 					.pk('id', { input: v.string(), generate: () => 'u1' })
 					.field('name', { input: v.string() })
 					.field('email', { input: v.string() })
-					.computed('display', ['name', 'email'], v.string(), ({ name, email }) => `${name} <${email}>`)
+					.computed('display', {
+						deps: ['name', 'email'],
+						output: v.string(),
+						compute: ({ name, email }) => `${name} <${email}>`,
+					})
 					.build()
 
 				expect(Object.keys(WithComputed.computedDefs)).toEqual(['display'])
@@ -368,7 +378,11 @@ if (import.meta.vitest) {
 				const WithComputed = Schema.from('users')
 					.pk('id', { input: v.string(), generate: () => 'u1' })
 					.field('name', { input: v.string() })
-					.computed('nameUpper', ['name'], v.string(), ({ name }) => name.toUpperCase())
+					.computed('nameUpper', {
+						deps: ['name'],
+						output: v.string(),
+						compute: ({ name }) => name.toUpperCase(),
+					})
 					.build()
 
 				type Out = SchemaOutput<typeof WithComputed>
@@ -441,7 +455,11 @@ if (import.meta.vitest) {
 			const base = Schema.from('test')
 				.pk('id', { input: v.string(), generate: () => 'x' })
 				.field('name', { input: v.string() })
-			const a = base.computed('upper', ['name'], v.string(), ({ name }) => name.toUpperCase())
+			const a = base.computed('upper', {
+				deps: ['name'],
+				output: v.string(),
+				compute: ({ name }) => name.toUpperCase(),
+			})
 			expect(a).not.toBe(base)
 		})
 
@@ -458,7 +476,13 @@ if (import.meta.vitest) {
 			const base = Schema.from('test')
 				.pk('id', { input: v.string(), generate: () => 'x' })
 				.field('name', { input: v.string() })
-			const withComputed = base.computed('upper', ['name'], v.string(), ({ name }) => name.toUpperCase()).build()
+			const withComputed = base
+				.computed('upper', {
+					deps: ['name'],
+					output: v.string(),
+					compute: ({ name }) => name.toUpperCase(),
+				})
+				.build()
 			const withoutComputed = base.build()
 
 			expect(Object.keys(withComputed.computedDefs)).toEqual(['upper'])

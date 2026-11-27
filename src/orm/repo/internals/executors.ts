@@ -15,6 +15,7 @@ import type { AnySchema } from '../../schema.js'
 import { SetOp, isUpdateOp, type AnyUpdateOp } from '../../updates.js'
 import type { SchemaContext, UpsertInput } from '../builders.js'
 import { planSelection } from './computeds.js'
+import { requiredPreloadFields } from './preloads.js'
 import {
 	assertNormalisedFindReadShape,
 	normaliseAllFindReadShape,
@@ -35,7 +36,11 @@ export async function runOneRead<S extends AnySchema, Sel extends string, P exte
 ): Promise<SelectedWithPreloads<S, Sel, P> | null> {
 	assertNormalisedFilter(context.schema, state.where)
 	assertNormalisedFindReadShape(context.schema, 'findOne', state)
-	const plan = planSelection(context.schema, state.select as readonly string[] | undefined)
+	const plan = planSelection(
+		context.schema,
+		state.select as readonly string[] | undefined,
+		requiredPreloadFields(context.schema, state.preloads),
+	)
 	const rows = await context.use.findMany(state.where, { select: plan.adapterSelect, limit: 1 })
 	const [row] = await context.shapeRows(state.select, state.preloads, rows, 'findOne', { maximum: 1 })
 	return row ?? null
@@ -54,7 +59,11 @@ export async function runAllRead<S extends AnySchema, Sel extends string, P exte
 ): Promise<SelectedWithPreloads<S, Sel, P>[]> {
 	assertNormalisedFilter(context.schema, state.where)
 	const query = normaliseAllFindReadShape(context.schema, 'findMany', state)
-	const plan = planSelection(context.schema, state.select as readonly string[] | undefined)
+	const plan = planSelection(
+		context.schema,
+		state.select as readonly string[] | undefined,
+		requiredPreloadFields(context.schema, state.preloads),
+	)
 	const rows = await context.use.findMany(state.where, {
 		select: plan.adapterSelect,
 		orderBy: [...state.orderBy],
@@ -104,7 +113,11 @@ export async function runAllPaginate<S extends AnySchema, Sel extends string, P 
 ): Promise<Paginated<SelectedWithPreloads<S, Sel, P>>> {
 	assertNormalisedFilter(context.schema, state.where)
 	const query = normaliseAllPaginateReadShape(context.schema, 'paginate', state)
-	const plan = planSelection(context.schema, state.select as readonly string[] | undefined)
+	const plan = planSelection(
+		context.schema,
+		state.select as readonly string[] | undefined,
+		requiredPreloadFields(context.schema, state.preloads),
+	)
 	const use = context.use
 	if (query.limit === undefined) {
 		const rows = await use.findMany(state.where, {
@@ -141,7 +154,11 @@ export async function* runAllIterate<S extends AnySchema, Sel extends string, P 
 ): AsyncGenerator<SelectedWithPreloads<S, Sel, P>, void, void> {
 	assertNormalisedFilter(context.schema, state.where)
 	const query = normaliseAllIterateReadShape(context.schema, 'iterate', state, options)
-	const plan = planSelection(context.schema, state.select as readonly string[] | undefined)
+	const plan = planSelection(
+		context.schema,
+		state.select as readonly string[] | undefined,
+		requiredPreloadFields(context.schema, state.preloads),
+	)
 
 	for await (const row of context.use.iterateMany(state.where, {
 		select: plan.adapterSelect,
@@ -150,7 +167,7 @@ export async function* runAllIterate<S extends AnySchema, Sel extends string, P 
 		offset: query.offset,
 		...(query.batchSize === undefined ? {} : { batchSize: query.batchSize }),
 	})) {
-		const shaped = await context.shapeRows(state.select, state.preloads, [row], 'iterate', undefined, false)
+		const shaped = await context.shapeRows(state.select, state.preloads, [row], 'iterate')
 		const first = shaped[0]
 		if (first) yield first
 	}

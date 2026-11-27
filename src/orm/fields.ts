@@ -101,7 +101,7 @@ export class ComputedField<
 > {
 	constructor(
 		readonly name: Name,
-		readonly pipe: P,
+		readonly output: P,
 		readonly deps: Deps,
 		readonly compute: (data: Record<Deps[number], unknown>) => PipeOutput<P>,
 	) {}
