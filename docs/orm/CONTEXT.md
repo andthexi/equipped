@@ -18,7 +18,6 @@ is handed validated input.
 Each section below is the canonical reference for one layer or cross-cutting
 concern. Sections 13 and 14 cover principles and explicit non-goals.
 
-
 ---
 
 ## 1. Definitions (the four artifact kinds)
@@ -3198,8 +3197,10 @@ falling back to polling markers or expiry-based takeover.
 ## 18. Output validation and atomic mutations — accepted design
 
 **Status:** Partially implemented. Slice #198 delivers schema input/output
-contracts and ordinary Repo record validation. Computed/preload/iteration,
-aggregate, and atomic-mutation contracts remain assigned to later slices. These
+contracts and ordinary Repo record validation. Slice #199 delivers computed
+output validation, recursive preload assembly, hidden dependency/key retention,
+and validate-before-yield iteration. Aggregate and atomic-mutation contracts
+remain assigned to later slices. These
 contracts were settled during the design follow-up to
 [issue #196](https://github.com/andthexi/equipped/issues/196). Delivery
 boundaries are explicitly listed in §18.7; design acceptance is not release
@@ -3411,6 +3412,11 @@ test-registration framework is required.
 
 ### 18.7 Delivery boundaries
 
+- Slice #199 implements computed, preload, and iteration output behavior from
+  §18.3, including validation of hidden dependencies and relation keys before
+  computation/grouping, recursive target assembly, and iterator cleanup after an
+  invalid yielded document. InMemory coverage does not qualify persistent
+  adapters.
 - Pre-dispatch capability refusal uses `TypeError`; no extra persistence-outcome
   metadata is added to ordinary nontransactional output-validation errors.
   Settlement uncertainty uses the accepted `EquippedError` phase/outcome contract.

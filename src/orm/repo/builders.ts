@@ -8,7 +8,7 @@ import { OrderBy, type IterationOptions } from '../query-options.js'
 import type { AnyPreloadDef } from '../relations.js'
 import { validateOutputRows, type SchemaCreateInput, type SchemaUpdateInput } from '../schema-validations.js'
 import type { AnySchema, SchemaOutput } from '../schema.js'
-import { applyComputedSelection, planSelection } from './internals/computeds.js'
+import { applyComputedSelection, applyRequestedProjection, planSelection } from './internals/computeds.js'
 import {
 	runAggregate,
 	runAllCount,
@@ -24,7 +24,7 @@ import {
 	runOneUpdate,
 	runOneUpsert,
 } from './internals/executors.js'
-import { resolvePreloads } from './internals/preloads.js'
+import { preloadRelationNames, requiredPreloadFields, resolvePreloads } from './internals/preloads.js'
 import type { ReadLimitSource, ReadOffsetSource } from './internals/query-shape.js'
 import type { Paginated, SelectedWithPreloads } from './internals/types.js'
 
@@ -106,29 +106,29 @@ export class SchemaContext<S extends AnySchema> {
 		rows: unknown,
 		operation = 'findMany',
 		cardinality?: { exact?: number; maximum?: number },
-		validateOutput = true,
 	): Promise<SelectedWithPreloads<S, Sel, P>[]> {
-		const plan = planSelection(this.schema, select)
-		const selectedPersisted = select?.length ? select.filter((field) => field in this.schema.fields) : undefined
-		let validated = validateOutput
-			? validateOutputRows(this.schema, rows, operation, selectedPersisted, cardinality)
-			: (rows as Record<string, unknown>[])
-		if (validateOutput && plan.adapterSelect && Array.isArray(rows)) {
-			const requested = new Set(selectedPersisted ?? Object.keys(this.schema.fields))
-			validated = validated.map((row, index) => {
-				const source = rows[index]
-				if (source == null || typeof source !== 'object' || Array.isArray(source)) return row
-				const withDependencies = { ...row }
-				for (const dependency of plan.adapterSelect!) {
-					if (!requested.has(dependency) && dependency in source)
-						withDependencies[dependency] = source[dependency]
-				}
-				return withDependencies
-			})
-		}
-		const selected = applyComputedSelection(this.schema, validated, plan)
-		if (preloads.length === 0) return selected as SelectedWithPreloads<S, Sel, P>[]
-		return (await resolvePreloads(selected, preloads, this.getUse)) as SelectedWithPreloads<S, Sel, P>[]
+		const requiredFields = requiredPreloadFields(this.schema, preloads)
+		const plan = planSelection(this.schema, select, requiredFields)
+		const validated = validateOutputRows(this.schema, rows, operation, plan.adapterSelect, cardinality)
+		const computed = applyComputedSelection(this.schema, validated, plan, operation)
+		const assembled =
+			preloads.length === 0
+				? computed
+				: await resolvePreloads(
+						computed,
+						preloads,
+						this.getUse,
+						(schema, relatedRows, relatedOperation) =>
+							new SchemaContext(schema, this.getUse).shapeRows(
+								undefined,
+								[],
+								relatedRows,
+								relatedOperation,
+							),
+						operation,
+					)
+		const projected = applyRequestedProjection(assembled, plan, preloadRelationNames(preloads))
+		return projected as SelectedWithPreloads<S, Sel, P>[]
 	}
 
 	async shapeOneRow<Sel extends string, P extends readonly AnyPreloadDef[]>(

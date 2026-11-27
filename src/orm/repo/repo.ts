@@ -265,12 +265,11 @@ if (import.meta.vitest) {
 			.pk('id', { input: v.string(), generate: () => `person-${++userCounter}` })
 			.field('firstName', { input: v.string() })
 			.field('lastName', { input: v.string() })
-			.computed(
-				'fullName',
-				['firstName', 'lastName'],
-				v.string(),
-				({ firstName, lastName }) => `${firstName} ${lastName}`,
-			)
+			.computed('fullName', {
+				deps: ['firstName', 'lastName'],
+				output: v.string(),
+				compute: ({ firstName, lastName }) => `${firstName} ${lastName}`,
+			})
 			.build()
 
 		const UserRels = Relations.from(UserSchema)
@@ -649,6 +648,48 @@ if (import.meta.vitest) {
 			expect(iterateManyCalls).toBe(0)
 		})
 
+		test('all().iterate validates before yielding and closes the underlying iterator on failure', async () => {
+			const TestSchema = Schema.from('iter_output_validation')
+				.pk('id', { input: v.string(), generate: () => 'generated' })
+				.field('name', { input: v.string() })
+				.build()
+			let closed = false
+			let produced = 0
+
+			class InvalidIterAdapter extends OrmAdapter {
+				readonly schemaConfigPipe = v.object({ table: v.string() })
+				readonly supportedFieldTypes = ['string'] as const
+				async *iterateMany() {
+					try {
+						produced += 1
+						yield { id: 'valid', name: 'first' }
+						produced += 1
+						yield { id: 'invalid', name: 42 }
+						produced += 1
+						yield { id: 'unread', name: 'third' }
+					} finally {
+						closed = true
+					}
+				}
+			}
+
+			const repo = Repo.from(new InvalidIterAdapter())
+				.resolve((name) => ({ table: name }))
+				.build()
+			const yielded: unknown[] = []
+			try {
+				for await (const row of repo.on(TestSchema).all().iterate()) yielded.push(row)
+				expect.unreachable('invalid iterated row should fail output validation')
+			} catch (error) {
+				expect(error).toBeInstanceOf(OrmValidationError)
+				expect(error).toMatchObject({ kind: 'output', schema: TestSchema.name, operation: 'iterate' })
+			}
+
+			expect(yielded).toEqual([{ id: 'valid', name: 'first' }])
+			expect(produced).toBe(2)
+			expect(closed).toBe(true)
+		})
+
 		test('all().iterate yields selected and preloaded documents one at a time', async () => {
 			const adapter = InMemoryAdapter.create({})
 			let preloadReads = 0
@@ -677,7 +718,7 @@ if (import.meta.vitest) {
 				.on(UserSchema)
 				.all()
 				.orderBy('name', 'asc')
-				.select(['id', 'name'])
+				.select(['name'])
 				.preload([UserRels.posts])
 				.iterate({ batchSize: 1 })
 			expect(iterator[Symbol.asyncIterator]()).toBe(iterator)
@@ -686,6 +727,7 @@ if (import.meta.vitest) {
 			expect(rows).toHaveLength(2)
 			expect(rows.map((row) => row.name)).toEqual(['Alice', 'Bob'])
 			expect(rows[0]).not.toHaveProperty('email')
+			expect(rows[0]).not.toHaveProperty('id')
 			expect(rows[0].posts.map((post) => post.title)).toEqual(['A1', 'A2'])
 			expect(rows[1].posts.map((post) => post.title)).toEqual(['B1'])
 			expect(preloadReads).toBe(2)
@@ -920,31 +962,136 @@ if (import.meta.vitest) {
 			).rejects.toBeInstanceOf(EquippedError)
 		})
 
-		test('missing computed dependencies in adapter output fail fast', async () => {
-			const { EquippedError } = await import('../../errors/index.js')
-			const adapter = InMemoryAdapter.create({})
-			const origUse = adapter.use.bind(adapter)
-			;(adapter as any).use = vi.fn((schema: any, config: any) => {
-				const use = origUse(schema, config)
-				return {
-					...use,
-					findMany: async (filter: any, options: any) => {
-						const rows = await use.findMany(filter, options)
-						return rows.map((row: any) => {
-							const next = { ...row }
-							delete (next as any).lastName
-							return next
-						})
+		test('computed dependencies are output-validated before computation', async () => {
+			let computeCalls = 0
+			const TestSchema = Schema.from('computed_dependency_validation')
+				.pk('id', { input: v.string(), generate: () => 'generated' })
+				.field('name', { input: v.string() })
+				.computed('copy', {
+					deps: ['name'],
+					output: v.string(),
+					compute: ({ name }) => {
+						computeCalls += 1
+						return name
 					},
-				}
-			})
-
+				})
+				.build()
+			const adapter = InMemoryAdapter.create({})
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
 				.build()
-			await repo.on(PersonSchema).one().create({ firstName: 'Katherine', lastName: 'Johnson' })
+			await adapter.use(TestSchema, { table: TestSchema.name }).createMany([{ id: 'invalid', name: 42 } as any])
 
-			await expect(repo.on(PersonSchema).all().select(['fullName']).find()).rejects.toBeInstanceOf(EquippedError)
+			await expect(repo.on(TestSchema).all().select(['copy']).find()).rejects.toMatchObject({
+				kind: 'output',
+				schema: TestSchema.name,
+				operation: 'findMany',
+			})
+			expect(computeCalls).toBe(0)
+		})
+
+		test('computed output pipe validates derived values', async () => {
+			const TestSchema = Schema.from('computed_output_validation')
+				.pk('id', { input: v.string(), generate: () => 'generated' })
+				.field('name', { input: v.string() })
+				.computed('invalid', {
+					deps: ['name'],
+					output: v.string(),
+					compute: () => 42 as any,
+				})
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
+			await adapter.use(TestSchema, { table: TestSchema.name }).createMany([{ id: 'row', name: 'Valid' }])
+
+			try {
+				await repo.on(TestSchema).all().select(['invalid']).find()
+				expect.unreachable('invalid computed output should fail validation')
+			} catch (error) {
+				expect(error).toBeInstanceOf(OrmValidationError)
+				expect(error).toMatchObject({
+					kind: 'output',
+					schema: TestSchema.name,
+					operation: 'findMany',
+					failures: [expect.objectContaining({ field: 'invalid', rowIndex: 0 })],
+				})
+			}
+		})
+
+		test('preloads validate selected relationship keys, compute target fields, and reject recursive invalid rows', async () => {
+			const ParentSchema = Schema.from('preload_validation_parents')
+				.pk('id', { input: v.string(), generate: () => 'parent' })
+				.field('name', { input: v.string() })
+				.build()
+			const ChildSchema = Schema.from('preload_validation_children')
+				.pk('id', { input: v.string(), generate: () => 'child' })
+				.field('parentId', { input: v.string() })
+				.field('title', { input: v.string() })
+				.computed('titleUpper', {
+					deps: ['title'],
+					output: v.string(),
+					compute: ({ title }) => title.toUpperCase(),
+				})
+				.build()
+			const GrandchildSchema = Schema.from('preload_validation_grandchildren')
+				.pk('id', { input: v.string(), generate: () => 'grandchild' })
+				.field('childId', { input: v.string() })
+				.field('code', { input: v.string() })
+				.build()
+			const ParentRels = Relations.from(ParentSchema).hasMany('children', ChildSchema.fields.parentId).build()
+			const ChildRels = Relations.from(ChildSchema)
+				.hasMany('grandchildren', GrandchildSchema.fields.childId)
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
+			const parent = await repo.on(ParentSchema).one().create({ name: 'root' })
+			const child = await repo.on(ChildSchema).one().create({ parentId: parent.id, title: 'leaf' })
+			await repo.on(GrandchildSchema).one().create({ childId: child.id, code: 'ok' })
+
+			const readRoot = (name: string) =>
+				repo
+					.on(ParentSchema)
+					.all()
+					.where((q) => q.eq('name', name))
+					.select(['name'])
+					.preload([{ def: ParentRels.children, preloads: [ChildRels.grandchildren] }])
+					.find()
+			const assembled = await readRoot('root')
+			expect(assembled).toEqual([
+				{
+					name: 'root',
+					children: [
+						{
+							id: child.id,
+							parentId: parent.id,
+							title: 'leaf',
+							titleUpper: 'LEAF',
+							grandchildren: [{ id: 'grandchild', childId: child.id, code: 'ok' }],
+						},
+					],
+				},
+			])
+
+			await adapter
+				.use(ParentSchema, { table: ParentSchema.name })
+				.createMany([{ id: 17, name: 'bad-key' } as any])
+			await expect(readRoot('bad-key')).rejects.toMatchObject({
+				kind: 'output',
+				schema: ParentSchema.name,
+			})
+
+			await adapter
+				.use(GrandchildSchema, { table: GrandchildSchema.name })
+				.createMany([{ id: 'bad-grandchild', childId: child.id, code: 99 } as any])
+			await expect(readRoot('root')).rejects.toMatchObject({
+				kind: 'output',
+				schema: GrandchildSchema.name,
+				operation: 'findMany',
+			})
 		})
 
 		test('one().id().find() returns seeded document and null for missing', async () => {

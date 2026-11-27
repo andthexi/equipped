@@ -24,6 +24,22 @@ function uniqueDefinedValues(entities: readonly Record<string, unknown>[], key: 
 	return [...new Set(entities.map((entity) => entity[key]).filter((value) => value != null))]
 }
 
+export function requiredPreloadFields(schema: AnySchema, defs: readonly AnyPreloadDef[]): string[] {
+	const fields = new Set<string>()
+	for (const entry of defs) {
+		const def = isNestedPreloadDef(entry) ? entry.def : entry
+		if (def.source !== schema) continue
+		fields.add(def instanceof OneRelation && def.fkOwner === 'source' ? def.foreignKey.name : def.references.name)
+	}
+	return [...fields]
+}
+
+export function preloadRelationNames(defs: readonly AnyPreloadDef[]): string[] {
+	return defs.map((entry) => ('def' in entry ? entry.def : entry).name)
+}
+
+type ValidateRelatedRows = (schema: AnySchema, rows: unknown, operation: string) => Promise<Record<string, unknown>[]>
+
 function attachOneRelation(
 	entities: readonly Record<string, unknown>[],
 	name: string,
@@ -63,18 +79,32 @@ export async function resolvePreloads<T extends Record<string, unknown>>(
 	entities: T[],
 	defs: readonly AnyPreloadDef[],
 	getUse: (s: AnySchema) => OrmUse,
+	validateRelatedRows: ValidateRelatedRows,
+	operation: string,
 ) {
-	return resolvePreloadNodes(entities, normalizePreloads(defs), getUse, 1, []) as unknown as T[]
+	return resolvePreloadNodes(
+		entities,
+		normalizePreloads(defs),
+		getUse,
+		validateRelatedRows,
+		operation,
+		1,
+		[],
+	) as unknown as T[]
 }
 
 async function resolvePreloadNodes(
 	entities: Record<string, unknown>[],
 	defs: readonly ResolvedPreloadDef[],
 	getUse: (s: AnySchema) => OrmUse,
+	validateRelatedRows: ValidateRelatedRows,
+	operation: string,
 	depth: number,
 	path: readonly string[],
 ) {
-	for (const def of defs) entities = await resolvePreload(entities, def, getUse, depth, path)
+	for (const def of defs) {
+		entities = await resolvePreload(entities, def, getUse, validateRelatedRows, operation, depth, path)
+	}
 	return entities
 }
 
@@ -82,6 +112,8 @@ async function resolvePreload(
 	entities: Record<string, unknown>[],
 	node: ResolvedPreloadDef,
 	getUse: (s: AnySchema) => OrmUse,
+	validateRelatedRows: ValidateRelatedRows,
+	operation: string,
 	depth: number,
 	path: readonly string[],
 ): Promise<Record<string, unknown>[]> {
@@ -111,9 +143,18 @@ async function resolvePreload(
 			const fkValues = uniqueDefinedValues(entities, def.foreignKey.name)
 			if (fkValues.length === 0) return entities.map((e) => ({ ...e, [name]: null }))
 
-			let related = await getUse(target).findMany(FilterGroup.create().in(refCol, fkValues))
+			const rawRelated = await getUse(target).findMany(FilterGroup.create().in(refCol, fkValues))
+			let related = await validateRelatedRows(target, rawRelated, operation)
 			if (node.preloads.length > 0 && related.length > 0) {
-				related = await resolvePreloadNodes(related, node.preloads, getUse, depth + 1, nextPath)
+				related = await resolvePreloadNodes(
+					related,
+					node.preloads,
+					getUse,
+					validateRelatedRows,
+					operation,
+					depth + 1,
+					nextPath,
+				)
 			}
 			const lookup = new Map(related.map((r) => [r[refCol], r]))
 			return attachOneRelation(entities, name, def.foreignKey.name, lookup)
@@ -123,9 +164,18 @@ async function resolvePreload(
 		const refValues = uniqueDefinedValues(entities, refCol)
 		if (refValues.length === 0) return entities.map((e) => ({ ...e, [name]: null }))
 
-		let related = await getUse(target).findMany(FilterGroup.create().in(def.foreignKey, refValues))
+		const rawRelated = await getUse(target).findMany(FilterGroup.create().in(def.foreignKey, refValues))
+		let related = await validateRelatedRows(target, rawRelated, operation)
 		if (node.preloads.length > 0 && related.length > 0) {
-			related = await resolvePreloadNodes(related, node.preloads, getUse, depth + 1, nextPath)
+			related = await resolvePreloadNodes(
+				related,
+				node.preloads,
+				getUse,
+				validateRelatedRows,
+				operation,
+				depth + 1,
+				nextPath,
+			)
 		}
 		const lookup = new Map(related.map((r) => [r[def.foreignKey.name], r]))
 		return attachOneRelation(entities, name, refCol, lookup)
@@ -136,9 +186,18 @@ async function resolvePreload(
 		const refValues = uniqueDefinedValues(entities, refCol)
 		if (refValues.length === 0) return entities.map((e) => ({ ...e, [name]: [] }))
 
-		let related = await getUse(target).findMany(FilterGroup.create().in(def.foreignKey, refValues))
+		const rawRelated = await getUse(target).findMany(FilterGroup.create().in(def.foreignKey, refValues))
+		let related = await validateRelatedRows(target, rawRelated, operation)
 		if (node.preloads.length > 0 && related.length > 0) {
-			related = await resolvePreloadNodes(related, node.preloads, getUse, depth + 1, nextPath)
+			related = await resolvePreloadNodes(
+				related,
+				node.preloads,
+				getUse,
+				validateRelatedRows,
+				operation,
+				depth + 1,
+				nextPath,
+			)
 		}
 
 		const grouped = new Map<unknown, Record<string, unknown>[]>()

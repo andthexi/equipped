@@ -82,6 +82,21 @@ export function validateFieldOutput(schema: AnySchema, fieldName: string, value:
 	return result
 }
 
+export function validateComputedOutput(
+	schema: AnySchema,
+	fieldName: string,
+	output: Pipe<any, any>,
+	value: unknown,
+	operation: string,
+	rowIndex: number,
+): unknown {
+	const result = compileOutput(output)(value)
+	if (result instanceof PipeError) {
+		throw new OrmValidationError('output', schema.name, operation, [outputFailure(result, fieldName, rowIndex)])
+	}
+	return result
+}
+
 export function validateOutputRows(
 	schema: AnySchema,
 	value: unknown,
