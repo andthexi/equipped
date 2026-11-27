@@ -18,13 +18,6 @@ is handed validated input.
 Each section below is the canonical reference for one layer or cross-cutting
 concern. Sections 13 and 14 cover principles and explicit non-goals.
 
-**Implemented in stages:** [§18](#18-output-validation-and-atomic-mutations--accepted-design)
-records mandatory query-output validation and atomic schema-aware mutations.
-Slice #198 implements input/output field contracts and ordinary Repo record
-validation. Computed fields, preloads, iteration, aggregates, and atomic mutation
-composition remain assigned to later slices. Its explicit revisions take
-precedence over the historical input-only validation and mutation-boundary
-descriptions where they conflict.
 
 ---
 
