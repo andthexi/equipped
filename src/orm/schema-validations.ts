@@ -1,4 +1,4 @@
-import { v, type Pipe, type PipeInput, type PipeOutput } from 'valleyed'
+import { PipeError, v, type Pipe, type PipeInput, type PipeOutput } from 'valleyed'
 
 import { OrmValidationError, type OrmValidationFailure } from './errors/index.js'
 import type { AnySchemaField, SchemaField } from './fields.js'
@@ -9,57 +9,172 @@ import type { Prettify } from './utils.js'
 export type SchemaCreateInput<S extends AnySchema> = Prettify<
 	{
 		[
-			K in keyof SchemaFields<S> as SchemaFields<S>[K] extends SchemaField<any, any, true> ? never : K
-		]: SchemaFields<S>[K] extends AnySchemaField ? PipeInput<SchemaFields<S>[K]['pipe']> : never
+			K in keyof SchemaFields<S> as SchemaFields<S>[K] extends SchemaField<any, any, any, true> ? never : K
+		]: SchemaFields<S>[K] extends AnySchemaField ? PipeInput<SchemaFields<S>[K]['input']> : never
 	} & {
 		[
-			K in keyof SchemaFields<S> as SchemaFields<S>[K] extends SchemaField<any, any, true> ? K : never
-		]?: SchemaFields<S>[K] extends AnySchemaField ? PipeInput<SchemaFields<S>[K]['pipe']> : never
+			K in keyof SchemaFields<S> as SchemaFields<S>[K] extends SchemaField<any, any, any, true> ? K : never
+		]?: SchemaFields<S>[K] extends AnySchemaField ? PipeInput<SchemaFields<S>[K]['input']> : never
 	}
 >
 
 export type SchemaUpdateInput<S extends AnySchema> =
 	S extends Schema<any, any, infer F>
-		? { [K in keyof F]?: F[K] extends AnySchemaField ? PipeInput<F[K]['pipe']> | AnyUpdateOp : never }
+		? { [K in keyof F]?: F[K] extends AnySchemaField ? PipeInput<F[K]['input']> | AnyUpdateOp : never }
 		: Record<string, unknown>
 
 export type SchemaUpdateOutput<S extends AnySchema> =
 	S extends Schema<any, any, infer F>
-		? { [K in keyof F]?: F[K] extends AnySchemaField ? PipeOutput<F[K]['pipe']> | AnyUpdateOp : never }
+		? { [K in keyof F]?: F[K] extends AnySchemaField ? PipeOutput<F[K]['output']> | AnyUpdateOp : never }
 		: Record<string, unknown>
+
+type OutputCompiler = (value: unknown) => unknown
+const outputCompilers = new WeakMap<object, OutputCompiler>()
+const outputRowPipes = new WeakMap<AnySchema, Map<string, Pipe<any, any>>>()
+const outputArrayPipes = new WeakMap<object, Pipe<any, any>>()
+
+function compileOutput(pipe: Pipe<any, any>): OutputCompiler {
+	let compiled = outputCompilers.get(pipe)
+	if (!compiled) {
+		compiled = v.compile(pipe, { allErrors: true }) as OutputCompiler
+		outputCompilers.set(pipe, compiled)
+	}
+	return compiled
+}
+
+function outputRowPipe(schema: AnySchema, fields?: readonly string[]): Pipe<any, any> {
+	const selected = fields ? fields.filter((field) => field in schema.fields) : Object.keys(schema.fields)
+	const key = JSON.stringify(selected)
+	let cache = outputRowPipes.get(schema)
+	if (!cache) {
+		cache = new Map()
+		outputRowPipes.set(schema, cache)
+	}
+	let pipe = cache.get(key)
+	if (!pipe) {
+		pipe = v.object(Object.fromEntries(selected.map((field) => [field, schema.fields[field].output])))
+		cache.set(key, pipe)
+	}
+	return pipe
+}
+
+function outputArrayPipe(schema: AnySchema, fields?: readonly string[]): Pipe<any, any> {
+	const rowPipe = outputRowPipe(schema, fields)
+	let pipe = outputArrayPipes.get(rowPipe)
+	if (!pipe) {
+		pipe = v.array(rowPipe)
+		outputArrayPipes.set(rowPipe, pipe)
+	}
+	return pipe
+}
+
+function outputFailure(cause: unknown, field?: string, rowIndex?: number): OrmValidationFailure {
+	return { cause, ...(field === undefined ? {} : { field }), ...(rowIndex === undefined ? {} : { rowIndex }) }
+}
+
+export function validateFieldOutput(schema: AnySchema, fieldName: string, value: unknown, operation: string): unknown {
+	const field = schema.fields[fieldName]
+	if (!field) throw new TypeError(`Unknown schema field "${fieldName}" on ${schema.name}`)
+	const result = compileOutput(field.output)(value)
+	if (result instanceof PipeError) {
+		throw new OrmValidationError('output', schema.name, operation, [outputFailure(result, fieldName)])
+	}
+	return result
+}
+
+export function validateOutputRows(
+	schema: AnySchema,
+	value: unknown,
+	operation: string,
+	fields?: readonly string[],
+	cardinality?: { exact?: number; maximum?: number },
+): Record<string, unknown>[] {
+	if (!Array.isArray(value)) {
+		throw new OrmValidationError('output', schema.name, operation, [
+			outputFailure(PipeError.root('is not an array', value)),
+		])
+	}
+	if (
+		(cardinality?.exact !== undefined && value.length !== cardinality.exact) ||
+		(cardinality?.maximum !== undefined && value.length > cardinality.maximum)
+	) {
+		const expected =
+			cardinality.exact === undefined ? `at most ${cardinality.maximum}` : `exactly ${cardinality.exact}`
+		throw new OrmValidationError('output', schema.name, operation, [
+			outputFailure(PipeError.root(`expected ${expected} result records`, value)),
+		])
+	}
+
+	const result = compileOutput(outputArrayPipe(schema, fields))(value)
+	if (result instanceof PipeError) {
+		throw new OrmValidationError('output', schema.name, operation, [outputFailure(result)])
+	}
+	return result as Record<string, unknown>[]
+}
+
+export function validateOutputRow(
+	schema: AnySchema,
+	value: unknown,
+	operation: string,
+	fields?: readonly string[],
+): Record<string, unknown> | null {
+	if (value === null) return null
+	return validateOutputRows(schema, [value], operation, fields, { exact: 1 })[0]
+}
+
+type CreateValidationResult<S extends AnySchema> =
+	| { ok: true; value: SchemaOutput<S> }
+	| { ok: false; inputFailures: OrmValidationFailure[]; outputFailures: OrmValidationFailure[] }
 
 export function tryValidateCreateRow<S extends AnySchema>(
 	s: S,
 	data: Record<string, unknown>,
-): { ok: true; value: SchemaOutput<S> } | { ok: false; failures: OrmValidationFailure[] } {
-	const failures: OrmValidationFailure[] = []
+): CreateValidationResult<S> {
+	const inputFailures: OrmValidationFailure[] = []
+	const outputFailures: OrmValidationFailure[] = []
 	const result: Record<string, unknown> = {}
 
 	for (const [key, entry] of Object.entries(s.fields)) {
-		const pipe = entry.onCreate ? v.defaults(entry.pipe, entry.onCreate()) : entry.pipe
-		const fieldValue = key in data ? data[key] : undefined
-		const validated = v.validate(pipe, fieldValue)
-		if (validated.valid) {
-			result[key] = validated.value
-		} else {
-			failures.push({ field: key, cause: validated.error })
+		const supplied = Object.prototype.hasOwnProperty.call(data, key) && data[key] !== undefined
+		if (supplied) {
+			const validated = v.validate(entry.input, data[key])
+			if (validated.valid) result[key] = validated.value
+			else inputFailures.push({ field: key, cause: validated.error })
+			continue
 		}
+
+		const generate = entry.generate ?? entry.onCreate
+		if (generate) {
+			const generated = generate()
+			const validated = compileOutput(entry.output)(generated)
+			if (validated instanceof PipeError) outputFailures.push({ field: key, cause: validated })
+			else result[key] = validated
+			continue
+		}
+
+		const validated = v.validate(entry.input, undefined)
+		if (validated.valid) result[key] = validated.value
+		else inputFailures.push({ field: key, cause: validated.error })
 	}
 
-	if (failures.length > 0) return { ok: false, failures }
+	if (inputFailures.length > 0 || outputFailures.length > 0) return { ok: false, inputFailures, outputFailures }
 	return { ok: true, value: result as SchemaOutput<S> }
 }
 
 export function validateCreate<S extends AnySchema>(s: S, data: Record<string, unknown>): SchemaOutput<S> {
 	const result = tryValidateCreateRow(s, data)
 	if (!result.ok) {
-		throw new OrmValidationError('validation', s.name, 'createOne', result.failures)
+		if (result.inputFailures.length > 0) {
+			throw new OrmValidationError('validation', s.name, 'createOne', result.inputFailures)
+		}
+		throw new OrmValidationError('output', s.name, 'createOne', result.outputFailures)
 	}
 	return result.value
 }
 
 export function validateCreateMany<S extends AnySchema>(s: S, rows: Record<string, unknown>[]): SchemaOutput<S>[] {
-	const allFailures: OrmValidationFailure[] = []
+	const inputFailures: OrmValidationFailure[] = []
+	const outputFailures: OrmValidationFailure[] = []
 	const validated: SchemaOutput<S>[] = []
 
 	for (let i = 0; i < rows.length; i++) {
@@ -67,36 +182,40 @@ export function validateCreateMany<S extends AnySchema>(s: S, rows: Record<strin
 		if (result.ok) {
 			validated.push(result.value)
 		} else {
-			for (const failure of result.failures) {
-				allFailures.push({ ...failure, rowIndex: i })
-			}
+			inputFailures.push(...result.inputFailures.map((failure) => ({ ...failure, rowIndex: i })))
+			outputFailures.push(...result.outputFailures.map((failure) => ({ ...failure, rowIndex: i })))
 		}
 	}
 
-	if (allFailures.length > 0) {
-		throw new OrmValidationError('validation', s.name, 'createMany', allFailures)
-	}
+	if (inputFailures.length > 0) throw new OrmValidationError('validation', s.name, 'createMany', inputFailures)
+	if (outputFailures.length > 0) throw new OrmValidationError('output', s.name, 'createMany', outputFailures)
 
 	return validated
 }
 
 export function validateUpdate<S extends AnySchema>(s: S, data: Record<string, unknown>): SchemaUpdateOutput<S> {
 	const pipes: Record<string, Pipe<any, any>> = {}
+	const input: Record<string, unknown> = {}
 	const ops: Record<string, unknown> = {}
+	const generated: Record<string, unknown> = {}
 
 	for (const [key, value] of Object.entries(data)) {
 		if (isUpdateOp(value)) ops[key] = value
-		else if (key in s.fieldDefs) pipes[key] = s.fieldDefs[key].pipe
+		else if (key in s.fieldDefs) {
+			pipes[key] = s.fieldDefs[key].input
+			input[key] = value
+		}
 	}
+
+	const r = v.validate(v.object(pipes), input)
+	if (!r.valid) throw new OrmValidationError('validation', s.name, 'updateByPk', [{ cause: r.error }])
 
 	for (const [key, entry] of Object.entries(s.fieldDefs)) {
-		if (!(key in data) && entry.onUpdate) pipes[key] = v.defaults(entry.pipe, entry.onUpdate())
+		if (!(key in data) && entry.onUpdate)
+			generated[key] = validateFieldOutput(s, key, entry.onUpdate(), 'updateByPk')
 	}
 
-	const r = v.validate(v.object(pipes), data)
-	if (!r.valid) throw new OrmValidationError('validation', s.name, 'updateByPk', [{ cause: r.error }])
-	const validated = r.value as Record<string, unknown>
-	return { ...validated, ...ops } as SchemaUpdateOutput<S>
+	return { ...(r.value as Record<string, unknown>), ...generated, ...ops } as SchemaUpdateOutput<S>
 }
 
 export function validateUpdateOps(schema: AnySchema, ops: AnyUpdateOp[], operation = 'updateByPk'): AnyUpdateOp[] {
@@ -112,7 +231,7 @@ export function validateUpdateOps(schema: AnySchema, ops: AnyUpdateOp[], operati
 	const autoBumped: AnyUpdateOp[] = []
 	for (const [key, entry] of Object.entries(schema.fieldDefs)) {
 		if (entry.onUpdate && !touched.has(key)) {
-			const bumpOp = new SetOp({ [key]: entry.onUpdate() })
+			const bumpOp = new SetOp({ [key]: validateFieldOutput(schema, key, entry.onUpdate(), operation) })
 			autoBumped.push(bumpOp)
 			touched.set(key, [ops.length + autoBumped.length - 1])
 		}
@@ -140,7 +259,7 @@ export function validateUpdateOps(schema: AnySchema, ops: AnyUpdateOp[], operati
 			for (const [key, value] of Object.entries(op.values)) {
 				const fieldDef = schema.fields[key] as AnySchemaField | undefined
 				if (!fieldDef) continue
-				const r = v.validate(fieldDef.pipe, value)
+				const r = v.validate(fieldDef.input, value)
 				if (!r.valid) {
 					failures.push({ opIndex: i, field: key, cause: r.error })
 				}
@@ -199,11 +318,11 @@ if (import.meta.vitest) {
 
 	describe('validateCreate', () => {
 		const UserSchema = Schema.from('users')
-			.pk('id', v.string(), () => 'auto-id')
-			.field('email', v.string())
-			.field('name', v.string())
-			.field('age', v.optional(v.number()))
-			.field('createdAt', v.number(), { onCreate: () => 1000 })
+			.pk('id', { input: v.string(), generate: () => 'auto-id' })
+			.field('email', { input: v.string() })
+			.field('name', { input: v.string() })
+			.field('age', { input: v.optional(v.number()) })
+			.field('createdAt', { input: v.number(), onCreate: () => 1000 })
 			.build()
 
 		test('generates pk when not provided', () => {
@@ -279,9 +398,9 @@ if (import.meta.vitest) {
 
 	describe('validateCreateMany', () => {
 		const ItemSchema = Schema.from('items')
-			.pk('id', v.string(), () => 'item-id')
-			.field('title', v.string())
-			.field('price', v.number())
+			.pk('id', { input: v.string(), generate: () => 'item-id' })
+			.field('title', { input: v.string() })
+			.field('price', { input: v.number() })
 			.build()
 
 		test('validates all rows and returns validated documents', () => {
@@ -334,10 +453,10 @@ if (import.meta.vitest) {
 
 	describe('validateUpdate', () => {
 		const UserSchema = Schema.from('users')
-			.pk('id', v.string(), () => 'auto-id')
-			.field('email', v.string())
-			.field('name', v.string())
-			.field('updatedAt', v.number(), { onCreate: () => 1000, onUpdate: () => 2000 })
+			.pk('id', { input: v.string(), generate: () => 'auto-id' })
+			.field('email', { input: v.string() })
+			.field('name', { input: v.string() })
+			.field('updatedAt', { input: v.number(), onCreate: () => 1000, onUpdate: () => 2000 })
 			.build()
 
 		test('validates only provided fields', () => {
@@ -403,10 +522,10 @@ if (import.meta.vitest) {
 
 	describe('validateUpdateOps', () => {
 		const UpdateSchema = Schema.from('items')
-			.pk('id', v.string(), () => 'auto')
-			.field('name', v.string())
-			.field('views', v.number())
-			.field('updatedAt', v.number(), { onCreate: () => 1000, onUpdate: () => 2000 })
+			.pk('id', { input: v.string(), generate: () => 'auto' })
+			.field('name', { input: v.string() })
+			.field('views', { input: v.number() })
+			.field('updatedAt', { input: v.number(), onCreate: () => 1000, onUpdate: () => 2000 })
 			.build()
 
 		test('passes through valid ops', () => {
@@ -452,8 +571,8 @@ if (import.meta.vitest) {
 
 		test('cross-kind conflict (unset + inc on same field) throws', () => {
 			const UpdateSchema2 = Schema.from('items2')
-				.pk('id', v.string(), () => 'auto')
-				.field('score', v.optional(v.number()))
+				.pk('id', { input: v.string(), generate: () => 'auto' })
+				.field('score', { input: v.optional(v.number()) })
 				.build()
 			expect(() => validateUpdateOps(UpdateSchema2, [new UnsetOp('score'), new IncOp('score', 5)])).toThrow(
 				OrmValidationError,
@@ -479,9 +598,9 @@ if (import.meta.vitest) {
 
 		test('auto-bumped SetOp values are pipe-validated', () => {
 			const BadSchema = Schema.from('bad')
-				.pk('id', v.string(), () => 'auto')
-				.field('name', v.string())
-				.field('counter', v.number(), { onUpdate: () => 'not-a-number' as any })
+				.pk('id', { input: v.string(), generate: () => 'auto' })
+				.field('name', { input: v.string() })
+				.field('counter', { input: v.number(), onUpdate: () => 'not-a-number' as any })
 				.build()
 			expect(() => validateUpdateOps(BadSchema, [new SetOp({ name: 'test' })])).toThrow(OrmValidationError)
 		})

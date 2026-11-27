@@ -4,9 +4,9 @@ import { Instance } from '../../instance/index.js'
 import { Schema } from '../schema.js'
 
 export const EventLogSchema = Schema.from('event_log')
-	.pk('key', v.string(), () => Instance.createId())
-	.field('name', v.string())
-	.field('ts', v.number())
-	.field('body', v.any())
-	.field('by', v.nullable(v.string()))
+	.pk('key', { input: v.string(), generate: () => Instance.createId() })
+	.field('name', { input: v.string() })
+	.field('ts', { input: v.number() })
+	.field('body', { input: v.any() })
+	.field('by', { input: v.nullable(v.string()) })
 	.build()

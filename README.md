@@ -215,23 +215,24 @@ A Schema describes a single document shape — name, primary key, data fields, a
 import { Schema } from 'equipped/orm'
 
 const UserSchema = Schema.from('users')
-	.pk('id', v.string(), () => crypto.randomUUID())
-	.field('email', v.string())
-	.field('name', v.string())
-	.field('age', v.number())
-	.field('orgId', v.string())
-	.field('tags', v.array(v.string()))
-	.field('bio', v.optional(v.string()), { onCreate: () => undefined })
-	.field('createdAt', v.number(), { onCreate: () => Date.now() })
-	.field('updatedAt', v.number(), {
+	.pk('id', { input: v.string(), generate: () => crypto.randomUUID() })
+	.field('email', { input: v.string() })
+	.field('name', { input: v.string() })
+	.field('age', { input: v.number() })
+	.field('orgId', { input: v.string() })
+	.field('tags', { input: v.array(v.string()) })
+	.field('bio', { input: v.optional(v.string()), onCreate: () => undefined })
+	.field('createdAt', { input: v.number(), onCreate: () => Date.now() })
+	.field('updatedAt', {
+		input: v.number(),
 		onCreate: () => Date.now(),
 		onUpdate: () => Date.now(),
 	})
 	.build()
 ```
 
-- **`pk(name, pipe, generator)`** — declares the primary key. The generator runs on create.
-- **`field(name, pipe, opts?)`** — declares a data field. Optional `onCreate` / `onUpdate` generators auto-inject values.
+- **`pk(name, { input, output?, generate })`** — declares the primary key. Supplied values use `input`; generated values use `output` (or `input` when safely reusable).
+- **`field(name, { input, output?, onCreate?, onUpdate? })`** — declares a data field. Supplied values use `input`; generated persisted values use `output`.
 - **`computed(name, deps, pipe, compute)`** — declares a derived field computed from persisted dependencies.
 
 Fields with `onUpdate` generators auto-bump on every update unless the update explicitly touches that field.
@@ -244,20 +245,20 @@ Relations live in a separate artifact from the schema. They wire `hasMany` / `ha
 import { Relations, Schema } from 'equipped/orm'
 
 const PostSchema = Schema.from('posts')
-	.pk('id', v.string(), () => crypto.randomUUID())
-	.field('title', v.string())
-	.field('userId', v.string())
+	.pk('id', { input: v.string(), generate: () => crypto.randomUUID() })
+	.field('title', { input: v.string() })
+	.field('userId', { input: v.string() })
 	.build()
 
 const ProfileSchema = Schema.from('profiles')
-	.pk('id', v.string(), () => crypto.randomUUID())
-	.field('bio', v.string())
-	.field('userId', v.string())
+	.pk('id', { input: v.string(), generate: () => crypto.randomUUID() })
+	.field('bio', { input: v.string() })
+	.field('userId', { input: v.string() })
 	.build()
 
 const OrgSchema = Schema.from('orgs')
-	.pk('id', v.string(), () => crypto.randomUUID())
-	.field('name', v.string())
+	.pk('id', { input: v.string(), generate: () => crypto.randomUUID() })
+	.field('name', { input: v.string() })
 	.build()
 
 const UserRelations = Relations.from(UserSchema)

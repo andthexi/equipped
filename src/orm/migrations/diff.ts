@@ -52,14 +52,14 @@ function extractSchemaInfo(schema: AnySchema): {
 	fields: SchemaFieldInfo[]
 } {
 	const pkField = schema.pkField
-	const pkType = inferFieldType(pkField.pipe)
+	const pkType = inferFieldType(pkField.output)
 	const fields: SchemaFieldInfo[] = []
 	for (const field of Object.values(schema.fieldDefs)) {
 		const f = field as any
 		fields.push({
 			name: f.name,
-			type: inferFieldType(f.pipe),
-			nullable: isNullable(f.pipe),
+			type: inferFieldType(f.output),
+			nullable: isNullable(f.output),
 		})
 	}
 	return { name: schema.name, pk: { name: pkField.name, type: pkType }, fields }
@@ -161,8 +161,8 @@ if (import.meta.vitest) {
 		test('returns empty array when no changes needed', () => {
 			const adapter = makeAdapter()
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
 				.build()
 			const current: DiscoveredSchema[] = [
 				{
@@ -180,9 +180,9 @@ if (import.meta.vitest) {
 		test('fresh DB returns createTable for everything', () => {
 			const adapter = makeAdapter()
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
+				.field('age', { input: v.number() })
 				.build()
 			const result = diffSchemas(adapter, [UserSchema], [])
 			expect(result).toHaveLength(1)
@@ -200,9 +200,9 @@ if (import.meta.vitest) {
 		test('add field detected when target has field absent from current', () => {
 			const adapter = makeAdapter()
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
+				.field('age', { input: v.number() })
 				.build()
 			const current: DiscoveredSchema[] = [
 				{
@@ -225,8 +225,8 @@ if (import.meta.vitest) {
 		test('drop field detected when current has field absent from target', () => {
 			const adapter = makeAdapter()
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
 				.build()
 			const current: DiscoveredSchema[] = [
 				{
@@ -252,8 +252,8 @@ if (import.meta.vitest) {
 		test('modify field detected when type changes', () => {
 			const adapter = makeAdapter()
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('age', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('age', { input: v.string() })
 				.build()
 			const current: DiscoveredSchema[] = [
 				{
@@ -294,8 +294,8 @@ if (import.meta.vitest) {
 		test('rename surfaces as drop+add (NOT auto-rename)', () => {
 			const adapter = makeAdapter()
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('fullName', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('fullName', { input: v.string() })
 				.build()
 			const current: DiscoveredSchema[] = [
 				{
@@ -317,9 +317,9 @@ if (import.meta.vitest) {
 		test('emission order respects fixed canonical sequence', () => {
 			const adapter = makeAdapter()
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
-				.field('newField', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
+				.field('newField', { input: v.number() })
 				.build()
 			const current: DiscoveredSchema[] = [
 				{
@@ -366,8 +366,8 @@ if (import.meta.vitest) {
 			}
 			const adapter = new (IndexOnlyAdapter as any)() as IndexOnlyAdapter
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
 				.build()
 			const result = diffSchemas(adapter, [UserSchema], [])
 			expect(result).toEqual([])
@@ -376,12 +376,12 @@ if (import.meta.vitest) {
 		test('multiple tables: creates missing and ignores extra', () => {
 			const adapter = makeAdapter()
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
 				.build()
 			const PostSchema = Schema.from('posts')
-				.pk('id', v.string(), () => 'x')
-				.field('title', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('title', { input: v.string() })
 				.build()
 			const current: DiscoveredSchema[] = [
 				{
@@ -421,9 +421,9 @@ if (import.meta.vitest) {
 			}
 			const adapter = new (MongoStyleAdapter as any)() as MongoStyleAdapter
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
+				.field('age', { input: v.number() })
 				.build()
 			const current: DiscoveredSchema[] = [
 				{
@@ -459,8 +459,8 @@ if (import.meta.vitest) {
 		test('nullable field mismatch detected as modify', () => {
 			const adapter = makeAdapter()
 			const UserSchema = Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.optional(v.string()), { onCreate: () => undefined })
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.optional(v.string()), onCreate: () => undefined })
 				.build()
 			const current: DiscoveredSchema[] = [
 				{

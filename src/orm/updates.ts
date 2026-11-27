@@ -6,7 +6,7 @@ import type { AnySchema, SchemaFields } from './schema.js'
 import type { Prettify } from './utils.js'
 
 export type NumericFieldOf<S extends AnySchema> = {
-	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, infer P, any>
+	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, any, infer P, any>
 		? PipeOutput<P> extends number
 			? SchemaFields<S>[K]
 			: never
@@ -14,7 +14,7 @@ export type NumericFieldOf<S extends AnySchema> = {
 }[keyof SchemaFields<S>]
 
 export type ComparableFieldOf<S extends AnySchema> = {
-	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, infer P, any>
+	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, any, infer P, any>
 		? PipeOutput<P> extends number | string | Date
 			? SchemaFields<S>[K]
 			: never
@@ -22,7 +22,7 @@ export type ComparableFieldOf<S extends AnySchema> = {
 }[keyof SchemaFields<S>]
 
 export type OptionalFieldOf<S extends AnySchema> = {
-	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, infer P, any>
+	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, any, infer P, any>
 		? undefined extends PipeOutput<P>
 			? SchemaFields<S>[K]
 			: never
@@ -30,7 +30,7 @@ export type OptionalFieldOf<S extends AnySchema> = {
 }[keyof SchemaFields<S>]
 
 export type ArrayFieldOf<S extends AnySchema> = {
-	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, infer P, any>
+	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, any, infer P, any>
 		? PipeOutput<P> extends readonly any[]
 			? SchemaFields<S>[K]
 			: never
@@ -38,7 +38,7 @@ export type ArrayFieldOf<S extends AnySchema> = {
 }[keyof SchemaFields<S>]
 
 export type ObjectFieldOf<S extends AnySchema> = {
-	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, infer P, any>
+	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, any, infer P, any>
 		? PipeOutput<P> extends Record<string, any>
 			? PipeOutput<P> extends readonly any[]
 				? never
@@ -50,7 +50,7 @@ export type ObjectFieldOf<S extends AnySchema> = {
 export type SetValues<S extends AnySchema> = Prettify<
 	Partial<{
 		[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends AnySchemaField
-			? PipeInput<SchemaFields<S>[K]['pipe']>
+			? PipeInput<SchemaFields<S>[K]['input']>
 			: never
 	}>
 >
@@ -202,14 +202,14 @@ if (import.meta.vitest) {
 	const { Schema } = await import('./schema.js')
 
 	const TestSchema = Schema.from('test')
-		.pk('id', v.string(), () => 'x')
-		.field('name', v.string())
-		.field('age', v.number())
-		.field('score', v.optional(v.number()))
-		.field('tags', v.array(v.string()))
-		.field('meta', v.object({ a: v.number() }))
-		.field('createdAt', v.number(), { onCreate: () => 1000 })
-		.field('updatedAt', v.number(), { onCreate: () => 1000, onUpdate: () => 2000 })
+		.pk('id', { input: v.string(), generate: () => 'x' })
+		.field('name', { input: v.string() })
+		.field('age', { input: v.number() })
+		.field('score', { input: v.optional(v.number()) })
+		.field('tags', { input: v.array(v.string()) })
+		.field('meta', { input: v.object({ a: v.number() }) })
+		.field('createdAt', { input: v.number(), onCreate: () => 1000 })
+		.field('updatedAt', { input: v.number(), onCreate: () => 1000, onUpdate: () => 2000 })
 		.build()
 
 	describe('op classes', () => {
