@@ -6,27 +6,27 @@ All notable changes to this project will be documented in this file. See [commit
 
 ### Features
 
-* **orm:** add in-memory storage locking ([209bf2f](https://github.com/andthexi/equipped/commit/209bf2fd1763432ccbddec1c8f19c7211d4a5b97))
-* **orm:** add native JSON storage locking ([591c329](https://github.com/andthexi/equipped/commit/591c329bb6ad56aeaf6d9a8ed1772d858da43e07))
-* **orm:** add postgresql storage locking ([25b4167](https://github.com/andthexi/equipped/commit/25b4167987d9d3cb78f4f5193ebcea0dd7e417ed))
-* **orm:** integrate migration storage locking ([1f5d093](https://github.com/andthexi/equipped/commit/1f5d09372d9ebc0372b7420d8ccbb1dccbbcb3e7))
+- **orm:** add in-memory storage locking ([209bf2f](https://github.com/andthexi/equipped/commit/209bf2fd1763432ccbddec1c8f19c7211d4a5b97))
+- **orm:** add native JSON storage locking ([591c329](https://github.com/andthexi/equipped/commit/591c329bb6ad56aeaf6d9a8ed1772d858da43e07))
+- **orm:** add postgresql storage locking ([25b4167](https://github.com/andthexi/equipped/commit/25b4167987d9d3cb78f4f5193ebcea0dd7e417ed))
+- **orm:** integrate migration storage locking ([1f5d093](https://github.com/andthexi/equipped/commit/1f5d09372d9ebc0372b7420d8ccbb1dccbbcb3e7))
 
 ## [5.3.7](https://github.com/andthexi/equipped/compare/v5.3.6...v5.3.7) (2026-11-13)
 
 ### Features
 
-* **orm:** add scoped mongodb migration locking ([#180](https://github.com/andthexi/equipped/issues/180)) ([d6563d5](https://github.com/andthexi/equipped/commit/d6563d5af3769f99b70e86cac850caf48a2b7ef9))
-* **orm:** generate safe mapped migration changes ([#162](https://github.com/andthexi/equipped/issues/162)) ([394b596](https://github.com/andthexi/equipped/commit/394b5967c08a5bd5707bf87cded3510a60516c43))
-* **orm:** introspect resolved physical targets ([#161](https://github.com/andthexi/equipped/issues/161)) ([5e12fe9](https://github.com/andthexi/equipped/commit/5e12fe96a4dc201397d158c7d5ab6d97b7af6d2a))
-* **orm:** make repo authoritative for migrations ([#177](https://github.com/andthexi/equipped/issues/177)) ([17c1d08](https://github.com/andthexi/equipped/commit/17c1d08800960e89b1060aa02aa7aa1420c38fe6))
-* **orm:** partition resolved migration history ([#179](https://github.com/andthexi/equipped/issues/179)) ([0646e3e](https://github.com/andthexi/equipped/commit/0646e3ee9e5dc95919407e2829cbe080d0aec029))
-* **orm:** resolve index and foreign key migrations ([#163](https://github.com/andthexi/equipped/issues/163)) ([d7da750](https://github.com/andthexi/equipped/commit/d7da750f3cef2bd5b8167f5a59c4fa94517892f8))
-* **orm:** resolve table and field migration targets ([#160](https://github.com/andthexi/equipped/issues/160)) ([98cb3a9](https://github.com/andthexi/equipped/commit/98cb3a988c4eaa022c241d5b8807887a93fab77b))
-* **orm:** scope postgresql migration history locks ([#181](https://github.com/andthexi/equipped/issues/181)) ([e1c1897](https://github.com/andthexi/equipped/commit/e1c18978c5dcc0ffdf8f388fe6f4ad5427de03b3))
+- **orm:** add scoped mongodb migration locking ([#180](https://github.com/andthexi/equipped/issues/180)) ([d6563d5](https://github.com/andthexi/equipped/commit/d6563d5af3769f99b70e86cac850caf48a2b7ef9))
+- **orm:** generate safe mapped migration changes ([#162](https://github.com/andthexi/equipped/issues/162)) ([394b596](https://github.com/andthexi/equipped/commit/394b5967c08a5bd5707bf87cded3510a60516c43))
+- **orm:** introspect resolved physical targets ([#161](https://github.com/andthexi/equipped/issues/161)) ([5e12fe9](https://github.com/andthexi/equipped/commit/5e12fe96a4dc201397d158c7d5ab6d97b7af6d2a))
+- **orm:** make repo authoritative for migrations ([#177](https://github.com/andthexi/equipped/issues/177)) ([17c1d08](https://github.com/andthexi/equipped/commit/17c1d08800960e89b1060aa02aa7aa1420c38fe6))
+- **orm:** partition resolved migration history ([#179](https://github.com/andthexi/equipped/issues/179)) ([0646e3e](https://github.com/andthexi/equipped/commit/0646e3ee9e5dc95919407e2829cbe080d0aec029))
+- **orm:** resolve index and foreign key migrations ([#163](https://github.com/andthexi/equipped/issues/163)) ([d7da750](https://github.com/andthexi/equipped/commit/d7da750f3cef2bd5b8167f5a59c4fa94517892f8))
+- **orm:** resolve table and field migration targets ([#160](https://github.com/andthexi/equipped/issues/160)) ([98cb3a9](https://github.com/andthexi/equipped/commit/98cb3a988c4eaa022c241d5b8807887a93fab77b))
+- **orm:** scope postgresql migration history locks ([#181](https://github.com/andthexi/equipped/issues/181)) ([e1c1897](https://github.com/andthexi/equipped/commit/e1c18978c5dcc0ffdf8f388fe6f4ad5427de03b3))
 
 ### Bug Fixes
 
-* **orm:** serialize in-memory root sessions ([#175](https://github.com/andthexi/equipped/issues/175)) ([340730b](https://github.com/andthexi/equipped/commit/340730b8a5910ff45f51d77cda8ce1351c87a7df))
+- **orm:** serialize in-memory root sessions ([#175](https://github.com/andthexi/equipped/issues/175)) ([340730b](https://github.com/andthexi/equipped/commit/340730b8a5910ff45f51d77cda8ce1351c87a7df))
 
 ## [5.3.6](https://github.com/andthexi/equipped/compare/v5.3.5...v5.3.6) (2026-11-12)
 
