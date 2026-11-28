@@ -5,13 +5,12 @@ allowBuilds:
 
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
-    - prettier@3.10.1
-    - valleyed@4.5.25
-    - xi-configs@0.1.0
+    - valleyed
+    - xi-configs
 
 autoInstallPeers: false
 
-nodeVersion: 24.22.3
+nodeVersion: 24.11.0
 engineStrict: true
 strictPeerDependencies: false
 enablePrePostScripts: true

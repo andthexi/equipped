@@ -5,6 +5,10 @@ on:
         tags:
             - 'v*'
 
+concurrency:
+    group: release-${{ github.ref }}
+    cancel-in-progress: false
+
 jobs:
     publish-npm:
         runs-on: ubuntu-latest
@@ -16,7 +20,7 @@ jobs:
 
             - uses: actions/setup-node@v6
               with:
-                  node-version: 24.22.3
+                  node-version: 24.11.0
                   registry-url: https://registry.npmjs.org
                   package-manager-cache: false
 
@@ -26,10 +30,13 @@ jobs:
 
             - run: pnpm install --frozen-lockfile --prefer-offline --ignore-scripts
             - run: pnpm build
+
             - name: Verify release tag matches package version
               run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
+
             - run: npm publish --provenance
+
             - name: Create GitHub release
               env:
                   GH_TOKEN: ${{ github.token }}
-              run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-from-tag
+              run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file CHANGELOG.md
