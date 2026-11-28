@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [5.3.9](https://github.com/andthexi/equipped/compare/v5.3.8...v5.3.9) (2026-11-28)
+
+### Features
+
+* **orm:** define field contracts and validate outputs ([7ab4806](https://github.com/andthexi/equipped/commit/7ab48060e4975f549ab0b3a4278dc2d66a334d2a))
+* **orm:** make mutation outputs atomic ([19311fd](https://github.com/andthexi/equipped/commit/19311fd2c51ee695997cc79f542c956d4b752c52))
+* **orm:** validate aggregate outputs across adapters ([41b4b41](https://github.com/andthexi/equipped/commit/41b4b4178c0ac36be639f7426046ef970a0e5ee2))
+* **orm:** validate computed and preloaded outputs ([557ecfa](https://github.com/andthexi/equipped/commit/557ecfa86e389f240d08d1276d2b0d9bf134e4c6))
+
 ## [5.3.8](https://github.com/andthexi/equipped/compare/v5.3.7...v5.3.8) (2026-11-15)
 
 ### Features
