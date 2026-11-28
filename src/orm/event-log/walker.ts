@@ -18,7 +18,7 @@ const executeReplay = async (
 		firstRun: false,
 	}
 	try {
-		await repo.session(async () => {
+		await (repo as any).session(async () => {
 			await def.handle(row.body, evCtx)
 		})
 	} catch (cause) {

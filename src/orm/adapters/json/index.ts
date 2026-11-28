@@ -345,6 +345,12 @@ export class JsonAdapter extends configurable(jsonConnectionPipe, OrmAdapter) {
 		})
 	}
 
+	async ensureSession<T>(fn: () => Promise<T>): Promise<T> {
+		const lockPath = (await this.#paths).transaction
+		if (fileSessionStore.getStore()?.has(lockPath)) return this.#inMemory.ensureSession(fn)
+		return this.session(fn)
+	}
+
 	async loadMigrations(config: JsonAdapterConfig): Promise<{ id: string; appliedAt: number }[]> {
 		return this.#withCurrentFile(false, async () => await this.#inMemory.loadMigrations(config))
 	}

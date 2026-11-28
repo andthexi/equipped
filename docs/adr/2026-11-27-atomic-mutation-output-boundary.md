@@ -1,6 +1,6 @@
 # Atomic schema-aware mutations and adapter-owned session composition
 
-**Status:** Accepted design; not implemented.
+**Status:** Accepted design; implemented in Slice #201.
 
 A database write can succeed before Repo rejects its returned data. Output validation alone therefore cannot promise that a rejected mutation left storage unchanged. Equipped will encompass each ordinary schema-aware mutation and its complete output pipeline in an adapter-owned transaction when supported. Explicit sessions still group multiple domain operations. The accepted contract is recorded in [ORM context §18](../orm/CONTEXT.md#18-output-validation-and-atomic-mutations--accepted-design).
 

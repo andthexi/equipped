@@ -46,28 +46,57 @@ export type HasMethod<A, Method extends string> = Method extends keyof A
 		: false
 	: false
 
+type HasSessionPair<A> = [HasMethod<A, 'session'>, HasMethod<A, 'ensureSession'>] extends [true, true] ? true : false
+
+type CanAcceptNonTransactional<A> = [HasMethod<A, 'session'>, HasMethod<A, 'ensureSession'>] extends [false, false]
+	? true
+	: false
+
+type MutationSurface<T, Allowed extends boolean> = Allowed extends true
+	? T
+	: Omit<T, 'create' | 'update' | 'delete' | 'upsert'> & {
+			create: never
+			update: never
+			delete: never
+			upsert: never
+		}
+
 export type OneBuilderSurface<
 	S extends AnySchema,
 	A = unknown,
 	Sel extends string = never,
 	P extends readonly AnyPreloadDef[] = [],
 	Req extends boolean = false,
-> = OneBuilder<S, A, Sel, P, Req> &
+	Accepted extends boolean = false,
+> = MutationSurface<OneBuilder<S, A, Sel, P, Req, Accepted>, HasSessionPair<A> extends true ? true : Accepted> &
+	(HasMethod<A, 'createMany'> extends true ? {} : { create: never }) &
 	(HasMethod<A, 'updateMany'> extends true ? {} : { update: never }) &
 	(HasMethod<A, 'deleteMany'> extends true ? {} : { delete: never }) &
-	(HasMethod<A, 'upsertOne'> extends true ? {} : { upsert: never })
+	(HasMethod<A, 'upsertOne'> extends true ? {} : { upsert: never }) &
+	(CanAcceptNonTransactional<A> extends true
+		? Accepted extends false
+			? {}
+			: { allowNonTransactional: never }
+		: { allowNonTransactional: never })
 
 export type AllBuilderSurface<
 	S extends AnySchema,
 	A = unknown,
 	Sel extends string = never,
 	P extends readonly AnyPreloadDef[] = [],
-> = AllBuilder<S, A, Sel, P> &
+	Accepted extends boolean = false,
+> = MutationSurface<AllBuilder<S, A, Sel, P, Accepted>, HasSessionPair<A> extends true ? true : Accepted> &
+	(HasMethod<A, 'createMany'> extends true ? {} : { create: never }) &
 	(HasMethod<A, 'iterateMany'> extends true ? {} : { iterate: never }) &
 	(HasMethod<A, 'updateMany'> extends true ? {} : { update: never }) &
 	(HasMethod<A, 'deleteMany'> extends true ? {} : { delete: never }) &
 	(HasMethod<A, 'count'> extends true ? {} : { count: never }) &
-	([HasMethod<A, 'findMany'>, HasMethod<A, 'count'>] extends [true, true] ? {} : { paginate: never })
+	([HasMethod<A, 'findMany'>, HasMethod<A, 'count'>] extends [true, true] ? {} : { paginate: never }) &
+	(CanAcceptNonTransactional<A> extends true
+		? Accepted extends false
+			? {}
+			: { allowNonTransactional: never }
+		: { allowNonTransactional: never })
 
 type HasNonEmptyAggregateOps<A> = A extends { aggregateOps: readonly [any, ...any[]] } ? true : false
 
@@ -88,17 +117,23 @@ type ReadBuilderFor<
 > = TBuilder extends {
 	_builderKind: 'one'
 	_req: infer Req extends boolean
+	_allowNonTransactional: infer Accepted extends boolean
 }
-	? OneBuilderSurface<S, A, Sel, P, Req>
-	: TBuilder extends { _builderKind: 'all' }
-		? AllBuilderSurface<S, A, Sel, P>
+	? OneBuilderSurface<S, A, Sel, P, Req, Accepted>
+	: TBuilder extends { _builderKind: 'all'; _allowNonTransactional: infer Accepted extends boolean }
+		? AllBuilderSurface<S, A, Sel, P, Accepted>
 		: never
 
 export class SchemaContext<S extends AnySchema> {
 	constructor(
 		readonly schema: S,
 		private readonly getUse: (target: AnySchema) => OrmUse,
+		private readonly executeMutation: <T>(fn: () => Promise<T>, allowNonTransactional: boolean) => Promise<T>,
 	) {}
+
+	async mutate<T>(fn: () => Promise<T>, allowNonTransactional = false): Promise<T> {
+		return this.executeMutation(fn, allowNonTransactional)
+	}
 
 	async shapeRows<Sel extends string, P extends readonly AnyPreloadDef[]>(
 		select: readonly Sel[] | undefined,
@@ -119,7 +154,7 @@ export class SchemaContext<S extends AnySchema> {
 						preloads,
 						this.getUse,
 						(schema, relatedRows, relatedOperation) =>
-							new SchemaContext(schema, this.getUse).shapeRows(
+							new SchemaContext(schema, this.getUse, this.executeMutation).shapeRows(
 								undefined,
 								[],
 								relatedRows,
@@ -152,17 +187,21 @@ abstract class ReadSelectState<
 	A = unknown,
 	Sel extends string = never,
 	P extends readonly AnyPreloadDef[] = [],
+	Accepted extends boolean = false,
 > {
 	protected readonly _context: SchemaContext<S>
 	protected _where: FilterGroup
 	protected _select: readonly Sel[] | undefined
 	protected _preloads: P
+	protected readonly _acceptedNonTransactional: boolean
+	declare readonly _allowNonTransactional: Accepted
 
-	constructor(context: SchemaContext<S>, state?: ReadState<Sel, P>) {
+	constructor(context: SchemaContext<S>, state?: ReadState<Sel, P>, acceptedNonTransactional = false) {
 		this._context = context
 		this._where = state?.where ? state.where.clone() : FilterGroup.create()
 		this._select = state?.select
 		this._preloads = state?.preloads ?? ([] as unknown as P)
+		this._acceptedNonTransactional = acceptedNonTransactional
 	}
 
 	where(factory: FilterFactory): this {
@@ -207,11 +246,11 @@ export class SchemaRef<S extends AnySchema, A = unknown> {
 	}
 
 	one(): OneBuilderSurface<S, A, never, []> {
-		return new OneBuilder<S, A, never, []>(this.#context) as OneBuilderSurface<S, A, never, []>
+		return new OneBuilder<S, A, never, []>(this.#context) as unknown as OneBuilderSurface<S, A, never, []>
 	}
 
 	all(): AllBuilderSurface<S, A, never, []> {
-		return new AllBuilder<S, A, never, []>(this.#context) as AllBuilderSurface<S, A, never, []>
+		return new AllBuilder<S, A, never, []>(this.#context) as unknown as AllBuilderSurface<S, A, never, []>
 	}
 
 	aggregate(): AggregateBuilder<S, A, {}, {}, false, false, false> {
@@ -229,9 +268,11 @@ export class OneBuilder<
 	Sel extends string = never,
 	P extends readonly AnyPreloadDef[] = [],
 	Req extends boolean = false,
-> extends ReadSelectState<S, A, Sel, P> {
+	Accepted extends boolean = false,
+> extends ReadSelectState<S, A, Sel, P, Accepted> {
 	declare readonly _builderKind: 'one'
 	declare readonly _req: Req
+	declare readonly _allowNonTransactional: Accepted
 
 	protected _required: boolean
 	protected _requiredMessage: string | undefined
@@ -240,8 +281,9 @@ export class OneBuilder<
 		context: SchemaContext<S>,
 		state?: ReadState<Sel, P>,
 		reqState?: { required: boolean; message?: string },
+		acceptedNonTransactional = false,
 	) {
-		super(context, state)
+		super(context, state, acceptedNonTransactional)
 		this._required = reqState?.required ?? false
 		this._requiredMessage = reqState?.message
 	}
@@ -255,11 +297,19 @@ export class OneBuilder<
 		}) as this
 	}
 
-	required(this: OneBuilder<S, A, Sel, P, false>, message?: string): OneBuilderSurface<S, A, Sel, P, true> {
-		return new OneBuilder<S, A, Sel, P, true>(this._context, this._readState(), {
-			required: true,
-			message,
-		}) as OneBuilderSurface<S, A, Sel, P, true>
+	required(
+		this: OneBuilder<S, A, Sel, P, false, Accepted>,
+		message?: string,
+	): OneBuilderSurface<S, A, Sel, P, true, Accepted> {
+		return new OneBuilder<S, A, Sel, P, true, Accepted>(
+			this._context,
+			this._readState(),
+			{
+				required: true,
+				message,
+			},
+			this._acceptedNonTransactional,
+		) as unknown as OneBuilderSurface<S, A, Sel, P, true, Accepted>
 	}
 
 	private _assertFound(result: unknown, operation: OrmNotFoundOperation): void {
@@ -274,57 +324,80 @@ export class OneBuilder<
 	}
 
 	protected _clone<NewSel extends string, NewP extends readonly AnyPreloadDef[]>(next: ReadState<NewSel, NewP>) {
-		return new OneBuilder<S, A, NewSel, NewP, Req>(this._context, this._readState(next), {
-			required: this._required,
-			message: this._requiredMessage,
-		}) as any
+		return new OneBuilder<S, A, NewSel, NewP, Req, Accepted>(
+			this._context,
+			this._readState(next),
+			{
+				required: this._required,
+				message: this._requiredMessage,
+			},
+			this._acceptedNonTransactional,
+		) as any
+	}
+
+	allowNonTransactional(
+		..._args: CanAcceptNonTransactional<A> extends true ? (Accepted extends false ? [] : [never]) : [never]
+	): OneBuilderSurface<S, A, Sel, P, Req, true> {
+		return new OneBuilder<S, A, Sel, P, Req, true>(
+			this._context,
+			this._readState(),
+			{
+				required: this._required,
+				message: this._requiredMessage,
+			},
+			true,
+		) as unknown as OneBuilderSurface<S, A, Sel, P, Req, true>
 	}
 
 	create(data: SchemaCreateInput<S>) {
-		return runOneCreate(
-			this._context,
-			{
-				select: this._select,
-				preloads: this._preloads,
-			},
-			data,
+		return this._context.mutate(
+			() => runOneCreate(this._context, { select: this._select, preloads: this._preloads }, data),
+			this._acceptedNonTransactional,
 		)
 	}
 
 	async update(data: SchemaUpdateInput<S>): Promise<MaybeNull<SelectedWithPreloads<S, Sel, P>, Req>> {
-		const result = await runOneUpdate(
-			this._context,
-			{
-				where: this._where,
-				select: this._select,
-				preloads: this._preloads,
-			},
-			data,
-		)
-		this._assertFound(result, 'updateOne')
-		return result as any
+		return this._context.mutate(async () => {
+			const result = await runOneUpdate(
+				this._context,
+				{
+					where: this._where,
+					select: this._select,
+					preloads: this._preloads,
+				},
+				data,
+			)
+			this._assertFound(result, 'updateOne')
+			return result as any
+		}, this._acceptedNonTransactional)
 	}
 
 	upsert(data: UpsertInput<S>) {
-		return runOneUpsert(
-			this._context,
-			{
-				where: this._where,
-				select: this._select,
-				preloads: this._preloads,
-			},
-			data,
+		return this._context.mutate(
+			() =>
+				runOneUpsert(
+					this._context,
+					{
+						where: this._where,
+						select: this._select,
+						preloads: this._preloads,
+					},
+					data,
+				),
+			this._acceptedNonTransactional,
 		)
 	}
 
 	async delete(): Promise<MaybeNull<SelectedWithPreloads<S, Sel, P>, Req>> {
-		const result = await runOneDelete(this._context, {
-			where: this._where,
-			select: this._select,
-			preloads: this._preloads,
-		})
-		this._assertFound(result, 'deleteOne')
-		return result as any
+		return this._context.mutate(async () => {
+			const result = await runOneDelete(this._context, {
+				where: this._where,
+				select: this._select,
+				preloads: this._preloads,
+			})
+			this._assertFound(result, 'deleteOne')
+			return result as any
+		}, this._acceptedNonTransactional)
 	}
 
 	async find(): Promise<MaybeNull<SelectedWithPreloads<S, Sel, P>, Req>> {
@@ -343,8 +416,10 @@ export class AllBuilder<
 	A = unknown,
 	Sel extends string = never,
 	P extends readonly AnyPreloadDef[] = [],
-> extends ReadSelectState<S, A, Sel, P> {
+	Accepted extends boolean = false,
+> extends ReadSelectState<S, A, Sel, P, Accepted> {
 	declare readonly _builderKind: 'all'
+	declare readonly _allowNonTransactional: Accepted
 
 	#orderBy: OrderBy[]
 	#limitSource: ReadLimitSource | undefined
@@ -354,8 +429,9 @@ export class AllBuilder<
 		context: SchemaContext<S>,
 		state?: ReadState<Sel, P>,
 		queryState?: { orderBy?: OrderBy[]; limitSource?: ReadLimitSource; offsetSource?: ReadOffsetSource },
+		acceptedNonTransactional = false,
 	) {
-		super(context, state)
+		super(context, state, acceptedNonTransactional)
 		this.#orderBy = queryState?.orderBy ?? []
 		this.#limitSource = queryState?.limitSource
 		this.#offsetSource = queryState?.offsetSource
@@ -365,15 +441,20 @@ export class AllBuilder<
 		queryOverride: Partial<{ orderBy: OrderBy[]; limitSource: ReadLimitSource; offsetSource: ReadOffsetSource }>,
 	) {
 		const has = (key: keyof typeof queryOverride) => Object.prototype.hasOwnProperty.call(queryOverride, key)
-		return new AllBuilder<S, A, Sel, P>(this._context, this._readState(), {
-			orderBy: has('orderBy') ? queryOverride.orderBy : [...this.#orderBy],
-			limitSource: has('limitSource') ? queryOverride.limitSource : this.#limitSource,
-			offsetSource: has('offsetSource') ? queryOverride.offsetSource : this.#offsetSource,
-		}) as this
+		return new AllBuilder<S, A, Sel, P, Accepted>(
+			this._context,
+			this._readState(),
+			{
+				orderBy: has('orderBy') ? queryOverride.orderBy : [...this.#orderBy],
+				limitSource: has('limitSource') ? queryOverride.limitSource : this.#limitSource,
+				offsetSource: has('offsetSource') ? queryOverride.offsetSource : this.#offsetSource,
+			},
+			this._acceptedNonTransactional,
+		) as this
 	}
 
 	protected _clone<NewSel extends string, NewP extends readonly AnyPreloadDef[]>(next: ReadState<NewSel, NewP>) {
-		return new AllBuilder<S, A, NewSel, NewP>(
+		return new AllBuilder<S, A, NewSel, NewP, Accepted>(
 			this._context,
 			this._readState({
 				where: next.where,
@@ -381,6 +462,7 @@ export class AllBuilder<
 				preloads: next.preloads,
 			}),
 			{ orderBy: [...this.#orderBy], limitSource: this.#limitSource, offsetSource: this.#offsetSource },
+			this._acceptedNonTransactional,
 		) as any
 	}
 
@@ -400,35 +482,54 @@ export class AllBuilder<
 		return this.#withQuery({ offsetSource: { kind: 'page', value: page } })
 	}
 
-	create(data: SchemaCreateInput<S>[]) {
-		return runAllCreate(
+	allowNonTransactional(
+		..._args: CanAcceptNonTransactional<A> extends true ? (Accepted extends false ? [] : [never]) : [never]
+	): AllBuilderSurface<S, A, Sel, P, true> {
+		return new AllBuilder<S, A, Sel, P, true>(
 			this._context,
+			this._readState(),
 			{
-				select: this._select,
-				preloads: this._preloads,
+				orderBy: [...this.#orderBy],
+				limitSource: this.#limitSource,
+				offsetSource: this.#offsetSource,
 			},
-			data,
+			true,
+		) as unknown as AllBuilderSurface<S, A, Sel, P, true>
+	}
+
+	create(data: SchemaCreateInput<S>[]) {
+		return this._context.mutate(
+			() => runAllCreate(this._context, { select: this._select, preloads: this._preloads }, data),
+			this._acceptedNonTransactional,
 		)
 	}
 
 	update(data: SchemaUpdateInput<S>) {
-		return runAllUpdate(
-			this._context,
-			{
-				where: this._where,
-				select: this._select,
-				preloads: this._preloads,
-			},
-			data,
+		return this._context.mutate(
+			() =>
+				runAllUpdate(
+					this._context,
+					{
+						where: this._where,
+						select: this._select,
+						preloads: this._preloads,
+					},
+					data,
+				),
+			this._acceptedNonTransactional,
 		)
 	}
 
 	delete() {
-		return runAllDelete(this._context, {
-			where: this._where,
-			select: this._select,
-			preloads: this._preloads,
-		})
+		return this._context.mutate(
+			() =>
+				runAllDelete(this._context, {
+					where: this._where,
+					select: this._select,
+					preloads: this._preloads,
+				}),
+			this._acceptedNonTransactional,
+		)
 	}
 
 	find() {
@@ -780,6 +881,8 @@ if (import.meta.vitest) {
 				findMany: (...a: any[]) => any
 				deleteOne: (...a: any[]) => any
 				updateOne: (...a: any[]) => any
+				session: (...a: any[]) => any
+				ensureSession: (...a: any[]) => any
 			}
 			type S = typeof UserSchema
 			type Result = import('./internals/types.js').SelectedWithPreloads<S, never, []>

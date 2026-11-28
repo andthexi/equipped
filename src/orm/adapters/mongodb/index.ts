@@ -357,17 +357,48 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 
 	async session<T>(fn: () => Promise<T>): Promise<T> {
 		if (this.#sessionStore.getStore()) return fn()
+		const session = await this.client.startSession()
 		try {
-			const session = await this.client.startSession()
+			session.startTransaction()
+			let result: T
 			try {
-				return await session.withTransaction(async () => this.#sessionStore.run(session, fn))
-			} finally {
-				await session.endSession()
+				result = await this.#sessionStore.run(session, fn)
+			} catch (error) {
+				try {
+					await session.abortTransaction()
+				} catch (rollbackError) {
+					throw new EquippedError(
+						'MongoDB rollback outcome is uncertain',
+						{
+							adapter: 'mongodb',
+							operation: 'session',
+							phase: 'rollback',
+							outcome: 'uncertain',
+							originalError: error,
+						},
+						rollbackError,
+					)
+				}
+				throw error
 			}
-		} catch (error) {
-			if (error instanceof EquippedError) throw error
-			throw new EquippedError('MongoDB session failed', { adapter: 'mongodb', operation: 'session' }, error)
+			try {
+				await session.commitTransaction()
+			} catch (cause) {
+				throw new EquippedError(
+					'MongoDB commit outcome is uncertain',
+					{ adapter: 'mongodb', operation: 'session', phase: 'commit', outcome: 'uncertain' },
+					cause,
+				)
+			}
+			return result
+		} finally {
+			await session.endSession()
 		}
+	}
+
+	async ensureSession<T>(fn: () => Promise<T>): Promise<T> {
+		if (this.#sessionStore.getStore()) return fn()
+		return this.session(fn)
 	}
 
 	async loadMigrations(config: MongoDbRepoConfig): Promise<{ id: string; appliedAt: number }[]> {
@@ -1018,7 +1049,9 @@ if (import.meta.vitest) {
 			})
 			;(adapter.client as any).startSession = () =>
 				Object.assign(session, {
-					withTransaction: (fn: () => Promise<unknown>) => fn(),
+					startTransaction: () => {},
+					commitTransaction: async () => {},
+					abortTransaction: async () => {},
 					endSession: async () => {},
 				})
 

@@ -33,6 +33,7 @@ export type OrmAdapterLike<Config = unknown> = {
 	connect?(): Promise<void>
 	disconnect?(): Promise<void>
 	session?<T>(fn: () => Promise<T>): Promise<T>
+	ensureSession?<T>(fn: () => Promise<T>): Promise<T>
 	lock?<T>(config: Config, mode: StorageLockMode, fn: () => Promise<T>): Promise<T>
 }
 

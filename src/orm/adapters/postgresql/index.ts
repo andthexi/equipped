@@ -909,25 +909,45 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			transactionStarted = true
 			const result = await this.#sessionStore.run(client, fn)
 			commitAttempted = true
-			await client.query('COMMIT')
+			try {
+				await client.query('COMMIT')
+			} catch (cause) {
+				throw new EquippedError(
+					'PostgreSQL commit outcome is uncertain',
+					{ adapter: 'postgresql', operation: 'session', phase: 'commit', outcome: 'uncertain' },
+					cause,
+				)
+			}
 			return result
 		} catch (error) {
 			if (client && transactionStarted && !commitAttempted) {
 				try {
 					await client.query('ROLLBACK')
-				} catch {
-					// ignore rollback errors and report original failure
+				} catch (rollbackError) {
+					throw new EquippedError(
+						'PostgreSQL rollback outcome is uncertain',
+						{
+							adapter: 'postgresql',
+							operation: 'session',
+							phase: 'rollback',
+							outcome: 'uncertain',
+							originalError: error,
+						},
+						rollbackError,
+					)
 				}
 			}
-			if (error instanceof EquippedError) throw error
-			throw new EquippedError(
-				commitAttempted ? 'PostgreSQL commit outcome is uncertain' : 'PostgreSQL session failed',
-				{ adapter: 'postgresql', operation: 'session', outcome: commitAttempted ? 'uncertain' : 'rolled-back' },
-				error,
-			)
+			if (commitAttempted) throw error
+			if (transactionStarted) throw error
+			throw new EquippedError('PostgreSQL session failed', { adapter: 'postgresql', operation: 'session' }, error)
 		} finally {
 			if (releaseClient) client?.release()
 		}
+	}
+
+	async ensureSession<T>(fn: () => Promise<T>): Promise<T> {
+		if (this.#sessionStore.getStore()) return fn()
+		return this.session(fn)
 	}
 }
 
@@ -1362,6 +1382,89 @@ if (import.meta.vitest) {
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			expect(adapter.session).toBeDefined()
 			expect(adapter.session).toBeTypeOf('function')
+			expect(adapter.ensureSession).toBeTypeOf('function')
+		})
+
+		test('propagates the original callback error after a confirmed rollback', async () => {
+			const adapter = PostgresAdapter.create(testConnectionConfig)
+			const callbackError = new Error('callback failed')
+			const client = {
+				query: vi.fn(async (_statement: string) => ({ rows: [] })),
+				release: vi.fn(),
+			}
+			;(adapter.pool as any).connect = vi.fn(async () => client)
+
+			await expect(
+				adapter.session(async () => {
+					throw callbackError
+				}),
+			).rejects.toBe(callbackError)
+			expect(client.query.mock.calls.map(([statement]) => statement)).toEqual(['BEGIN', 'ROLLBACK'])
+		})
+
+		test('preserves callback errors after rollback and reports rollback uncertainty', async () => {
+			const adapter = PostgresAdapter.create(testConnectionConfig)
+			const rollbackError = new Error('rollback failed')
+			const callbackError = new Error('callback failed')
+			const client = {
+				query: vi.fn(async (statement: string) => {
+					if (statement === 'ROLLBACK') throw rollbackError
+					return { rows: [] }
+				}),
+				release: vi.fn(),
+			}
+			;(adapter.pool as any).connect = vi.fn(async () => client)
+
+			let caught: unknown
+			try {
+				await adapter.session(async () => {
+					throw callbackError
+				})
+			} catch (error) {
+				caught = error
+			}
+			expect(caught).toBeInstanceOf(EquippedError)
+			expect(caught).toMatchObject({
+				context: {
+					phase: 'rollback',
+					outcome: 'uncertain',
+					originalError: callbackError,
+				},
+				cause: rollbackError,
+			})
+			expect(client.query.mock.calls.map(([statement]) => statement)).toEqual(['BEGIN', 'ROLLBACK'])
+			expect(client.release).toHaveBeenCalledTimes(1)
+		})
+
+		test('reports an uncertain commit without retrying the session callback', async () => {
+			const adapter = PostgresAdapter.create(testConnectionConfig)
+			const commitError = new Error('commit failed')
+			const client = {
+				query: vi.fn(async (statement: string) => {
+					if (statement === 'COMMIT') throw commitError
+					return { rows: [] }
+				}),
+				release: vi.fn(),
+			}
+			;(adapter.pool as any).connect = vi.fn(async () => client)
+			let callbackCalls = 0
+
+			let caught: unknown
+			try {
+				await adapter.ensureSession(async () => {
+					callbackCalls++
+					return 'result'
+				})
+			} catch (error) {
+				caught = error
+			}
+			expect(caught).toBeInstanceOf(EquippedError)
+			expect(caught).toMatchObject({
+				context: { phase: 'commit', outcome: 'uncertain' },
+				cause: commitError,
+			})
+			expect(callbackCalls).toBe(1)
+			expect(client.query.mock.calls.map(([statement]) => statement)).toEqual(['BEGIN', 'COMMIT'])
 		})
 
 		test('declares aggregateOps with all six canonical ops', () => {

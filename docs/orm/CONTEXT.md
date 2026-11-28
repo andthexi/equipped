@@ -408,7 +408,7 @@ methods and capability declarations, and how they narrow the Repo's surface.
 
 ### 3.1 Methods (and the historical bag groupings)
 
-The Adapter exposes exactly fourteen **optional methods** declared on the
+The Adapter exposes exactly fifteen **optional methods** declared on the
 abstract `OrmAdapter` base. Each subclass implements the ones it supports and
 omits the rest:
 
@@ -417,7 +417,7 @@ omits the rest:
 | `lifecycle`        | `connect`, `disconnect`                                                     |
 | `crud`             | `findByPk`, `createMany`, `updateByPk`, `deleteByPk`, `raw`                 |
 | `queryable`        | `findMany`, `count`, `iterateMany`, `updateMany`, `deleteMany`, `upsertOne` |
-| `transactional`    | `session`                                                                   |
+| `transactional`    | `session`, `ensureSession`                                                  |
 
 The four group labels (`lifecycle`, `crud`, `queryable`, `transactional`)
 survive **only as documentation** — they are vocabulary for discussing related
@@ -1488,10 +1488,11 @@ all failures across documents, and throws one `OrmValidationError` if any.
 
 ## 8. Transactions & sessions
 
-Explicit session behavior below remains in effect. The accepted mutation
-contract additionally requires paired `session()` / `ensureSession()` support;
-see [§18.5](#185-mutation-transaction-boundary). The adapter still owns transaction
-propagation and explicit-session nesting. No rollback-only behavior is added.
+Explicit session behavior below remains in effect. Transactional adapters
+implement paired `session()` / `ensureSession()` methods; Repo mutations use the
+latter to join or own a transaction. See [§18.5](#185-mutation-transaction-boundary).
+The adapter still owns transaction propagation and explicit-session nesting. No
+rollback-only behavior is added.
 
 ### 8.1 Session contract
 
@@ -3199,12 +3200,13 @@ falling back to polling markers or expiry-based takeover.
 
 ## 18. Output validation and atomic mutations — accepted design
 
-**Status:** Partially implemented. Slice #198 delivers schema input/output
-contracts and ordinary Repo record validation. Slice #199 delivers computed
-output validation, recursive preload assembly, hidden dependency/key retention,
-and validate-before-yield iteration. Slice #200 delivers scalar and aggregate
-output validation and aligned in-tree adapter semantics. Atomic-mutation
-contracts remain assigned to a later slice. These
+**Status:** Implemented across Slices #198–#201. Slice #198 delivers schema
+input/output contracts and ordinary Repo record validation. Slice #199 delivers
+computed output validation, recursive preload assembly, hidden dependency/key
+retention, and validate-before-yield iteration. Slice #200 delivers scalar and
+aggregate output validation and aligned in-tree adapter semantics. Slice #201
+adds the atomic mutation boundary, paired adapter sessions, explicit
+nontransactional acceptance, and truthful settlement errors. These
 contracts were settled during the design follow-up to
 [issue #196](https://github.com/andthexi/equipped/issues/196). Delivery
 boundaries are explicitly listed in §18.7; design acceptance is not release
