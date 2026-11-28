@@ -1,29 +1,30 @@
-import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { PipeError, v } from 'valleyed'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
+import type { InferAdapterConfig } from '../../src/orm/adapter.js'
 import { InMemoryAdapter } from '../../src/orm/adapters/in-memory/index.js'
+import { OrmNotFoundError, OrmValidationError } from '../../src/orm/errors/index.js'
 import { OrmAdapter } from '../../src/orm/orm-adapter.js'
 import { Repo } from '../../src/orm/repo/repo.js'
-import { OrmNotFoundError, OrmValidationError } from '../../src/orm/errors/index.js'
-import { Schema, type SchemaOutput } from '../../src/orm/schema.js'
 import type { SchemaCreateInput } from '../../src/orm/schema-validations.js'
+import { Schema, type SchemaOutput } from '../../src/orm/schema.js'
 
 function buildRepo<A extends OrmAdapter>(adapter: A) {
 	return Repo.from(adapter)
-		.resolve((name) => ({ table: name }) as any)
+		.resolve((name) => ({ table: name }) as InferAdapterConfig<A>)
 		.build()
 }
 
 describe('schema declaration type contracts', () => {
 	it('requires output when input and persisted types differ and infers persisted types from output', () => {
 		const asNumber = v.string().pipe((value) => Number(value))
-		const schema = Schema.from('contract_type_conversion')
+		const _schema = Schema.from('contract_type_conversion')
 			.pk('id', { input: asNumber, output: v.number(), generate: () => 7 })
 			.field('count', { input: asNumber, output: v.number() })
 			.build()
 
-		expectTypeOf<SchemaCreateInput<typeof schema>>().toEqualTypeOf<{ id?: string; count: string }>()
-		expectTypeOf<SchemaOutput<typeof schema>>().toEqualTypeOf<{ id: number; count: number }>()
+		expectTypeOf<SchemaCreateInput<typeof _schema>>().toEqualTypeOf<{ id?: string; count: string }>()
+		expectTypeOf<SchemaOutput<typeof _schema>>().toEqualTypeOf<{ id: number; count: number }>()
 
 		// @ts-expect-error output is mandatory when the input pipe changes types
 		Schema.from('missing_pk_output').pk('id', { input: asNumber, generate: () => 7 })
@@ -81,7 +82,7 @@ describe('schema input/output contracts through Repo', () => {
 			repo
 				.on(schema)
 				.one()
-				.create({ id: null as any, name: 'valid' }),
+				.create({ id: null as unknown as string, name: 'valid' }),
 		).rejects.toMatchObject({
 			kind: 'validation',
 		})
@@ -89,7 +90,7 @@ describe('schema input/output contracts through Repo', () => {
 			repo
 				.on(schema)
 				.one()
-				.create({ id: 'valid', name: null as any }),
+				.create({ id: 'valid', name: null as unknown as string }),
 		).rejects.toMatchObject({
 			kind: 'validation',
 		})
@@ -163,7 +164,7 @@ describe('schema input/output contracts through Repo', () => {
 	it('validates onUpdate-generated persisted values with the output pipe', async () => {
 		const schema = Schema.from('contract_bad_on_update')
 			.pk('id', { input: v.string(), generate: () => 'row-1' })
-			.field('count', { input: v.number(), output: v.number(), onUpdate: () => 'invalid' as any })
+			.field('count', { input: v.number(), output: v.number(), onUpdate: () => 'invalid' as unknown as number })
 			.build()
 		const repo = buildRepo(InMemoryAdapter.create({}))
 		const created = await repo.on(schema).one().create({ count: 1 })
@@ -175,8 +176,8 @@ describe('schema input/output contracts through Repo', () => {
 	})
 
 	it('validates generated persisted outputs before single, bulk, and upsert writes', async () => {
-		const idGenerate = vi.fn(() => 42 as any)
-		const defaultGenerate = vi.fn(() => 'not-a-number' as any)
+		const idGenerate = vi.fn(() => 42 as unknown as string)
+		const defaultGenerate = vi.fn(() => 'not-a-number' as unknown as number)
 		const schema = Schema.from('contract_bad_generated_output')
 			.pk('id', { input: v.string(), output: v.string(), generate: idGenerate })
 			.field('value', { input: v.number(), output: v.number(), onCreate: defaultGenerate })
@@ -324,6 +325,7 @@ describe('ordinary Repo output validation', () => {
 			repo
 				.on(schema)
 				.one()
+				.allowNonTransactional()
 				.create({ name: 'Ada', age: 37, settings: { theme: 'dark' } }),
 		).rejects.toMatchObject({
 			kind: 'output',
@@ -337,6 +339,7 @@ describe('ordinary Repo output validation', () => {
 			repo
 				.on(schema)
 				.one()
+				.allowNonTransactional()
 				.create({ name: 'Ada', age: 37, settings: { theme: 'dark' } }),
 		).rejects.toMatchObject({
 			kind: 'output',
@@ -347,6 +350,7 @@ describe('ordinary Repo output validation', () => {
 			repo
 				.on(schema)
 				.all()
+				.allowNonTransactional()
 				.create([
 					{ name: 'Ada', age: 37, settings: { theme: 'dark' } },
 					{ name: 'Grace', age: 85, settings: { theme: 'light' } },
@@ -361,12 +365,12 @@ describe('ordinary Repo output validation', () => {
 		const repo = buildRepo(adapter)
 		const schema = responseSchema()
 
-		await expect(repo.on(schema).one().delete()).rejects.toMatchObject({ kind: 'output' })
+		await expect(repo.on(schema).one().allowNonTransactional().delete()).rejects.toMatchObject({ kind: 'output' })
 		expect(adapter.deleteByPkCalls).toBe(0)
 
-		await expect(repo.on(schema).one().id('row-1').update({ name: 'updated' })).rejects.toMatchObject({
-			kind: 'output',
-		})
+		await expect(
+			repo.on(schema).one().id('row-1').allowNonTransactional().update({ name: 'updated' }),
+		).rejects.toMatchObject({ kind: 'output' })
 		expect(adapter.updateManyCalls).toBe(0)
 	})
 
@@ -375,9 +379,9 @@ describe('ordinary Repo output validation', () => {
 		adapter.readResponse = [{ id: 'row-1' }]
 		adapter.deleteByPkResponse = { id: 'row-1', name: 'Ada', age: 'invalid', settings: { theme: 'dark' } }
 		const repo = buildRepo(adapter)
-		await expect(repo.on(responseSchema()).one().id('row-1').delete()).rejects.toMatchObject({
-			kind: 'output',
-		})
+		await expect(
+			repo.on(responseSchema()).one().id('row-1').allowNonTransactional().delete(),
+		).rejects.toMatchObject({ kind: 'output' })
 	})
 
 	it('validates mutation projections without certifying unreturned response fields', async () => {
@@ -385,7 +389,13 @@ describe('ordinary Repo output validation', () => {
 		adapter.readResponse = [{ id: 'row-1' }]
 		adapter.updateResponse = [{ id: 'row-1', name: 'updated', age: 'malformed', settings: { theme: 'dark' } }]
 		const repo = buildRepo(adapter)
-		const result = await repo.on(responseSchema()).one().id('row-1').select(['name']).update({ name: 'updated' })
+		const result = await repo
+			.on(responseSchema())
+			.one()
+			.id('row-1')
+			.select(['name'])
+			.allowNonTransactional()
+			.update({ name: 'updated' })
 		expect(result).toEqual({ name: 'updated' })
 	})
 })

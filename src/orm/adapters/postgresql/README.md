@@ -46,7 +46,7 @@ const result = await adapter.pool.query('SELECT NOW()')
 
 ## Session nesting behaviour
 
-`session(fn)` acquires a `PoolClient`, runs `BEGIN`, executes `fn`, then `COMMIT` on success or `ROLLBACK` on throw. Nested sessions (calling `session` inside another `session`) are flat: the inner call detects an active client via `AsyncLocalStorage` and executes `fn()` directly without starting a new transaction or savepoint. A throw in the inner callback propagates up and rolls back the entire outer transaction.
+`session(fn)` acquires a `PoolClient`, runs `BEGIN`, executes `fn`, then `COMMIT` on success or `ROLLBACK` on throw. Nested sessions (calling `session` inside another `session`) are flat: the inner call detects an active client via `AsyncLocalStorage` and executes `fn()` directly without starting a new transaction or savepoint. A throw in the inner callback propagates up and rolls back the entire outer transaction. `ensureSession(fn)` executes directly when that client is already active, otherwise it opens an owned `session`; it never replays the callback. A successful rollback propagates the callback error unchanged. Failed rollback and uncertain commit are reported as `EquippedError` with `context.phase` and `context.outcome: 'uncertain'`, retaining the settlement error and original callback error where present.
 
 ## Upsert-compatible filter shapes
 

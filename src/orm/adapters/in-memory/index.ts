@@ -938,6 +938,11 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 			}
 		})
 	}
+
+	async ensureSession<T>(fn: () => Promise<T>): Promise<T> {
+		if (sessionContextStore.getStore()?.activeTransactions.has(this)) return fn()
+		return this.session(fn)
+	}
 }
 
 if (import.meta.vitest) {

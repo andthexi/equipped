@@ -44,9 +44,27 @@ export class Repo<A extends OrmAdapterLike<any>> {
 		return this.#adapter.use(s, this.#getConfig(s))
 	}
 
+	#executeMutation<T>(fn: () => Promise<T>, allowNonTransactional: boolean): Promise<T> {
+		const adapter = this.#adapter as any
+		const hasSession = typeof adapter.session === 'function'
+		const hasEnsureSession = typeof adapter.ensureSession === 'function'
+		if (hasSession !== hasEnsureSession) {
+			throw new TypeError('Repo adapter must implement both "session" and "ensureSession"')
+		}
+		if (hasSession) return adapter.ensureSession.call(adapter, fn)
+		if (!allowNonTransactional) {
+			throw new TypeError('Repo mutation requires transactions or .allowNonTransactional()')
+		}
+		return fn()
+	}
+
 	on<S extends AnySchema>(schema: S): SchemaRefSurface<S, A> {
 		return new SchemaRef<S, A>(
-			new SchemaContext(schema, (target) => this.#getUse(target)),
+			new SchemaContext(
+				schema,
+				(target) => this.#getUse(target),
+				(fn, allowNonTransactional) => this.#executeMutation(fn, allowNonTransactional),
+			),
 		) as unknown as SchemaRefSurface<S, A>
 	}
 
@@ -55,7 +73,11 @@ export class Repo<A extends OrmAdapterLike<any>> {
 	}
 
 	async session<T>(fn: () => Promise<T>): Promise<T> {
-		return this.#adapter.session?.(fn) ?? fn()
+		const adapter = this.#adapter as any
+		if (typeof adapter.session !== 'function' || typeof adapter.ensureSession !== 'function') {
+			throw new TypeError('Repo session requires both adapter methods "session" and "ensureSession"')
+		}
+		return adapter.session.call(adapter, fn)
 	}
 
 	async lock<T>(target: string, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
@@ -93,8 +115,10 @@ class RepoBuilder<A extends OrmAdapterLike<any>> {
 	}
 }
 
+type HasSessionPair<A> = [HasMethod<A, 'session'>, HasMethod<A, 'ensureSession'>] extends [true, true] ? true : false
+
 export type RepoSurface<A extends OrmAdapterLike<any>> = Repo<A> &
-	(HasMethod<A, 'session'> extends true ? {} : { session: never }) &
+	(HasSessionPair<A> extends true ? {} : { session: never }) &
 	(HasMethod<A, 'lock'> extends true ? {} : { lock: never })
 
 if (import.meta.vitest) {
@@ -187,7 +211,7 @@ if (import.meta.vitest) {
 				.build()
 			const repo = buildRepo(adapter, (name) => ({ table: name }))
 
-			const created = await repo.on(schema).one().create({})
+			const created = await (repo.on(schema).one().allowNonTransactional() as any).create({})
 			expect(await repo.on(schema).all().find()).toEqual([created])
 			expect((await storage.introspect()).map(({ name }) => name)).toEqual(['legacy_resolver'])
 		})
@@ -1567,6 +1591,12 @@ if (import.meta.vitest) {
 				async updateMany() {
 					return []
 				}
+				async session<T>(fn: () => Promise<T>) {
+					return fn()
+				}
+				async ensureSession<T>(fn: () => Promise<T>) {
+					return fn()
+				}
 			}
 			type A = WithUpdateAdapter
 			type S = import('../schema.js').AnySchema
@@ -1586,6 +1616,12 @@ if (import.meta.vitest) {
 				}
 				async deleteMany() {
 					return []
+				}
+				async session<T>(fn: () => Promise<T>) {
+					return fn()
+				}
+				async ensureSession<T>(fn: () => Promise<T>) {
+					return fn()
 				}
 			}
 			type A = WithDeleteAdapter
@@ -2458,6 +2494,12 @@ if (import.meta.vitest) {
 						{ cause: 'adapter requires single eq filter on unique column, received complex filter' },
 					])
 				}
+				async session<T>(fn: () => Promise<T>) {
+					return fn()
+				}
+				async ensureSession<T>(fn: () => Promise<T>) {
+					return fn()
+				}
 			}
 			const restrictedAdapter = new (RestrictedAdapter as any)() as InstanceType<typeof RestrictedAdapter>
 			spy.mockRestore()
@@ -2493,6 +2535,12 @@ if (import.meta.vitest) {
 				}
 				async upsertOne() {
 					return {}
+				}
+				async session<T>(fn: () => Promise<T>) {
+					return fn()
+				}
+				async ensureSession<T>(fn: () => Promise<T>) {
+					return fn()
 				}
 			}
 			type A = WithUpsertAdapter
@@ -2684,17 +2732,33 @@ if (import.meta.vitest) {
 			expectTypeOf(_repo.session).toBeNever()
 		})
 
-		test('adapter with session enables repo.session', () => {
+		test('a complete session pair enables repo.session', () => {
 			class WithSessionAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				async session<T>(fn: () => Promise<T>): Promise<T> {
 					return fn()
 				}
+				async ensureSession<T>(fn: () => Promise<T>): Promise<T> {
+					return fn()
+				}
 			}
 			type A = WithSessionAdapter
 			const _repo = {} as import('./repo.js').RepoSurface<A>
 			expectTypeOf(_repo.session).toBeFunction()
+		})
+
+		test('an incomplete transaction pair collapses repo.session to never', () => {
+			class IncompleteAdapter extends OrmAdapter {
+				readonly schemaConfigPipe = v.object({})
+				readonly supportedFieldTypes = ['string'] as const
+				async session<T>(fn: () => Promise<T>): Promise<T> {
+					return fn()
+				}
+			}
+			type A = IncompleteAdapter
+			const _repo = {} as import('./repo.js').RepoSurface<A>
+			expectTypeOf(_repo.session).toBeNever()
 		})
 	})
 
@@ -2949,7 +3013,7 @@ if (import.meta.vitest) {
 				.resolve((name) => ({ table: name }))
 				.build()
 
-			const created = await repo.on(TestSchema).one().create({ name: 'Alice', age: 30 })
+			const created = await repo.on(TestSchema).one().allowNonTransactional().create({ name: 'Alice', age: 30 })
 			expect(created.name).toBe('Alice')
 			expect(created.age).toBe(30)
 
@@ -2998,6 +3062,7 @@ if (import.meta.vitest) {
 			const created = await repo
 				.on(TestSchema)
 				.all()
+				.allowNonTransactional()
 				.create([
 					{ name: 'Alice', age: 30 },
 					{ name: 'Bob', age: 25 },
@@ -3014,11 +3079,16 @@ if (import.meta.vitest) {
 				.resolve((name) => ({ table: name }))
 				.build()
 
-			const user = await repo.on(TestSchema).one().create({ name: 'Alice', age: 30 })
-			const updated = await repo.on(TestSchema).one().id(user.id).update({ name: 'Alicia' })
+			const user = await repo.on(TestSchema).one().allowNonTransactional().create({ name: 'Alice', age: 30 })
+			const updated = await repo
+				.on(TestSchema)
+				.one()
+				.id(user.id)
+				.allowNonTransactional()
+				.update({ name: 'Alicia' })
 			expect(updated?.name).toBe('Alicia')
 
-			const deleted = await repo.on(TestSchema).one().id(user.id).delete()
+			const deleted = await repo.on(TestSchema).one().id(user.id).allowNonTransactional().delete()
 			expect(deleted?.id).toBe(user.id)
 
 			const found = await repo.on(TestSchema).one().id(user.id).find()

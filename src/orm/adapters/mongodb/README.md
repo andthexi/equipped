@@ -60,7 +60,7 @@ const codegen = MigrationCodegen.from(repo).target(schemas).build()
 
 ## Session nesting behaviour
 
-`session(fn)` uses MongoDB driver's `ClientSession` + `withTransaction`. Nested sessions (calling `session` inside another `session`) are flat: the inner call detects an active session via `AsyncLocalStorage` and executes `fn()` directly without starting a new transaction. A throw in the inner callback propagates up and rolls back the entire outer transaction.
+`session(fn)` uses a MongoDB `ClientSession` with explicit start, commit and abort calls, so the callback is not automatically replayed. Nested sessions (calling `session` inside another `session`) are flat: the inner call detects an active session via `AsyncLocalStorage` and executes `fn()` directly without starting a new transaction. A throw in the inner callback propagates up and aborts the entire outer transaction. `ensureSession(fn)` executes directly when that session is already active, otherwise it opens an owned `session`.
 
 ## Upsert-compatible filter shapes
 
