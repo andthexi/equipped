@@ -181,26 +181,26 @@ if (import.meta.vitest) {
 
 	describe('Relations.from()', () => {
 		const UserSchema = Schema.from('users')
-			.pk('id', v.string(), () => 'user-id')
-			.field('name', v.string())
-			.field('orgId', v.string())
+			.pk('id', { input: v.string(), generate: () => 'user-id' })
+			.field('name', { input: v.string() })
+			.field('orgId', { input: v.string() })
 			.build()
 
 		const PostSchema = Schema.from('posts')
-			.pk('id', v.string(), () => 'post-id')
-			.field('title', v.string())
-			.field('userId', v.string())
+			.pk('id', { input: v.string(), generate: () => 'post-id' })
+			.field('title', { input: v.string() })
+			.field('userId', { input: v.string() })
 			.build()
 
 		const OrgSchema = Schema.from('orgs')
-			.pk('id', v.string(), () => 'org-id')
-			.field('name', v.string())
+			.pk('id', { input: v.string(), generate: () => 'org-id' })
+			.field('name', { input: v.string() })
 			.build()
 
 		const ProfileSchema = Schema.from('profiles')
-			.pk('id', v.string(), () => 'profile-id')
-			.field('bio', v.string())
-			.field('userId', v.string())
+			.pk('id', { input: v.string(), generate: () => 'profile-id' })
+			.field('bio', { input: v.string() })
+			.field('userId', { input: v.string() })
 			.build()
 
 		test('builds relations with hasMany, belongsTo, hasOne', () => {
@@ -252,38 +252,38 @@ if (import.meta.vitest) {
 
 	describe('Relations.from() behavior', () => {
 		const UserSchema = Schema.from('users')
-			.pk('id', v.string(), () => 'user-id')
-			.field('name', v.string())
-			.field('orgId', v.string())
-			.field('managerId', v.optional(v.string()), { onCreate: () => undefined })
+			.pk('id', { input: v.string(), generate: () => 'user-id' })
+			.field('name', { input: v.string() })
+			.field('orgId', { input: v.string() })
+			.field('managerId', { input: v.optional(v.string()), onCreate: () => undefined })
 			.build()
 
 		const PostSchema = Schema.from('posts')
-			.pk('id', v.string(), () => 'post-id')
-			.field('title', v.string())
-			.field('userId', v.string())
+			.pk('id', { input: v.string(), generate: () => 'post-id' })
+			.field('title', { input: v.string() })
+			.field('userId', { input: v.string() })
 			.build()
 
 		const OrgSchema = Schema.from('orgs')
-			.pk('id', v.string(), () => 'org-id')
-			.field('name', v.string())
+			.pk('id', { input: v.string(), generate: () => 'org-id' })
+			.field('name', { input: v.string() })
 			.build()
 
 		const TagSchema = Schema.from('tags')
-			.pk('id', v.string(), () => 'tag-id')
-			.field('label', v.string())
+			.pk('id', { input: v.string(), generate: () => 'tag-id' })
+			.field('label', { input: v.string() })
 			.build()
 
 		const PostTagSchema = Schema.from('post_tags')
-			.pk('id', v.string(), () => 'pt-id')
-			.field('postId', v.string())
-			.field('tagId', v.string())
+			.pk('id', { input: v.string(), generate: () => 'pt-id' })
+			.field('postId', { input: v.string() })
+			.field('tagId', { input: v.string() })
 			.build()
 
 		const ProfileSchema = Schema.from('profiles')
-			.pk('id', v.string(), () => 'profile-id')
-			.field('bio', v.string())
-			.field('userId', v.string())
+			.pk('id', { input: v.string(), generate: () => 'profile-id' })
+			.field('bio', { input: v.string() })
+			.field('userId', { input: v.string() })
 			.build()
 
 		const UserRels = Relations.from(UserSchema)
@@ -389,11 +389,11 @@ if (import.meta.vitest) {
 	describe('type-level: Relations.from uniqueness guard', () => {
 		test('duplicate relation name is a TS error', () => {
 			const S = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const T = Schema.from('targets')
-				.pk('id', v.string(), () => 'x')
-				.field('sId', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('sId', { input: v.string() })
 				.build()
 			// @ts-expect-error — duplicate name 'items' should fail
 			Relations.from(S).hasMany('items', T.fields.sId).hasMany('items', T.fields.sId)
@@ -403,13 +403,13 @@ if (import.meta.vitest) {
 	describe('type-level: FK-PK type-match guarantee', () => {
 		test('string FK pointing at number PK is a TS error', () => {
 			const NumPkSchema = Schema.from('nums')
-				.pk('id', v.number(), () => 0)
-				.field('name', v.string())
+				.pk('id', { input: v.number(), generate: () => 0 })
+				.field('name', { input: v.string() })
 				.build()
 
 			const StringFkSchema = Schema.from('strings')
-				.pk('id', v.string(), () => 'x')
-				.field('numRef', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('numRef', { input: v.string() })
 				.build()
 
 			// @ts-expect-error — string FK does not match number PK
@@ -418,11 +418,11 @@ if (import.meta.vitest) {
 
 		test('matching FK-PK types compile correctly', () => {
 			const S = Schema.from('source')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const T = Schema.from('target')
-				.pk('id', v.string(), () => 'x')
-				.field('sourceId', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('sourceId', { input: v.string() })
 				.build()
 			const rels = Relations.from(S).hasMany('items', T.fields.sourceId).build()
 			expect(rels.items).toBeInstanceOf(ManyRelation)
@@ -432,7 +432,7 @@ if (import.meta.vitest) {
 	describe('type-level: Field-only-FK rule', () => {
 		test('raw string FK is a TS error for hasMany', () => {
 			const S = Schema.from('s')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			// @ts-expect-error — raw string not allowed, must be a Field instance
 			Relations.from(S).hasMany('items', 'someKey')
@@ -440,11 +440,11 @@ if (import.meta.vitest) {
 
 		test('raw string FK is a TS error for belongsTo', () => {
 			const S = Schema.from('s')
-				.pk('id', v.string(), () => 'x')
-				.field('ref', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('ref', { input: v.string() })
 				.build()
 			const T = Schema.from('t')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			// @ts-expect-error — raw string not allowed, must be a Field instance
 			Relations.from(S).belongsTo('parent', 'ref', T)
@@ -454,8 +454,8 @@ if (import.meta.vitest) {
 	describe('type-level: schema relations-agnosticism', () => {
 		test('schema artifact contains no relational information', () => {
 			const _S = Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			type SKeys = keyof typeof _S
 			expectTypeOf<'relations' extends SKeys ? true : false>().toEqualTypeOf<false>()

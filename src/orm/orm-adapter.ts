@@ -20,6 +20,7 @@ import type {
 	RenameTableChange,
 } from './migrations/types.js'
 import type { IterationQueryOptions, QueryOptions } from './query-options.js'
+import { validateOutputRow, validateOutputRows } from './schema-validations.js'
 import type { AnySchema } from './schema.js'
 import type { AnyUpdateOp } from './updates.js'
 
@@ -85,6 +86,7 @@ export abstract class OrmAdapter {
 	): Promise<Record<string, unknown>>
 	aggregate?(schema: AnySchema, config: unknown, spec: AggregateSpec): Promise<Array<Record<string, unknown>>>
 	session?<T>(fn: () => Promise<T>): Promise<T>
+	ensureSession?<T>(fn: () => Promise<T>): Promise<T>
 	lock?<T>(config: unknown, mode: StorageLockMode, fn: () => Promise<T>): Promise<T>
 
 	loadMigrations?(config: unknown): Promise<{ id: string; appliedAt: number }[]>
@@ -121,50 +123,68 @@ export abstract class OrmAdapter {
 
 	use(schema: AnySchema, config: unknown): OrmUse {
 		const self = this as any
-		const emptyIterator = async function* (): AsyncGenerator<Record<string, unknown>, void, void> {}
+		const requireMethod = (name: string) => {
+			const method = self[name]
+			if (typeof method !== 'function') throw new TypeError(`OrmAdapter method "${name}" is not implemented`)
+			return method.bind(self)
+		}
 		const use: OrmUse = {
-			findMany: (filter, opts) => self.findMany?.(schema, config, filter, opts) ?? Promise.resolve([]),
-			iterateMany: (filter, opts) => self.iterateMany?.(schema, config, filter, opts) ?? emptyIterator(),
+			findMany: async (filter, opts) => requireMethod('findMany')(schema, config, filter, opts),
+			iterateMany: async function* (filter, opts) {
+				const iterate = requireMethod('iterateMany')
+				yield* iterate(schema, config, filter, opts)
+			},
 			findOne: async (filter) => {
 				const rows = await use.findMany(filter, { limit: 1 })
-				return rows[0] ?? null
+				const pk = schema.pkField.name
+				const validated = validateOutputRows(schema, rows, 'findOne', [pk], { maximum: 1 })
+				if (validated.length === 0) return null
+				return { ...rows[0], [pk]: validated[0][pk] }
 			},
-			count: (filter) =>
-				self.count?.(schema, config, filter) ?? Promise.reject(new Error('count not implemented')),
+			count: async (filter) => requireMethod('count')(schema, config, filter),
 			createOne: async (d) => {
 				const rows = await use.createMany([d])
-				return rows[0]
+				return validateOutputRows(schema, rows, 'createOne', undefined, { exact: 1 })[0]
 			},
-			createMany: (d) => self.createMany?.(schema, config, d) ?? Promise.resolve([]),
-			updateMany: (filter, d) => self.updateMany?.(schema, config, filter, d) ?? Promise.resolve([]),
+			createMany: async (d) => requireMethod('createMany')(schema, config, d),
+			updateMany: async (filter, d) => requireMethod('updateMany')(schema, config, filter, d),
 			updateOne: async (filter, d) => {
-				const match = await use.findOne(filter)
+				const findMany = requireMethod('findMany')
+				const updateMany = requireMethod('updateMany')
+				const rows = await findMany(schema, config, filter, { limit: 1 })
+				const pk = schema.pkField.name
+				const [match] = validateOutputRows(schema, rows, 'updateOne', [pk], { maximum: 1 })
 				if (!match) return null
-				const pk = schema.pkField.name
 				const pkFilter = FilterGroup.create().eq(pk, match[pk])
-				const rows = await use.updateMany(pkFilter, d)
-				return rows[0] ?? null
+				const updated = await updateMany(schema, config, pkFilter, d)
+				return validateOutputRows(schema, updated, 'updateOne', undefined, { maximum: 1 })[0] ?? null
 			},
-			upsertOne: (filter, create, ops) =>
-				self.upsertOne?.(schema, config, filter, create, ops) ??
-				Promise.reject(new Error('upsertOne not implemented')),
+			upsertOne: async (filter, create, ops) => requireMethod('upsertOne')(schema, config, filter, create, ops),
 			deleteOne: async (filter) => {
-				const row = await use.findOne(filter)
-				if (!row) return null
+				const findMany = requireMethod('findMany')
+				const deleteByPk = typeof self.deleteByPk === 'function' ? self.deleteByPk.bind(self) : undefined
+				const deleteMany = typeof self.deleteMany === 'function' ? self.deleteMany.bind(self) : undefined
+				if (!deleteByPk && !deleteMany) {
+					throw new TypeError('OrmAdapter requires "deleteByPk" or "deleteMany" to execute deleteOne')
+				}
+				const rows = await findMany(schema, config, filter, { limit: 1 })
 				const pk = schema.pkField.name
-				if (self.deleteByPk) {
-					await self.deleteByPk(schema, config, row[pk])
-				} else if (self.deleteMany) {
-					const pkFilter = FilterGroup.create().eq(pk, row[pk])
-					await self.deleteMany(schema, config, pkFilter)
+				const [row] = validateOutputRows(schema, rows, 'deleteOne', undefined, { maximum: 1 })
+				if (!row) return null
+				const pkValue = row[pk]
+				if (deleteByPk) {
+					const deleted = await deleteByPk(schema, config, pkValue)
+					validateOutputRow(schema, deleted, 'deleteOne')
+				} else {
+					const pkFilter = FilterGroup.create().eq(pk, pkValue)
+					const deleted = await deleteMany!(schema, config, pkFilter)
+					validateOutputRows(schema, deleted, 'deleteOne')
 				}
 				return row
 			},
-			deleteMany: (filter) => self.deleteMany?.(schema, config, filter) ?? Promise.resolve([]),
-			raw: (...args: any[]) =>
-				self.raw?.(schema, config, ...args) ?? Promise.reject(new Error('raw not implemented')),
-			aggregate: (spec) =>
-				self.aggregate?.(schema, config, spec) ?? Promise.reject(new Error('aggregate not implemented')),
+			deleteMany: async (filter) => requireMethod('deleteMany')(schema, config, filter),
+			raw: async (...args: any[]) => requireMethod('raw')(schema, config, ...args),
+			aggregate: async (spec) => requireMethod('aggregate')(schema, config, spec),
 			aggregateOps: self.aggregateOps ?? [],
 		}
 		return use
@@ -303,7 +323,7 @@ if (import.meta.vitest) {
 			}
 
 			const TestSchema = Schema.from('bridge_test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = new (BridgeAdapter as any)() as BridgeAdapter
 			const ormUse = adapter.use(TestSchema, { table: 'bridge_test' })
@@ -341,8 +361,8 @@ if (import.meta.vitest) {
 			}
 
 			const TestSchema = Schema.from('upd_test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = new (UpdateAdapter as any)() as UpdateAdapter
 			const ormUse = adapter.use(TestSchema, { table: 'upd_test' })
@@ -354,7 +374,7 @@ if (import.meta.vitest) {
 			vi.restoreAllMocks()
 		})
 
-		test('use().iterateMany does not fall back to findMany when adapter omits iterateMany', async () => {
+		test('use().iterateMany throws TypeError when adapter omits iterateMany', async () => {
 			const { Instance: Inst } = await import('../instance/index.js')
 			const { Schema } = await import('./schema.js')
 			vi.spyOn(Inst, 'on').mockImplementation(() => {})
@@ -370,16 +390,13 @@ if (import.meta.vitest) {
 			}
 
 			const TestSchema = Schema.from('iter_no_fallback')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = new (FindOnlyAdapter as any)() as FindOnlyAdapter
-			const rows: Record<string, unknown>[] = []
-			for await (const row of adapter
-				.use(TestSchema, { table: 'iter_no_fallback' })
-				.iterateMany(FilterGroup.create()))
-				rows.push(row)
-
-			expect(rows).toEqual([])
+			const use = adapter.use(TestSchema, { table: 'iter_no_fallback' })
+			await expect(async () => {
+				for await (const _row of use.iterateMany(FilterGroup.create())) void _row
+			}).rejects.toThrow(TypeError)
 			expect(findManyCalls).toBe(0)
 
 			vi.restoreAllMocks()
@@ -405,7 +422,7 @@ if (import.meta.vitest) {
 			}
 
 			const TestSchema = Schema.from('del_test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = new (DeleteAdapter as any)() as DeleteAdapter
 			const ormUse = adapter.use(TestSchema, { table: 'del_test' })

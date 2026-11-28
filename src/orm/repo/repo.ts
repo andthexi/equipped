@@ -44,9 +44,27 @@ export class Repo<A extends OrmAdapterLike<any>> {
 		return this.#adapter.use(s, this.#getConfig(s))
 	}
 
+	#executeMutation<T>(fn: () => Promise<T>, allowNonTransactional: boolean): Promise<T> {
+		const adapter = this.#adapter as any
+		const hasSession = typeof adapter.session === 'function'
+		const hasEnsureSession = typeof adapter.ensureSession === 'function'
+		if (hasSession !== hasEnsureSession) {
+			throw new TypeError('Repo adapter must implement both "session" and "ensureSession"')
+		}
+		if (hasSession) return adapter.ensureSession.call(adapter, fn)
+		if (!allowNonTransactional) {
+			throw new TypeError('Repo mutation requires transactions or .allowNonTransactional()')
+		}
+		return fn()
+	}
+
 	on<S extends AnySchema>(schema: S): SchemaRefSurface<S, A> {
 		return new SchemaRef<S, A>(
-			new SchemaContext(schema, (target) => this.#getUse(target)),
+			new SchemaContext(
+				schema,
+				(target) => this.#getUse(target),
+				(fn, allowNonTransactional) => this.#executeMutation(fn, allowNonTransactional),
+			),
 		) as unknown as SchemaRefSurface<S, A>
 	}
 
@@ -55,7 +73,11 @@ export class Repo<A extends OrmAdapterLike<any>> {
 	}
 
 	async session<T>(fn: () => Promise<T>): Promise<T> {
-		return this.#adapter.session?.(fn) ?? fn()
+		const adapter = this.#adapter as any
+		if (typeof adapter.session !== 'function' || typeof adapter.ensureSession !== 'function') {
+			throw new TypeError('Repo session requires both adapter methods "session" and "ensureSession"')
+		}
+		return adapter.session.call(adapter, fn)
 	}
 
 	async lock<T>(target: string, mode: StorageLockMode, fn: () => Promise<T>): Promise<T> {
@@ -93,8 +115,10 @@ class RepoBuilder<A extends OrmAdapterLike<any>> {
 	}
 }
 
+type HasSessionPair<A> = [HasMethod<A, 'session'>, HasMethod<A, 'ensureSession'>] extends [true, true] ? true : false
+
 export type RepoSurface<A extends OrmAdapterLike<any>> = Repo<A> &
-	(HasMethod<A, 'session'> extends true ? {} : { session: never }) &
+	(HasSessionPair<A> extends true ? {} : { session: never }) &
 	(HasMethod<A, 'lock'> extends true ? {} : { lock: never })
 
 if (import.meta.vitest) {
@@ -122,8 +146,8 @@ if (import.meta.vitest) {
 		test('builds and queries through a generic schema-config resolver', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const schema = Schema.from('generic_resolver')
-				.pk('id', v.string(), () => 'generic-id')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'generic-id' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = buildRepo(adapter, (name) => ({ table: `scoped_${name}` }))
 
@@ -135,7 +159,7 @@ if (import.meta.vitest) {
 		test('types base resolvers and scoped transforms with logical names', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const schema = Schema.from('typed_logical_name')
-				.pk('id', v.string(), () => 'typed-id')
+				.pk('id', { input: v.string(), generate: () => 'typed-id' })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => {
@@ -168,7 +192,7 @@ if (import.meta.vitest) {
 
 			const adapter = new TransformingConfigAdapter()
 			const schema = Schema.from('transformed_resolver')
-				.pk('id', v.string(), () => 'unused')
+				.pk('id', { input: v.string(), generate: () => 'unused' })
 				.build()
 			const repo = buildRepo(adapter, (name) => name)
 
@@ -183,11 +207,11 @@ if (import.meta.vitest) {
 				use: (schema: AnySchema, config: { table: string }) => storage.use(schema, config),
 			}
 			const schema = Schema.from('legacy_resolver')
-				.pk('id', v.string(), () => 'legacy-id')
+				.pk('id', { input: v.string(), generate: () => 'legacy-id' })
 				.build()
 			const repo = buildRepo(adapter, (name) => ({ table: name }))
 
-			const created = await repo.on(schema).one().create({})
+			const created = await (repo.on(schema).one().allowNonTransactional() as any).create({})
 			expect(await repo.on(schema).all().find()).toEqual([created])
 			expect((await storage.introspect()).map(({ name }) => name)).toEqual(['legacy_resolver'])
 		})
@@ -195,8 +219,8 @@ if (import.meta.vitest) {
 		test('Repo.from(adapter).resolve(...).build() creates a working repo', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
@@ -210,8 +234,8 @@ if (import.meta.vitest) {
 		test('repo.on(schema) returns a SchemaRef', async () => {
 			const adapter = InMemoryAdapter.create({})
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
@@ -237,40 +261,39 @@ if (import.meta.vitest) {
 		let orgCounter = 0
 
 		const UserSchema = Schema.from('users')
-			.pk('id', v.string(), () => `u${++userCounter}`)
-			.field('email', v.string())
-			.field('name', v.string())
-			.field('orgId', v.optional(v.string()), { onCreate: () => undefined })
-			.field('createdAt', v.number(), { onCreate: () => 1000 })
+			.pk('id', { input: v.string(), generate: () => `u${++userCounter}` })
+			.field('email', { input: v.string() })
+			.field('name', { input: v.string() })
+			.field('orgId', { input: v.optional(v.string()), onCreate: () => undefined })
+			.field('createdAt', { input: v.number(), onCreate: () => 1000 })
 			.build()
 
 		const PostSchema = Schema.from('posts')
-			.pk('id', v.string(), () => `p${++postCounter}`)
-			.field('title', v.string())
-			.field('userId', v.string())
+			.pk('id', { input: v.string(), generate: () => `p${++postCounter}` })
+			.field('title', { input: v.string() })
+			.field('userId', { input: v.string() })
 			.build()
 
 		const ProfileSchema = Schema.from('profiles')
-			.pk('id', v.string(), () => `pr${++profileCounter}`)
-			.field('bio', v.string())
-			.field('userId', v.string())
+			.pk('id', { input: v.string(), generate: () => `pr${++profileCounter}` })
+			.field('bio', { input: v.string() })
+			.field('userId', { input: v.string() })
 			.build()
 
 		const OrgSchema = Schema.from('orgs')
-			.pk('id', v.string(), () => `o${++orgCounter}`)
-			.field('name', v.string())
+			.pk('id', { input: v.string(), generate: () => `o${++orgCounter}` })
+			.field('name', { input: v.string() })
 			.build()
 
 		const PersonSchema = Schema.from('people')
-			.pk('id', v.string(), () => `person-${++userCounter}`)
-			.field('firstName', v.string())
-			.field('lastName', v.string())
-			.computed(
-				'fullName',
-				['firstName', 'lastName'],
-				v.string(),
-				({ firstName, lastName }) => `${firstName} ${lastName}`,
-			)
+			.pk('id', { input: v.string(), generate: () => `person-${++userCounter}` })
+			.field('firstName', { input: v.string() })
+			.field('lastName', { input: v.string() })
+			.computed('fullName', {
+				deps: ['firstName', 'lastName'],
+				output: v.string(),
+				compute: ({ firstName, lastName }) => `${firstName} ${lastName}`,
+			})
 			.build()
 
 		const UserRels = Relations.from(UserSchema)
@@ -328,6 +351,29 @@ if (import.meta.vitest) {
 				.count()
 
 			expect(count).toBe(2)
+		})
+
+		test('count and pagination reject invalid driver totals before arithmetic', async () => {
+			for (const invalid of [
+				-1,
+				1.5,
+				Number.NaN,
+				Number.POSITIVE_INFINITY,
+				Number.MAX_SAFE_INTEGER + 1,
+				'2',
+				null,
+			]) {
+				for (const terminal of ['count', 'paginate'] as const) {
+					const adapter = InMemoryAdapter.create({})
+					;(adapter as any).count = async () => invalid
+					const repo = Repo.from(adapter)
+						.resolve((name) => ({ table: name }))
+						.build()
+					const query = repo.on(UserSchema).all()
+					const result = terminal === 'count' ? query.count() : query.limit(1).paginate()
+					await expect(result).rejects.toMatchObject({ kind: 'output' })
+				}
+			}
 		})
 
 		test('all().count() validates only the filter', async () => {
@@ -507,9 +553,9 @@ if (import.meta.vitest) {
 
 		test('all().iterate uses adapter iterateMany without findMany emulation', async () => {
 			const TestSchema = Schema.from('iter_repo_users')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
+				.field('age', { input: v.number() })
 				.build()
 			let findManyCalls = 0
 			let capturedOptions: unknown
@@ -556,8 +602,8 @@ if (import.meta.vitest) {
 
 		test('all().iterate accepts batchSize and forwards it only to iterateMany', async () => {
 			const TestSchema = Schema.from('iter_batch_users')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const events: unknown[] = []
 
@@ -602,8 +648,8 @@ if (import.meta.vitest) {
 
 		test('all().iterate validates batchSize before adapter iteration runs', async () => {
 			const TestSchema = Schema.from('iter_invalid_batch_users')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			let iterateManyCalls = 0
 
@@ -649,6 +695,48 @@ if (import.meta.vitest) {
 			expect(iterateManyCalls).toBe(0)
 		})
 
+		test('all().iterate validates before yielding and closes the underlying iterator on failure', async () => {
+			const TestSchema = Schema.from('iter_output_validation')
+				.pk('id', { input: v.string(), generate: () => 'generated' })
+				.field('name', { input: v.string() })
+				.build()
+			let closed = false
+			let produced = 0
+
+			class InvalidIterAdapter extends OrmAdapter {
+				readonly schemaConfigPipe = v.object({ table: v.string() })
+				readonly supportedFieldTypes = ['string'] as const
+				async *iterateMany() {
+					try {
+						produced += 1
+						yield { id: 'valid', name: 'first' }
+						produced += 1
+						yield { id: 'invalid', name: 42 }
+						produced += 1
+						yield { id: 'unread', name: 'third' }
+					} finally {
+						closed = true
+					}
+				}
+			}
+
+			const repo = Repo.from(new InvalidIterAdapter())
+				.resolve((name) => ({ table: name }))
+				.build()
+			const yielded: unknown[] = []
+			try {
+				for await (const row of repo.on(TestSchema).all().iterate()) yielded.push(row)
+				expect.unreachable('invalid iterated row should fail output validation')
+			} catch (error) {
+				expect(error).toBeInstanceOf(OrmValidationError)
+				expect(error).toMatchObject({ kind: 'output', schema: TestSchema.name, operation: 'iterate' })
+			}
+
+			expect(yielded).toEqual([{ id: 'valid', name: 'first' }])
+			expect(produced).toBe(2)
+			expect(closed).toBe(true)
+		})
+
 		test('all().iterate yields selected and preloaded documents one at a time', async () => {
 			const adapter = InMemoryAdapter.create({})
 			let preloadReads = 0
@@ -677,7 +765,7 @@ if (import.meta.vitest) {
 				.on(UserSchema)
 				.all()
 				.orderBy('name', 'asc')
-				.select(['id', 'name'])
+				.select(['name'])
 				.preload([UserRels.posts])
 				.iterate({ batchSize: 1 })
 			expect(iterator[Symbol.asyncIterator]()).toBe(iterator)
@@ -686,6 +774,7 @@ if (import.meta.vitest) {
 			expect(rows).toHaveLength(2)
 			expect(rows.map((row) => row.name)).toEqual(['Alice', 'Bob'])
 			expect(rows[0]).not.toHaveProperty('email')
+			expect(rows[0]).not.toHaveProperty('id')
 			expect(rows[0].posts.map((post) => post.title)).toEqual(['A1', 'A2'])
 			expect(rows[1].posts.map((post) => post.title)).toEqual(['B1'])
 			expect(preloadReads).toBe(2)
@@ -837,7 +926,7 @@ if (import.meta.vitest) {
 				.resolve((name) => ({ table: name }))
 				.build()
 			const TestSchema = Schema.from('raw_test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 
 			const result = await repo.on(TestSchema).raw('SELECT * FROM raw_test WHERE id = $1', ['abc'])
@@ -866,7 +955,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ col: 'test' }))
 				.build()
 			const TestSchema = Schema.from('mongo_test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 
 			const result = await repo.on(TestSchema).raw([{ $count: 'total' }])
@@ -920,36 +1009,141 @@ if (import.meta.vitest) {
 			).rejects.toBeInstanceOf(EquippedError)
 		})
 
-		test('missing computed dependencies in adapter output fail fast', async () => {
-			const { EquippedError } = await import('../../errors/index.js')
-			const adapter = InMemoryAdapter.create({})
-			const origUse = adapter.use.bind(adapter)
-			;(adapter as any).use = vi.fn((schema: any, config: any) => {
-				const use = origUse(schema, config)
-				return {
-					...use,
-					findMany: async (filter: any, options: any) => {
-						const rows = await use.findMany(filter, options)
-						return rows.map((row: any) => {
-							const next = { ...row }
-							delete (next as any).lastName
-							return next
-						})
+		test('computed dependencies are output-validated before computation', async () => {
+			let computeCalls = 0
+			const TestSchema = Schema.from('computed_dependency_validation')
+				.pk('id', { input: v.string(), generate: () => 'generated' })
+				.field('name', { input: v.string() })
+				.computed('copy', {
+					deps: ['name'],
+					output: v.string(),
+					compute: ({ name }) => {
+						computeCalls += 1
+						return name
 					},
-				}
-			})
-
+				})
+				.build()
+			const adapter = InMemoryAdapter.create({})
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
 				.build()
-			await repo.on(PersonSchema).one().create({ firstName: 'Katherine', lastName: 'Johnson' })
+			await adapter.use(TestSchema, { table: TestSchema.name }).createMany([{ id: 'invalid', name: 42 } as any])
 
-			await expect(repo.on(PersonSchema).all().select(['fullName']).find()).rejects.toBeInstanceOf(EquippedError)
+			await expect(repo.on(TestSchema).all().select(['copy']).find()).rejects.toMatchObject({
+				kind: 'output',
+				schema: TestSchema.name,
+				operation: 'findMany',
+			})
+			expect(computeCalls).toBe(0)
+		})
+
+		test('computed output pipe validates derived values', async () => {
+			const TestSchema = Schema.from('computed_output_validation')
+				.pk('id', { input: v.string(), generate: () => 'generated' })
+				.field('name', { input: v.string() })
+				.computed('invalid', {
+					deps: ['name'],
+					output: v.string(),
+					compute: () => 42 as any,
+				})
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
+			await adapter.use(TestSchema, { table: TestSchema.name }).createMany([{ id: 'row', name: 'Valid' }])
+
+			try {
+				await repo.on(TestSchema).all().select(['invalid']).find()
+				expect.unreachable('invalid computed output should fail validation')
+			} catch (error) {
+				expect(error).toBeInstanceOf(OrmValidationError)
+				expect(error).toMatchObject({
+					kind: 'output',
+					schema: TestSchema.name,
+					operation: 'findMany',
+					failures: [expect.objectContaining({ field: 'invalid', rowIndex: 0 })],
+				})
+			}
+		})
+
+		test('preloads validate selected relationship keys, compute target fields, and reject recursive invalid rows', async () => {
+			const ParentSchema = Schema.from('preload_validation_parents')
+				.pk('id', { input: v.string(), generate: () => 'parent' })
+				.field('name', { input: v.string() })
+				.build()
+			const ChildSchema = Schema.from('preload_validation_children')
+				.pk('id', { input: v.string(), generate: () => 'child' })
+				.field('parentId', { input: v.string() })
+				.field('title', { input: v.string() })
+				.computed('titleUpper', {
+					deps: ['title'],
+					output: v.string(),
+					compute: ({ title }) => title.toUpperCase(),
+				})
+				.build()
+			const GrandchildSchema = Schema.from('preload_validation_grandchildren')
+				.pk('id', { input: v.string(), generate: () => 'grandchild' })
+				.field('childId', { input: v.string() })
+				.field('code', { input: v.string() })
+				.build()
+			const ParentRels = Relations.from(ParentSchema).hasMany('children', ChildSchema.fields.parentId).build()
+			const ChildRels = Relations.from(ChildSchema)
+				.hasMany('grandchildren', GrandchildSchema.fields.childId)
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
+			const parent = await repo.on(ParentSchema).one().create({ name: 'root' })
+			const child = await repo.on(ChildSchema).one().create({ parentId: parent.id, title: 'leaf' })
+			await repo.on(GrandchildSchema).one().create({ childId: child.id, code: 'ok' })
+
+			const readRoot = (name: string) =>
+				repo
+					.on(ParentSchema)
+					.all()
+					.where((q) => q.eq('name', name))
+					.select(['name'])
+					.preload([{ def: ParentRels.children, preloads: [ChildRels.grandchildren] }])
+					.find()
+			const assembled = await readRoot('root')
+			expect(assembled).toEqual([
+				{
+					name: 'root',
+					children: [
+						{
+							id: child.id,
+							parentId: parent.id,
+							title: 'leaf',
+							titleUpper: 'LEAF',
+							grandchildren: [{ id: 'grandchild', childId: child.id, code: 'ok' }],
+						},
+					],
+				},
+			])
+
+			await adapter
+				.use(ParentSchema, { table: ParentSchema.name })
+				.createMany([{ id: 17, name: 'bad-key' } as any])
+			await expect(readRoot('bad-key')).rejects.toMatchObject({
+				kind: 'output',
+				schema: ParentSchema.name,
+			})
+
+			await adapter
+				.use(GrandchildSchema, { table: GrandchildSchema.name })
+				.createMany([{ id: 'bad-grandchild', childId: child.id, code: 99 } as any])
+			await expect(readRoot('root')).rejects.toMatchObject({
+				kind: 'output',
+				schema: GrandchildSchema.name,
+				operation: 'findMany',
+			})
 		})
 
 		test('one().id().find() returns seeded document and null for missing', async () => {
 			const TestSchema = Schema.from('findbytest')
-				.pk('id', v.string(), () => 'gen')
+				.pk('id', { input: v.string(), generate: () => 'gen' })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const repo = Repo.from(adapter)
@@ -1151,9 +1345,9 @@ if (import.meta.vitest) {
 
 		test('all().where().update() applies auto-bump for onUpdate fields', async () => {
 			const AutoSchema = Schema.from('auto')
-				.pk('id', v.string(), () => `a${++userCounter}`)
-				.field('name', v.string())
-				.field('updatedAt', v.number(), { onCreate: () => 0, onUpdate: () => 9999 })
+				.pk('id', { input: v.string(), generate: () => `a${++userCounter}` })
+				.field('name', { input: v.string() })
+				.field('updatedAt', { input: v.number(), onCreate: () => 0, onUpdate: () => 9999 })
 				.build()
 			const repo = makeRepo()
 			await repo.on(AutoSchema).one().create({ name: 'A' })
@@ -1397,6 +1591,12 @@ if (import.meta.vitest) {
 				async updateMany() {
 					return []
 				}
+				async session<T>(fn: () => Promise<T>) {
+					return fn()
+				}
+				async ensureSession<T>(fn: () => Promise<T>) {
+					return fn()
+				}
 			}
 			type A = WithUpdateAdapter
 			type S = import('../schema.js').AnySchema
@@ -1416,6 +1616,12 @@ if (import.meta.vitest) {
 				}
 				async deleteMany() {
 					return []
+				}
+				async session<T>(fn: () => Promise<T>) {
+					return fn()
+				}
+				async ensureSession<T>(fn: () => Promise<T>) {
+					return fn()
 				}
 			}
 			type A = WithDeleteAdapter
@@ -1521,8 +1727,8 @@ if (import.meta.vitest) {
 			}
 			type A = MinimalAdapter
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			type S = typeof _TestSchema
 			type One = import('./builders.js').OneBuilderSurface<S, A, 'id'>
@@ -1606,12 +1812,12 @@ if (import.meta.vitest) {
 			}
 		}
 		const _S = Schema.from('items')
-			.pk('id', v.string(), () => 'x')
-			.field('name', v.string())
-			.field('amount', v.number())
-			.field('active', v.boolean())
-			.field('tags', v.array(v.string()))
-			.field('meta', v.object({ x: v.number() }))
+			.pk('id', { input: v.string(), generate: () => 'x' })
+			.field('name', { input: v.string() })
+			.field('amount', { input: v.number() })
+			.field('active', { input: v.boolean() })
+			.field('tags', { input: v.array(v.string()) })
+			.field('meta', { input: v.object({ x: v.number() }) })
 			.build()
 		type S = typeof _S
 		type A = AggAdapter
@@ -1619,8 +1825,9 @@ if (import.meta.vitest) {
 
 		test('.count(alias) adds alias to result type as number', () => {
 			type AfterCount = ReturnType<Builder['count']>
-			type Result = Awaited<ReturnType<AfterCount['run']>>
+			type Result = NonNullable<Awaited<ReturnType<AfterCount['run']>>>
 			expectTypeOf<Result>().toHaveProperty('total')
+			expectTypeOf<Result['total']>().toEqualTypeOf<number>()
 		})
 
 		test('duplicate alias: "a" extends keyof Aggs triggers never guard', () => {
@@ -1640,10 +1847,16 @@ if (import.meta.vitest) {
 			expectTypeOf<RunParams>().toEqualTypeOf<[]>()
 		})
 
-		test('.run() returns single object when HasGroupBy = false', () => {
+		test('.run() returns a nullable object when HasGroupBy = false', () => {
 			type WithCount = import('./builders.js').AggregateBuilder<S, A, { total: number }, {}, false>
 			type Result = Awaited<ReturnType<WithCount['run']>>
-			expectTypeOf<Result>().toEqualTypeOf<{ total: number }>()
+			expectTypeOf<Result>().toEqualTypeOf<{ total: number } | null>()
+		})
+
+		test('sum, avg, min, and max aliases include null in their public types', () => {
+			type WithSum = import('./builders.js').AggregateBuilder<S, A, { total: number | null }, {}, false>
+			type SumResult = Awaited<ReturnType<WithSum['run']>>
+			expectTypeOf<SumResult>().toEqualTypeOf<{ total: number | null } | null>()
 		})
 
 		test('.run() returns array when HasGroupBy = true', () => {
@@ -1719,12 +1932,12 @@ if (import.meta.vitest) {
 
 	describe('repo.on().all().where().find() end-to-end', () => {
 		const TestSchema = Schema.from('e2e')
-			.pk('id', v.string(), () => `e-${Math.random().toString(36).slice(2)}`)
-			.field('name', v.string())
-			.field('age', v.number())
-			.field('active', v.boolean())
-			.field('tags', v.array(v.string()))
-			.field('score', v.optional(v.number()), { onCreate: () => undefined })
+			.pk('id', { input: v.string(), generate: () => `e-${Math.random().toString(36).slice(2)}` })
+			.field('name', { input: v.string() })
+			.field('age', { input: v.number() })
+			.field('active', { input: v.boolean() })
+			.field('tags', { input: v.array(v.string()) })
+			.field('score', { input: v.optional(v.number()), onCreate: () => undefined })
 			.build()
 
 		function makeE2eRepo() {
@@ -2023,10 +2236,10 @@ if (import.meta.vitest) {
 	describe('one().id().update() (replaces updateByPk)', () => {
 		let viewCounter = 0
 		const ItemSchema = Schema.from('items')
-			.pk('id', v.string(), () => `item-${++viewCounter}`)
-			.field('title', v.string())
-			.field('views', v.number())
-			.field('updatedAt', v.number(), { onCreate: () => 1000, onUpdate: () => Date.now() })
+			.pk('id', { input: v.string(), generate: () => `item-${++viewCounter}` })
+			.field('title', { input: v.string() })
+			.field('views', { input: v.number() })
+			.field('updatedAt', { input: v.number(), onCreate: () => 1000, onUpdate: () => Date.now() })
 			.build()
 
 		function makeUpdateRepo() {
@@ -2090,12 +2303,12 @@ if (import.meta.vitest) {
 		let upsertCounter = 0
 
 		const UpsertSchema = Schema.from('upserts')
-			.pk('id', v.string(), () => `up-${++upsertCounter}`)
-			.field('email', v.string())
-			.field('name', v.string())
-			.field('views', v.number())
-			.field('createdAt', v.number(), { onCreate: () => 1000 })
-			.field('updatedAt', v.number(), { onCreate: () => 1000, onUpdate: () => 9999 })
+			.pk('id', { input: v.string(), generate: () => `up-${++upsertCounter}` })
+			.field('email', { input: v.string() })
+			.field('name', { input: v.string() })
+			.field('views', { input: v.number() })
+			.field('createdAt', { input: v.number(), onCreate: () => 1000 })
+			.field('updatedAt', { input: v.number(), onCreate: () => 1000, onUpdate: () => 9999 })
 			.build()
 
 		function makeUpsertRepo() {
@@ -2281,6 +2494,12 @@ if (import.meta.vitest) {
 						{ cause: 'adapter requires single eq filter on unique column, received complex filter' },
 					])
 				}
+				async session<T>(fn: () => Promise<T>) {
+					return fn()
+				}
+				async ensureSession<T>(fn: () => Promise<T>) {
+					return fn()
+				}
 			}
 			const restrictedAdapter = new (RestrictedAdapter as any)() as InstanceType<typeof RestrictedAdapter>
 			spy.mockRestore()
@@ -2316,6 +2535,12 @@ if (import.meta.vitest) {
 				}
 				async upsertOne() {
 					return {}
+				}
+				async session<T>(fn: () => Promise<T>) {
+					return fn()
+				}
+				async ensureSession<T>(fn: () => Promise<T>) {
+					return fn()
 				}
 			}
 			type A = WithUpsertAdapter
@@ -2358,13 +2583,13 @@ if (import.meta.vitest) {
 
 	describe('repo.session — transactional behaviour', () => {
 		const SchemaA = Schema.from('accounts')
-			.pk('id', v.string(), () => `a-${Math.random().toString(36).slice(2)}`)
-			.field('balance', v.number())
+			.pk('id', { input: v.string(), generate: () => `a-${Math.random().toString(36).slice(2)}` })
+			.field('balance', { input: v.number() })
 			.build()
 		const SchemaB = Schema.from('ledger')
-			.pk('id', v.string(), () => `l-${Math.random().toString(36).slice(2)}`)
-			.field('amount', v.number())
-			.field('accountId', v.string())
+			.pk('id', { input: v.string(), generate: () => `l-${Math.random().toString(36).slice(2)}` })
+			.field('amount', { input: v.number() })
+			.field('accountId', { input: v.string() })
 			.build()
 
 		function makeSessionRepo() {
@@ -2507,17 +2732,33 @@ if (import.meta.vitest) {
 			expectTypeOf(_repo.session).toBeNever()
 		})
 
-		test('adapter with session enables repo.session', () => {
+		test('a complete session pair enables repo.session', () => {
 			class WithSessionAdapter extends OrmAdapter {
 				readonly schemaConfigPipe = v.object({})
 				readonly supportedFieldTypes = ['string'] as const
 				async session<T>(fn: () => Promise<T>): Promise<T> {
 					return fn()
 				}
+				async ensureSession<T>(fn: () => Promise<T>): Promise<T> {
+					return fn()
+				}
 			}
 			type A = WithSessionAdapter
 			const _repo = {} as import('./repo.js').RepoSurface<A>
 			expectTypeOf(_repo.session).toBeFunction()
+		})
+
+		test('an incomplete transaction pair collapses repo.session to never', () => {
+			class IncompleteAdapter extends OrmAdapter {
+				readonly schemaConfigPipe = v.object({})
+				readonly supportedFieldTypes = ['string'] as const
+				async session<T>(fn: () => Promise<T>): Promise<T> {
+					return fn()
+				}
+			}
+			type A = IncompleteAdapter
+			const _repo = {} as import('./repo.js').RepoSurface<A>
+			expectTypeOf(_repo.session).toBeNever()
 		})
 	})
 
@@ -2532,7 +2773,7 @@ if (import.meta.vitest) {
 				return origUse(schema, config as { table: string })
 			})
 			const schema = Schema.from('fresh_config')
-				.pk('id', v.string(), () => 'fresh-id')
+				.pk('id', { input: v.string(), generate: () => 'fresh-id' })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => {
@@ -2561,8 +2802,8 @@ if (import.meta.vitest) {
 			})
 
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
@@ -2588,8 +2829,8 @@ if (import.meta.vitest) {
 			})
 
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
@@ -2614,8 +2855,8 @@ if (import.meta.vitest) {
 			})
 
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
@@ -2654,8 +2895,8 @@ if (import.meta.vitest) {
 			})
 
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve((name) => ({ table: name }))
@@ -2761,9 +3002,9 @@ if (import.meta.vitest) {
 		}
 
 		const TestSchema = Schema.from('class_test')
-			.pk('id', v.string(), () => `ct-${Math.random().toString(36).slice(2, 8)}`)
-			.field('name', v.string())
-			.field('age', v.number())
+			.pk('id', { input: v.string(), generate: () => `ct-${Math.random().toString(36).slice(2, 8)}` })
+			.field('name', { input: v.string() })
+			.field('age', { input: v.number() })
 			.build()
 
 		test('Repo.from(classAdapter).resolve(...).build() creates a working repo', async () => {
@@ -2772,7 +3013,7 @@ if (import.meta.vitest) {
 				.resolve((name) => ({ table: name }))
 				.build()
 
-			const created = await repo.on(TestSchema).one().create({ name: 'Alice', age: 30 })
+			const created = await repo.on(TestSchema).one().allowNonTransactional().create({ name: 'Alice', age: 30 })
 			expect(created.name).toBe('Alice')
 			expect(created.age).toBe(30)
 
@@ -2821,6 +3062,7 @@ if (import.meta.vitest) {
 			const created = await repo
 				.on(TestSchema)
 				.all()
+				.allowNonTransactional()
 				.create([
 					{ name: 'Alice', age: 30 },
 					{ name: 'Bob', age: 25 },
@@ -2837,11 +3079,16 @@ if (import.meta.vitest) {
 				.resolve((name) => ({ table: name }))
 				.build()
 
-			const user = await repo.on(TestSchema).one().create({ name: 'Alice', age: 30 })
-			const updated = await repo.on(TestSchema).one().id(user.id).update({ name: 'Alicia' })
+			const user = await repo.on(TestSchema).one().allowNonTransactional().create({ name: 'Alice', age: 30 })
+			const updated = await repo
+				.on(TestSchema)
+				.one()
+				.id(user.id)
+				.allowNonTransactional()
+				.update({ name: 'Alicia' })
 			expect(updated?.name).toBe('Alicia')
 
-			const deleted = await repo.on(TestSchema).one().id(user.id).delete()
+			const deleted = await repo.on(TestSchema).one().id(user.id).allowNonTransactional().delete()
 			expect(deleted?.id).toBe(user.id)
 
 			const found = await repo.on(TestSchema).one().id(user.id).find()
@@ -2851,10 +3098,10 @@ if (import.meta.vitest) {
 
 	describe('repo.on().aggregate() end-to-end', () => {
 		const OrderSchema = Schema.from('orders')
-			.pk('id', v.string(), () => `o-${Math.random().toString(36).slice(2, 8)}`)
-			.field('product', v.string())
-			.field('amount', v.number())
-			.field('region', v.string())
+			.pk('id', { input: v.string(), generate: () => `o-${Math.random().toString(36).slice(2, 8)}` })
+			.field('product', { input: v.string() })
+			.field('amount', { input: v.number() })
+			.field('region', { input: v.string() })
 			.build()
 
 		function makeAggRepo() {
@@ -2885,6 +3132,17 @@ if (import.meta.vitest) {
 			expect(result).toEqual({ total: 5 })
 		})
 
+		test('ungrouped having rejection returns null instead of inventing a summary row', async () => {
+			const { repo } = makeAggRepo()
+			const result = await repo
+				.on(OrderSchema)
+				.aggregate()
+				.count('total')
+				.having((q) => q.gt('total', 0))
+				.run()
+			expect(result).toBeNull()
+		})
+
 		test('count with where filter returns filtered count', async () => {
 			const { repo } = makeAggRepo()
 			await seedOrders(repo)
@@ -2910,8 +3168,8 @@ if (import.meta.vitest) {
 			const withFilter = base.where((q) => q.eq('region', 'US'))
 			const resultAll = await base.count('b').run()
 			const resultFiltered = await withFilter.count('c').run()
-			expect(resultAll.a).toBe(5)
-			expect(resultFiltered.a).toBe(3)
+			expect(resultAll?.a).toBe(5)
+			expect(resultFiltered?.a).toBe(3)
 		})
 
 		test('where before count produces correct result', async () => {
@@ -2936,6 +3194,93 @@ if (import.meta.vitest) {
 					.where((q) => q.eq('nonexistent', 'x'))
 					.run(),
 			).rejects.toThrow(OrmValidationError)
+		})
+
+		test('sparse numeric inputs ignore null and missing values while preserving zero', async () => {
+			let id = 0
+			const SparseSchema = Schema.from('sparse_aggregate_values')
+				.pk('id', { input: v.string(), generate: () => `s-${++id}` })
+				.field('value', { input: v.optional(v.nullable(v.number())) })
+				.field('label', { input: v.optional(v.nullable(v.string())) })
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
+			await repo
+				.on(SparseSchema)
+				.all()
+				.create([
+					{ value: null, label: null },
+					{ value: undefined, label: undefined },
+					{ value: 0, label: 'a' },
+					{ value: 4, label: 'a' },
+					{ value: undefined, label: 'b' },
+				])
+
+			const result = await repo
+				.on(SparseSchema)
+				.aggregate()
+				.sum(SparseSchema.fields.value, 'total')
+				.avg(SparseSchema.fields.value, 'average')
+				.countDistinct(SparseSchema.fields.label, 'uniqueLabels')
+				.run()
+			expect(result).toEqual({ total: 4, average: 2, uniqueLabels: 2 })
+		})
+
+		test('sum is not constrained by source-field output bounds', async () => {
+			let id = 0
+			const BoundedSchema = Schema.from('bounded_aggregate_values')
+				.pk('id', { input: v.string(), generate: () => `b-${++id}` })
+				.field('value', { input: v.number(), output: v.number().pipe(v.lt(10)) })
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
+			await repo
+				.on(BoundedSchema)
+				.all()
+				.create([{ value: 8 }, { value: 8 }])
+
+			const result = await repo
+				.on(BoundedSchema)
+				.aggregate()
+				.sum(BoundedSchema.fields.value, 'total')
+				.min(BoundedSchema.fields.value, 'minimum')
+				.run()
+			expect(result).toEqual({ total: 16, minimum: 8 })
+		})
+
+		test('all-null contributing values produce null aggregates and zero distinct count', async () => {
+			let id = 0
+			const SparseSchema = Schema.from('all_null_aggregate_values')
+				.pk('id', { input: v.string(), generate: () => `s-${++id}` })
+				.field('value', { input: v.optional(v.nullable(v.number())) })
+				.field('label', { input: v.optional(v.nullable(v.string())) })
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
+			await repo
+				.on(SparseSchema)
+				.all()
+				.create([
+					{ value: null, label: null },
+					{ value: undefined, label: undefined },
+				])
+
+			const result = await repo
+				.on(SparseSchema)
+				.aggregate()
+				.sum(SparseSchema.fields.value, 'total')
+				.avg(SparseSchema.fields.value, 'average')
+				.min(SparseSchema.fields.value, 'minimum')
+				.max(SparseSchema.fields.value, 'maximum')
+				.countDistinct(SparseSchema.fields.label, 'uniqueLabels')
+				.run()
+			expect(result).toEqual({ total: null, average: null, minimum: null, maximum: null, uniqueLabels: 0 })
 		})
 
 		test('sum returns total of numeric field', async () => {
@@ -3055,6 +3400,32 @@ if (import.meta.vitest) {
 			expect(eu?.cnt).toBe(2)
 		})
 
+		test('malformed ungrouped cardinality and missing aliases fail output validation', async () => {
+			for (const rows of [[], [{ total: 1 }, { total: 2 }], [{}]]) {
+				const { repo, adapter } = makeAggRepo()
+				;(adapter as any).aggregate = async () => rows
+				await expect(repo.on(OrderSchema).aggregate().count('total').run()).rejects.toMatchObject({
+					kind: 'output',
+				})
+			}
+		})
+
+		test('invalid aggregate values and grouped keys fail output validation', async () => {
+			for (const rows of [[{ total: -1 }], [{ total: 1.5 }], [{ total: Number.MAX_SAFE_INTEGER + 1 }]]) {
+				const { repo, adapter } = makeAggRepo()
+				;(adapter as any).aggregate = async () => rows
+				await expect(repo.on(OrderSchema).aggregate().count('total').run()).rejects.toMatchObject({
+					kind: 'output',
+				})
+			}
+
+			const { repo, adapter } = makeAggRepo()
+			;(adapter as any).aggregate = async () => [{ region: 42, cnt: 1 }]
+			await expect(
+				repo.on(OrderSchema).aggregate().groupBy(OrderSchema.fields.region).count('cnt').run(),
+			).rejects.toMatchObject({ kind: 'output' })
+		})
+
 		test('having filters after aggregation', async () => {
 			const { repo } = makeAggRepo()
 			await seedOrders(repo)
@@ -3144,10 +3515,12 @@ if (import.meta.vitest) {
 			expect(result).toEqual({ lowest: null, highest: null })
 		})
 
-		test('avg on empty store returns zero', async () => {
+		test('sum and avg on empty store return null', async () => {
 			const { repo } = makeAggRepo()
-			const result = await repo.on(OrderSchema).aggregate().avg(OrderSchema.fields.amount, 'avgAmount').run()
-			expect(result).toEqual({ avgAmount: 0 })
+			const sum = await repo.on(OrderSchema).aggregate().sum(OrderSchema.fields.amount, 'total').run()
+			const avg = await repo.on(OrderSchema).aggregate().avg(OrderSchema.fields.amount, 'avgAmount').run()
+			expect(sum).toEqual({ total: null })
+			expect(avg).toEqual({ avgAmount: null })
 		})
 	})
 }

@@ -66,6 +66,11 @@ const postgresqlConnectionPipe = () =>
 
 const TRACKER_TABLE = '_equipped_migrations'
 const DEFAULT_CURSOR_BATCH_SIZE = 1000
+const POSTGRES_NUMERIC_TEXT = /^[+-]?(?:Infinity|NaN|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)$/i
+
+function decodePostgresNumeric(value: unknown): unknown {
+	return typeof value === 'string' && POSTGRES_NUMERIC_TEXT.test(value) ? Number(value) : value
+}
 
 type PostgresCursor<T extends Record<string, unknown>> = {
 	read: (rowCount: number) => Promise<T[]>
@@ -324,7 +329,7 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			const tableName = this.#resolveTableName(c)
 			const { sql, params } = buildCountQuery(filter, tableName, schema.pkField.name)
 			const result = await this.#getClient().query(sql, params)
-			return Number(result.rows[0]?.count ?? 0)
+			return decodePostgresNumeric(result.rows[0]?.count) as number
 		} catch (error) {
 			throw new EquippedError(
 				'PostgreSQL count failed',
@@ -442,15 +447,12 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			return result.rows.map((row: Record<string, unknown>) => {
 				const mapped: Record<string, unknown> = {}
 				for (const agg of spec.aggregates) {
-					const val = row[agg.alias]
-					if (agg.fn === 'min' || agg.fn === 'max') {
-						mapped[agg.alias] = val
-					} else {
-						mapped[agg.alias] = typeof val === 'string' ? Number(val) : Number(val ?? 0)
-					}
+					if (!Object.prototype.hasOwnProperty.call(row, agg.alias)) continue
+					const value = row[agg.alias]
+					mapped[agg.alias] = agg.fn === 'min' || agg.fn === 'max' ? value : decodePostgresNumeric(value)
 				}
 				for (const field of spec.groupBy) {
-					mapped[field] = row[field]
+					if (Object.prototype.hasOwnProperty.call(row, field)) mapped[field] = row[field]
 				}
 				return mapped
 			})
@@ -907,25 +909,45 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			transactionStarted = true
 			const result = await this.#sessionStore.run(client, fn)
 			commitAttempted = true
-			await client.query('COMMIT')
+			try {
+				await client.query('COMMIT')
+			} catch (cause) {
+				throw new EquippedError(
+					'PostgreSQL commit outcome is uncertain',
+					{ adapter: 'postgresql', operation: 'session', phase: 'commit', outcome: 'uncertain' },
+					cause,
+				)
+			}
 			return result
 		} catch (error) {
 			if (client && transactionStarted && !commitAttempted) {
 				try {
 					await client.query('ROLLBACK')
-				} catch {
-					// ignore rollback errors and report original failure
+				} catch (rollbackError) {
+					throw new EquippedError(
+						'PostgreSQL rollback outcome is uncertain',
+						{
+							adapter: 'postgresql',
+							operation: 'session',
+							phase: 'rollback',
+							outcome: 'uncertain',
+							originalError: error,
+						},
+						rollbackError,
+					)
 				}
 			}
-			if (error instanceof EquippedError) throw error
-			throw new EquippedError(
-				commitAttempted ? 'PostgreSQL commit outcome is uncertain' : 'PostgreSQL session failed',
-				{ adapter: 'postgresql', operation: 'session', outcome: commitAttempted ? 'uncertain' : 'rolled-back' },
-				error,
-			)
+			if (commitAttempted) throw error
+			if (transactionStarted) throw error
+			throw new EquippedError('PostgreSQL session failed', { adapter: 'postgresql', operation: 'session' }, error)
 		} finally {
 			if (releaseClient) client?.release()
 		}
+	}
+
+	async ensureSession<T>(fn: () => Promise<T>): Promise<T> {
+		if (this.#sessionStore.getStore()) return fn()
+		return this.session(fn)
 	}
 }
 
@@ -1018,7 +1040,7 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const use = adapter.use(schema, { table: 'test' })
@@ -1079,7 +1101,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 
 			const _one = repo.on(_TestSchema).one()
@@ -1108,7 +1130,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const _ref = repo.on(_TestSchema)
 
@@ -1124,7 +1146,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const _ref = repo.on(_TestSchema)
 
@@ -1136,8 +1158,8 @@ if (import.meta.vitest) {
 			const { FilterGroup } = await import('../../filter.js')
 
 			const schema = Schema.from('pg_count')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			let capturedSql: unknown
@@ -1158,7 +1180,7 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_raw')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			let capturedCommand: unknown
@@ -1181,7 +1203,7 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_raw2')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			let capturedParams: unknown
@@ -1199,8 +1221,8 @@ if (import.meta.vitest) {
 			const { OrderBy } = await import('../../query-options.js')
 
 			const schema = Schema.from('pg_iter')
-				.pk('id', v.string(), () => 'x')
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('age', { input: v.number() })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			let capturedCursor: Cursor<Record<string, unknown>> | undefined
@@ -1257,7 +1279,7 @@ if (import.meta.vitest) {
 			const { FilterGroup } = await import('../../filter.js')
 
 			const schema = Schema.from('pg_iter_break')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const release = vi.fn()
@@ -1286,7 +1308,7 @@ if (import.meta.vitest) {
 			const { FilterGroup } = await import('../../filter.js')
 
 			const schema = Schema.from('pg_iter_throw')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const release = vi.fn()
@@ -1315,7 +1337,7 @@ if (import.meta.vitest) {
 			const { FilterGroup } = await import('../../filter.js')
 
 			const schema = Schema.from('pg_iter_session')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			const events: string[] = []
@@ -1360,6 +1382,89 @@ if (import.meta.vitest) {
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			expect(adapter.session).toBeDefined()
 			expect(adapter.session).toBeTypeOf('function')
+			expect(adapter.ensureSession).toBeTypeOf('function')
+		})
+
+		test('propagates the original callback error after a confirmed rollback', async () => {
+			const adapter = PostgresAdapter.create(testConnectionConfig)
+			const callbackError = new Error('callback failed')
+			const client = {
+				query: vi.fn(async (_statement: string) => ({ rows: [] })),
+				release: vi.fn(),
+			}
+			;(adapter.pool as any).connect = vi.fn(async () => client)
+
+			await expect(
+				adapter.session(async () => {
+					throw callbackError
+				}),
+			).rejects.toBe(callbackError)
+			expect(client.query.mock.calls.map(([statement]) => statement)).toEqual(['BEGIN', 'ROLLBACK'])
+		})
+
+		test('preserves callback errors after rollback and reports rollback uncertainty', async () => {
+			const adapter = PostgresAdapter.create(testConnectionConfig)
+			const rollbackError = new Error('rollback failed')
+			const callbackError = new Error('callback failed')
+			const client = {
+				query: vi.fn(async (statement: string) => {
+					if (statement === 'ROLLBACK') throw rollbackError
+					return { rows: [] }
+				}),
+				release: vi.fn(),
+			}
+			;(adapter.pool as any).connect = vi.fn(async () => client)
+
+			let caught: unknown
+			try {
+				await adapter.session(async () => {
+					throw callbackError
+				})
+			} catch (error) {
+				caught = error
+			}
+			expect(caught).toBeInstanceOf(EquippedError)
+			expect(caught).toMatchObject({
+				context: {
+					phase: 'rollback',
+					outcome: 'uncertain',
+					originalError: callbackError,
+				},
+				cause: rollbackError,
+			})
+			expect(client.query.mock.calls.map(([statement]) => statement)).toEqual(['BEGIN', 'ROLLBACK'])
+			expect(client.release).toHaveBeenCalledTimes(1)
+		})
+
+		test('reports an uncertain commit without retrying the session callback', async () => {
+			const adapter = PostgresAdapter.create(testConnectionConfig)
+			const commitError = new Error('commit failed')
+			const client = {
+				query: vi.fn(async (statement: string) => {
+					if (statement === 'COMMIT') throw commitError
+					return { rows: [] }
+				}),
+				release: vi.fn(),
+			}
+			;(adapter.pool as any).connect = vi.fn(async () => client)
+			let callbackCalls = 0
+
+			let caught: unknown
+			try {
+				await adapter.ensureSession(async () => {
+					callbackCalls++
+					return 'result'
+				})
+			} catch (error) {
+				caught = error
+			}
+			expect(caught).toBeInstanceOf(EquippedError)
+			expect(caught).toMatchObject({
+				context: { phase: 'commit', outcome: 'uncertain' },
+				cause: commitError,
+			})
+			expect(callbackCalls).toBe(1)
+			expect(client.query.mock.calls.map(([statement]) => statement)).toEqual(['BEGIN', 'COMMIT'])
 		})
 
 		test('declares aggregateOps with all six canonical ops', () => {
@@ -1377,9 +1482,9 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_agg')
-				.pk('id', v.string(), () => 'x')
-				.field('amount', v.number())
-				.field('region', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('amount', { input: v.number() })
+				.field('region', { input: v.string() })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			let capturedSql: unknown
@@ -1402,12 +1507,46 @@ if (import.meta.vitest) {
 			expect(result).toEqual([{ total: 5 }])
 		})
 
+		test('Repo validates controlled PostgreSQL aggregate rows and having cardinality', async () => {
+			const { Schema } = await import('../../schema.js')
+			const { Repo } = await import('../../repo/repo.js')
+			const schema = Schema.from('pg_agg_repo')
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('amount', { input: v.number() })
+				.build()
+			const adapter = PostgresAdapter.create(testConnectionConfig)
+			let rows: Array<Record<string, unknown>> = [{ total: '3' }]
+			;(adapter.pool as any).query = async () => ({ rows })
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ schema: undefined, table: name }))
+				.build()
+
+			expect(await repo.on(schema).aggregate().count('total').run()).toEqual({ total: 3 })
+
+			rows = []
+			expect(
+				await repo
+					.on(schema)
+					.aggregate()
+					.count('total')
+					.having((q) => q.gt('total', 0))
+					.run(),
+			).toBeNull()
+
+			rows = [{}]
+			await expect(repo.on(schema).aggregate().count('total').run()).rejects.toMatchObject({ kind: 'output' })
+			rows = [{ total: '-1' }]
+			await expect(repo.on(schema).aggregate().count('total').run()).rejects.toMatchObject({ kind: 'output' })
+			rows = [{ total: '1' }, { total: '2' }]
+			await expect(repo.on(schema).aggregate().count('total').run()).rejects.toMatchObject({ kind: 'output' })
+		})
+
 		test('aggregate converts PG bigint/numeric strings to numbers for count/sum/avg', async () => {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_agg_types')
-				.pk('id', v.string(), () => 'x')
-				.field('amount', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('amount', { input: v.number() })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			;(adapter.pool as any).query = async () => ({
@@ -1430,12 +1569,37 @@ if (import.meta.vitest) {
 			expect(result[0].avgAmt).toBe(25.05)
 		})
 
+		test('aggregate preserves SQL nulls and absent aliases for output validation', async () => {
+			const { Schema } = await import('../../schema.js')
+			const schema = Schema.from('pg_agg_nulls')
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('amount', { input: v.number() })
+				.build()
+			const adapter = PostgresAdapter.create(testConnectionConfig)
+			;(adapter.pool as any).query = async () => ({ rows: [{ cnt: '0', total: null, average: null, low: null }] })
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'orders' },
+				{
+					aggregates: [
+						{ fn: 'count', alias: 'cnt' },
+						{ fn: 'sum', field: 'amount', alias: 'total' },
+						{ fn: 'avg', field: 'amount', alias: 'average' },
+						{ fn: 'min', field: 'amount', alias: 'low' },
+						{ fn: 'max', field: 'amount', alias: 'high' },
+					],
+					groupBy: [],
+				},
+			)
+			expect(result).toEqual([{ cnt: 0, total: null, average: null, low: null }])
+		})
+
 		test('aggregate preserves original type for min/max', async () => {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_agg_minmax')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			;(adapter.pool as any).query = async () => ({
@@ -1460,8 +1624,8 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			const schema = Schema.from('pg_agg_group')
-				.pk('id', v.string(), () => 'x')
-				.field('region', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('region', { input: v.string() })
 				.build()
 			const adapter = PostgresAdapter.create(testConnectionConfig)
 			;(adapter.pool as any).query = async () => ({
@@ -1493,7 +1657,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ table: 'test', schema: undefined }))
 				.build()
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 
 			const _ref = repo.on(_TestSchema)
@@ -2045,8 +2209,8 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 
 			Schema.from('users')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
 				.build()
 			const repo = Repo.from(adapter)
 				.resolve(() => ({ table: 'test', schema: undefined }))

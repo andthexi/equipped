@@ -563,16 +563,22 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 						result[agg.alias] = groupRows.length
 						break
 					case 'countDistinct': {
-						const vals = new Set(groupRows.map((r) => JSON.stringify(r[agg.field!])))
+						const vals = new Set(
+							groupRows
+								.map((row) => row[agg.field!])
+								.filter((value) => value !== null && value !== undefined)
+								.map((value) => JSON.stringify(value)),
+						)
 						result[agg.alias] = vals.size
 						break
 					}
 					case 'sum':
-						result[agg.alias] = groupRows.reduce((acc, r) => acc + Number(r[agg.field!] ?? 0), 0)
-						break
 					case 'avg': {
-						const sum = groupRows.reduce((acc, r) => acc + Number(r[agg.field!] ?? 0), 0)
-						result[agg.alias] = groupRows.length > 0 ? sum / groupRows.length : 0
+						const values = groupRows
+							.map((row) => row[agg.field!])
+							.filter((value): value is number => value !== null && value !== undefined)
+						const sum = values.reduce((acc, value) => acc + value, 0)
+						result[agg.alias] = values.length === 0 ? null : agg.fn === 'sum' ? sum : sum / values.length
 						break
 					}
 					case 'min': {
@@ -932,6 +938,11 @@ export class InMemoryAdapter extends configurable(inMemoryConnectionPipe, OrmAda
 			}
 		})
 	}
+
+	async ensureSession<T>(fn: () => Promise<T>): Promise<T> {
+		if (sessionContextStore.getStore()?.activeTransactions.has(this)) return fn()
+		return this.session(fn)
+	}
 }
 
 if (import.meta.vitest) {
@@ -955,7 +966,7 @@ if (import.meta.vitest) {
 	describe('in-memory adapter', () => {
 		test('outside reads wait for rollback and outside writes survive it', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
+				.pk('id', { input: v.string(), generate: () => 'u' })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'users' })
@@ -1095,7 +1106,7 @@ if (import.meta.vitest) {
 
 		test('serializes the issue #148 insert case at the root-session admission boundary', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
+				.pk('id', { input: v.string(), generate: () => 'u' })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'users' })
@@ -1119,8 +1130,8 @@ if (import.meta.vitest) {
 
 		test('a queued root sees a preceding successful update and preserves it', async () => {
 			const schema = Schema.from('docs')
-				.pk('id', v.string(), () => 'd')
-				.field('count', v.number())
+				.pk('id', { input: v.string(), generate: () => 'd' })
+				.field('count', { input: v.number() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'docs' })
@@ -1146,7 +1157,7 @@ if (import.meta.vitest) {
 
 		test('serializes roots across unrelated schemas on one adapter', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'i')
+				.pk('id', { input: v.string(), generate: () => 'i' })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const firstUse = adapter.use(schema, { table: 'first' })
@@ -1195,7 +1206,7 @@ if (import.meta.vitest) {
 
 		test('restores a failed root before admitting a later successful root', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
+				.pk('id', { input: v.string(), generate: () => 'u' })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'users' })
@@ -1278,8 +1289,8 @@ if (import.meta.vitest) {
 
 		test('introspect discovers lazily written stores without inventing schema metadata', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			await adapter.use(schema, { table: 'tenant_users' }).createMany([{ id: 'u1', name: 'Alice' }])
@@ -1298,8 +1309,8 @@ if (import.meta.vitest) {
 
 		test('missing reads and non-inserting mutations do not create discoverable stores', async () => {
 			const schema = Schema.from('absent')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'absent' })
@@ -1328,8 +1339,8 @@ if (import.meta.vitest) {
 
 		test('upsert insertion creates a discoverable store', async () => {
 			const schema = Schema.from('upserts')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'upserts' })
@@ -1340,8 +1351,8 @@ if (import.meta.vitest) {
 
 		test.each([false, true])('dropTable removes rows and owned metadata (declared: %s)', async (declared) => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			if (declared)
@@ -1381,8 +1392,8 @@ if (import.meta.vitest) {
 			'renameTable moves rows and rewrites table references (declared: %s)',
 			async (declared) => {
 				const schema = Schema.from('users')
-					.pk('id', v.string(), () => 'u')
-					.field('name', v.string())
+					.pk('id', { input: v.string(), generate: () => 'u' })
+					.field('name', { input: v.string() })
 					.build()
 				const adapter = InMemoryAdapter.create({})
 				if (declared)
@@ -1435,7 +1446,7 @@ if (import.meta.vitest) {
 
 		test.each(['rows', 'metadata'])('renameTable refuses an occupied destination (%s)', async (destination) => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
+				.pk('id', { input: v.string(), generate: () => 'u' })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const users = adapter.use(schema, { table: 'users' })
@@ -1463,7 +1474,7 @@ if (import.meta.vitest) {
 
 		test('dropTable refuses inbound foreign keys without deleting rows', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
+				.pk('id', { input: v.string(), generate: () => 'u' })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'users' })
@@ -1494,8 +1505,8 @@ if (import.meta.vitest) {
 
 		test('introspect deduplicates declared stores and preserves empty declared tables', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			await adapter.applyCreateTable({
@@ -1523,7 +1534,7 @@ if (import.meta.vitest) {
 
 		test('deleting the last row retains a lazily created container', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
+				.pk('id', { input: v.string(), generate: () => 'u' })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'users' })
@@ -1536,7 +1547,7 @@ if (import.meta.vitest) {
 			'session rollback restores table rows and metadata after %s',
 			async (operation) => {
 				const schema = Schema.from('users')
-					.pk('id', v.string(), () => 'u')
+					.pk('id', { input: v.string(), generate: () => 'u' })
 					.build()
 				const adapter = InMemoryAdapter.create({})
 				await adapter.applyCreateTable({
@@ -1576,7 +1587,7 @@ if (import.meta.vitest) {
 
 		test('session rollback removes newly discovered lazy stores', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
+				.pk('id', { input: v.string(), generate: () => 'u' })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			await expect(
@@ -1606,9 +1617,9 @@ if (import.meta.vitest) {
 
 		test('supports nested filters, ordering, select, offset and limit', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
+				.field('age', { input: v.number() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'users' })
@@ -1628,8 +1639,8 @@ if (import.meta.vitest) {
 
 		test('count returns the number of matching rows without query options', async () => {
 			const schema = Schema.from('count_users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'count_users' })
@@ -1644,9 +1655,9 @@ if (import.meta.vitest) {
 
 		test('iterateMany with batchSize matches findMany filtering ordering offset limit and selection', async () => {
 			const schema = Schema.from('iter_users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
-				.field('age', v.number())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
+				.field('age', { input: v.number() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'iter_users' })
@@ -1679,10 +1690,10 @@ if (import.meta.vitest) {
 
 		test('supports update operators and rollback on failed session', async () => {
 			const schema = Schema.from('docs')
-				.pk('id', v.string(), () => 'd1')
-				.field('count', v.number())
-				.field('tags', v.array(v.string()))
-				.field('meta', v.object({ a: v.number() }))
+				.pk('id', { input: v.string(), generate: () => 'd1' })
+				.field('count', { input: v.number() })
+				.field('tags', { input: v.array(v.string()) })
+				.field('meta', { input: v.object({ a: v.number() }) })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'docs' })
@@ -1709,8 +1720,8 @@ if (import.meta.vitest) {
 
 		test('notIn filter excludes matching values', async () => {
 			const schema = Schema.from('users')
-				.pk('id', v.string(), () => 'u')
-				.field('name', v.string())
+				.pk('id', { input: v.string(), generate: () => 'u' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'users' })
@@ -1726,8 +1737,8 @@ if (import.meta.vitest) {
 
 		test('exists / notExists filter ops work correctly', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'i')
-				.field('val', v.optional(v.string()), { onCreate: () => undefined })
+				.pk('id', { input: v.string(), generate: () => 'i' })
+				.field('val', { input: v.optional(v.string()), onCreate: () => undefined })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'items' })
@@ -1746,17 +1757,16 @@ if (import.meta.vitest) {
 
 		test('nested filter paths work for all filter ops', async () => {
 			const schema = Schema.from('nested_items')
-				.pk('id', v.string(), () => `nested-${Math.random().toString(36).slice(2)}`)
-				.field(
-					'meta',
-					v.object({
+				.pk('id', { input: v.string(), generate: () => `nested-${Math.random().toString(36).slice(2)}` })
+				.field('meta', {
+					input: v.object({
 						kind: v.string(),
 						count: v.number(),
 						enabled: v.boolean(),
 						tags: v.array(v.string()),
 						config: v.object({ role: v.string() }),
 					}),
-				)
+				})
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'nested_items' })
@@ -1800,7 +1810,7 @@ if (import.meta.vitest) {
 
 		test('findByPk returns seeded document and null for missing', async () => {
 			const schema = Schema.from('test')
-				.pk('id', v.string(), () => 'gen')
+				.pk('id', { input: v.string(), generate: () => 'gen' })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 
@@ -1832,8 +1842,8 @@ if (import.meta.vitest) {
 
 		test('aggregate count returns correct total', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => `i-${Math.random().toString(36).slice(2, 8)}`)
-				.field('category', v.string())
+				.pk('id', { input: v.string(), generate: () => `i-${Math.random().toString(36).slice(2, 8)}` })
+				.field('category', { input: v.string() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'items' })
@@ -1855,8 +1865,8 @@ if (import.meta.vitest) {
 
 		test('aggregate count with where filter', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => `i-${Math.random().toString(36).slice(2, 8)}`)
-				.field('category', v.string())
+				.pk('id', { input: v.string(), generate: () => `i-${Math.random().toString(36).slice(2, 8)}` })
+				.field('category', { input: v.string() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'items' })
@@ -1879,7 +1889,7 @@ if (import.meta.vitest) {
 
 		test('aggregate count on empty store returns zero', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const result = await adapter.aggregate(
@@ -1895,8 +1905,8 @@ if (import.meta.vitest) {
 
 		test('aggregate sum/avg/min/max compute correctly', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'x')
-				.field('price', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('price', { input: v.number() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'items' })
@@ -1923,8 +1933,8 @@ if (import.meta.vitest) {
 
 		test('aggregate countDistinct counts unique values', async () => {
 			const schema = Schema.from('items')
-				.pk('id', v.string(), () => 'x')
-				.field('category', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('category', { input: v.string() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'items' })
@@ -1946,9 +1956,9 @@ if (import.meta.vitest) {
 
 		test('aggregate groupBy produces per-group results', async () => {
 			const schema = Schema.from('orders')
-				.pk('id', v.string(), () => 'x')
-				.field('region', v.string())
-				.field('amount', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('region', { input: v.string() })
+				.field('amount', { input: v.number() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'orders' })
@@ -1977,9 +1987,9 @@ if (import.meta.vitest) {
 
 		test('aggregate having filters post-aggregation', async () => {
 			const schema = Schema.from('orders')
-				.pk('id', v.string(), () => 'x')
-				.field('region', v.string())
-				.field('amount', v.number())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('region', { input: v.string() })
+				.field('amount', { input: v.number() })
 				.build()
 			const adapter = InMemoryAdapter.create({})
 			const use = adapter.use(schema, { table: 'orders' })

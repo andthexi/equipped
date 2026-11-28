@@ -1,5 +1,11 @@
 # Aggregation surface (`.aggregate()` chain) with a tight canonical op set
 
+**Output-contract update:** Slice #200 supersedes the original non-null runtime
+shape assumptions below. ORM context §18.4 is canonical for safe counts,
+nullable aggregate results, empty-input behavior, result validation, and
+ungrouped `having()` cardinality. The fluent API and six-operation surface
+remain unchanged.
+
 The legacy `dbs` layer had no aggregation surface (only `countDocuments` for
 its paginated envelope). The orm has the same gap: anything beyond
 filter-based reads (counts, rollups, group-bys, joined aggregates) has to

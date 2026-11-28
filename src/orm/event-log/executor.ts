@@ -18,13 +18,13 @@ export async function fire<R>(
 		throw new OrmValidationError('validation', 'event_log', 'fire', [{ cause: validated.error }])
 	}
 
-	return repo.session(async () => {
+	return (repo as any).session(async () => {
 		const at = ctx?.at ?? new Date()
 		const ts = at.getTime()
 		const key = Instance.createId()
 		const by = ctx?.by ?? null
 
-		await repo.on(EventLogSchema).one().create({
+		await (repo as any).on(EventLogSchema).one().create({
 			key,
 			name,
 			ts,

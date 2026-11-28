@@ -62,23 +62,37 @@ export function toFieldName(field: string | AnyField): string {
 
 export class SchemaField<
 	Name extends string = string,
-	P extends Pipe<any, any> = Pipe<any, any>,
+	Input extends Pipe<any, any> = Pipe<any, any>,
+	Output extends Pipe<any, any> = Input,
 	HasOnCreate extends boolean = false,
-> extends Field<PipeOutput<P>, Name> {
+> extends Field<PipeOutput<Output>, Name> {
 	declare readonly __hasOnCreate?: HasOnCreate
-	readonly pipe: P
-	readonly onCreate?: () => PipeOutput<P>
-	readonly onUpdate?: () => PipeOutput<P>
+	readonly input: Input
+	readonly output: Output
+	readonly generate?: () => PipeOutput<Output>
+	readonly onCreate?: () => PipeOutput<Output>
+	readonly onUpdate?: () => PipeOutput<Output>
 
-	constructor(name: Name, pipe: P, opts?: { onCreate?: () => PipeOutput<P>; onUpdate?: () => PipeOutput<P> }) {
+	constructor(
+		name: Name,
+		input: Input,
+		output: Output,
+		opts?: {
+			generate?: () => PipeOutput<Output>
+			onCreate?: () => PipeOutput<Output>
+			onUpdate?: () => PipeOutput<Output>
+		},
+	) {
 		super(name)
-		this.pipe = pipe
+		this.input = input
+		this.output = output
+		this.generate = opts?.generate
 		this.onCreate = opts?.onCreate
 		this.onUpdate = opts?.onUpdate
 	}
 }
 
-export type AnySchemaField = SchemaField<string, Pipe<any, any>, boolean>
+export type AnySchemaField = SchemaField<string, Pipe<any, any>, Pipe<any, any>, boolean>
 
 export class ComputedField<
 	Name extends string = string,
@@ -87,7 +101,7 @@ export class ComputedField<
 > {
 	constructor(
 		readonly name: Name,
-		readonly pipe: P,
+		readonly output: P,
 		readonly deps: Deps,
 		readonly compute: (data: Record<Deps[number], unknown>) => PipeOutput<P>,
 	) {}
@@ -137,16 +151,17 @@ if (import.meta.vitest) {
 		describe('SchemaField', () => {
 			test('extends Field and stores pipe', () => {
 				const mockPipe = v.string()
-				const f = new SchemaField('email', mockPipe)
+				const f = new SchemaField('email', mockPipe, mockPipe)
 				expect(f).toBeInstanceOf(Field)
 				expect(f.name).toBe('email')
 				expect(f.path).toEqual(['email'])
-				expect(f.pipe).toBe(mockPipe)
+				expect(f.input).toBe(mockPipe)
+				expect(f.output).toBe(mockPipe)
 			})
 
 			test('stores lifecycle hooks when provided', () => {
 				const mockPipe = v.number()
-				const f = new SchemaField('updatedAt', mockPipe, {
+				const f = new SchemaField('updatedAt', mockPipe, mockPipe, {
 					onCreate: () => 1000,
 					onUpdate: () => 2000,
 				})
@@ -156,7 +171,7 @@ if (import.meta.vitest) {
 
 			test('keeps lifecycle hooks undefined when omitted', () => {
 				const mockPipe = v.string()
-				const f = new SchemaField('name', mockPipe)
+				const f = new SchemaField('name', mockPipe, mockPipe)
 				expect(f.onCreate).toBeUndefined()
 				expect(f.onUpdate).toBeUndefined()
 			})

@@ -147,6 +147,8 @@ export function assertNormalisedAggregate(
 		failures.push({ cause: 'At least one aggregator step is required' })
 	}
 
+	const allFields = schema.fields as Record<string, unknown>
+	const fieldNames = new Set(Object.keys(allFields))
 	const seenAliases = new Set<string>()
 	for (const agg of spec.aggregates) {
 		if (seenAliases.has(agg.alias)) {
@@ -157,10 +159,17 @@ export function assertNormalisedAggregate(
 		if (!adapter.aggregateOps.includes(agg.fn)) {
 			failures.push({ alias: agg.alias, cause: `Undeclared aggregate op "${agg.fn}"` })
 		}
+		if (agg.fn !== 'count') {
+			if (!agg.field || !fieldNames.has(agg.field)) {
+				failures.push({
+					alias: agg.alias,
+					...(agg.field === undefined ? {} : { field: agg.field }),
+					cause: `Unknown source field "${agg.field}"`,
+				})
+			}
+		}
 	}
 
-	const allFields = schema.fields as Record<string, unknown>
-	const fieldNames = new Set(Object.keys(allFields))
 	for (const field of spec.groupBy) {
 		if (!fieldNames.has(field)) {
 			failures.push({ field, cause: `Unknown groupBy field "${field}" on schema "${schema.name}"` })
@@ -240,16 +249,16 @@ if (import.meta.vitest) {
 	const { Schema } = await import('./schema.js')
 
 	const UserSchema = Schema.from('users')
-		.pk('id', v.string(), () => 'u1')
-		.field('email', v.string())
-		.field('age', v.number())
-		.field('name', v.string())
-		.field('tags', v.array(v.string()))
+		.pk('id', { input: v.string(), generate: () => 'u1' })
+		.field('email', { input: v.string() })
+		.field('age', { input: v.number() })
+		.field('name', { input: v.string() })
+		.field('tags', { input: v.array(v.string()) })
 		.build()
 
 	const LinkSchema = Schema.from('links')
-		.pk('id', v.string(), () => 'link-1')
-		.field('def', v.object({ type: v.string() }))
+		.pk('id', { input: v.string(), generate: () => 'link-1' })
+		.field('def', { input: v.object({ type: v.string() }) })
 		.build()
 
 	describe('FilterGroup', () => {

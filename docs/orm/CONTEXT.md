@@ -28,6 +28,9 @@ static factory method `X.from(args)` that returns a builder, terminated by
 
 ### 1.1 Schema
 
+The accepted input/output declaration split is recorded in [§18.2](#182-schema-declarations).
+The declaration example below still describes the shipped API.
+
 A **Schema** is a typed description of a single document shape — its name, its
 PK field, its data fields, and any computed fields. A Schema is
 adapter-agnostic and relations-agnostic; it carries valleyed pipes for
@@ -39,11 +42,11 @@ not aware of adapters.
 
 ```ts
 const UserSchema = Schema.from('users')
-	.pk('id', v.string(), () => crypto.randomUUID())
-	.field('email', v.string())
-	.field('age', v.number())
-	.field('createdAt', v.number(), { onCreate: () => Date.now() })
-	.field('updatedAt', v.number(), { onUpdate: () => Date.now() })
+	.pk('id', { input: v.string(), generate: () => crypto.randomUUID() })
+	.field('email', { input: v.string() })
+	.field('age', { input: v.number() })
+	.field('createdAt', { input: v.number(), onCreate: () => Date.now() })
+	.field('updatedAt', { input: v.number(), onUpdate: () => Date.now() })
 	.build()
 ```
 
@@ -246,8 +249,8 @@ Vocabulary:
   that share field sets (timestamps, tenant ids, soft-delete columns) are
   expressed as a userland factory function that takes a name and returns
   a partially-built `SchemaBuilder`, e.g.
-  `withCommonFields(name) => Schema.from(name).pk(...).field('createdAt', ...).field('updatedAt', ...)`,
-  consumed as `withCommonFields('users').field('email', v.string()).build()`.
+  `withCommonFields(name) => Schema.from(name).pk(...).field('createdAt', { input: ... }).field('updatedAt', { input: ... })`,
+  consumed as `withCommonFields('users').field('email', { input: v.string() }).build()`.
   The library ships **no** Mixin artifact, no `.use(fieldSet)` builder
   step, and no other composition primitive — the typed accumulator on
   `SchemaBuilder` flows through factory-function returns naturally, and
@@ -405,7 +408,7 @@ methods and capability declarations, and how they narrow the Repo's surface.
 
 ### 3.1 Methods (and the historical bag groupings)
 
-The Adapter exposes exactly fourteen **optional methods** declared on the
+The Adapter exposes exactly fifteen **optional methods** declared on the
 abstract `OrmAdapter` base. Each subclass implements the ones it supports and
 omits the rest:
 
@@ -414,7 +417,7 @@ omits the rest:
 | `lifecycle`        | `connect`, `disconnect`                                                     |
 | `crud`             | `findByPk`, `createMany`, `updateByPk`, `deleteByPk`, `raw`                 |
 | `queryable`        | `findMany`, `count`, `iterateMany`, `updateMany`, `deleteMany`, `upsertOne` |
-| `transactional`    | `session`                                                                   |
+| `transactional`    | `session`, `ensureSession`                                                  |
 
 The four group labels (`lifecycle`, `crud`, `queryable`, `transactional`)
 survive **only as documentation** — they are vocabulary for discussing related
@@ -493,6 +496,12 @@ implements `findMany` but leaves `queryableOps = []`, the filter chain
 time check needed.
 
 ### 3.4 Per-op gating, parity, and the no-emulation rule
+
+The accepted runtime missing-capability policy is recorded in
+[§18.5](#185-mutation-transaction-boundary): unsupported invocations throw
+`TypeError` rather than silently succeeding or using nontransactional fallbacks.
+This supplements compile-time narrowing; supported methods' valid empty results
+and intentionally optional lifecycle hooks remain unchanged.
 
 **Per-op gating** is the TypeScript-level mechanism by which an undeclared op
 becomes a compile error. The op-list declarations (`queryableOps`, `updateOps`)
@@ -858,7 +867,7 @@ const totals = await repo
 	.sum(OrderSchema.fields.total, 'revenue')
 	.where((q) => q.eq(OrderSchema.fields.year, 2026))
 	.run()
-// totals: { orders: number, revenue: number }
+// totals: { orders: number, revenue: number | null }
 
 // Grouped aggregation (groupBy → returns an array of group rows).
 const byRegion = await repo
@@ -870,7 +879,7 @@ const byRegion = await repo
 	.where((q) => q.gte(OrderSchema.fields.year, 2024))
 	.having((q) => q.gt('revenue', 1000))
 	.run()
-// byRegion: Array<{ orders: number, revenue: number, region: string, year: number }>
+// byRegion: Array<{ orders: number, revenue: number | null, region: string, year: number }>
 ```
 
 Vocabulary:
@@ -898,23 +907,25 @@ Five rules govern the surface:
 - **Aggregation cardinality rule.** The result cardinality is determined by
   whether `.groupBy(...)` was called. The `AggregateBuilder` carries a
   `HasGroupBy extends boolean` typestate parameter; `.run()` narrows the
-  return type to `R` when `HasGroupBy = false`, `R[]` when `HasGroupBy = true`.
-  No-`groupBy` aggregations return a single object directly, never a
-  one-element array.
+  return type to `R | null` when `HasGroupBy = false`, `R[]` when
+  `HasGroupBy = true`. Ungrouped aggregations return a single object directly,
+  never a one-element array; an ungrouped `having()` may reject its summary and
+  return `null`.
 - **Field-type-per-aggregator rule.** Each aggregator step's field-arg
-  generic is constrained at the type level: `sum` and `avg` accept
-  `Field<'number', ...>` only; `min` and `max` accept
-  `Field<'number' | 'string' | 'date', ...>`; `countDistinct` accepts any
-  `Field`; `count(alias)` takes no field arg. `groupBy` keys must be
-  `Field<'string' | 'number' | 'boolean' | 'date', ...>` — `'object'`,
-  `'array'`, `'null'` are rejected at the type level. Direct parallel to
+  generic is constrained at the type level: `sum` and `avg` accept numeric
+  fields, including nullable/optional numeric values; `min` and `max` accept
+  number/string/date fields, including nullable/optional values;
+  `countDistinct` accepts any `Field`; `count(alias)` takes no field arg.
+  `groupBy` keys must be scalar fields, including nullable/optional values;
+  object and array fields are rejected at the type level. Direct parallel to
   §10.3's update-op field-category constraints.
 - **Pre/post-filter split rule.** `.where(q)` filters schema rows pre-
   aggregation and is typed over `SchemaFields<S>` — the standard
   `FilterFactory`. `.having(q)` filters aggregated rows post-aggregation
   and is typed over the alias-and-group-key map; aggregator aliases are
-  typed by the aggregator's return type (count/countDistinct/sum/avg
-  always `number`; min/max keep the source field's type), group-key
+  typed by the aggregator's return type (count/countDistinct are `number`;
+  sum/avg are `number | null`; min/max are the source field's non-null type
+  or `null`), group-key
   aliases keep the schema-declared type. Both are once-per-step.
 - **Terminal-aggregator-required rule.** `.run()` is gated on at least one
   aggregator step having been called — `.aggregate().run()` with zero
@@ -923,8 +934,9 @@ Five rules govern the surface:
 - **Always-array adapter rule.** The adapter's `aggregate(schema, schemaCfg, spec)`
   method always returns `Array<Record<string, unknown>>` — even for
   no-groupBy single-bucket aggregations (length-1 array). The cardinality
-  narrowing to `R | R[]` happens **post-adapter**, in the `AggregateBuilder.run()`
-  method, by reading the `HasGroupBy` typestate. Same architectural shape
+  narrowing to `R | null | R[]` happens **post-adapter**, in the
+  `AggregateBuilder.run()` method, by reading the `HasGroupBy` typestate and
+  mapping an ungrouped `having()` rejection to `null`. Same architectural shape
   as the post-adapter throw under the required-row contract (§5.7) — the
   builder layer does the user-facing return-type adjustment, not the
   adapter.
@@ -1325,8 +1337,13 @@ resolution pipeline; the tx connection routing happens inside the adapter.
 
 ## 7. Validation flow
 
-Validation runs once, in the package, at the Repo-entry boundary. Adapters
-never re-validate.
+The shipped input-validation flow runs in the package at the Repo-entry
+boundary; adapters receive validated input. The accepted design adds mandatory
+output validation before result consumption or exposure, described in
+[§18.3](#183-output-validation-boundaries), without asking Consumers to repeat
+checks after calls. The input-only validate-once description below remains
+historical for that part of the pipeline, not a prohibition on the accepted
+output boundary.
 
 ### 7.1 Repo-entry boundary and the validate-once rule
 
@@ -1470,6 +1487,12 @@ all failures across documents, and throws one `OrmValidationError` if any.
 ---
 
 ## 8. Transactions & sessions
+
+Explicit session behavior below remains in effect. Transactional adapters
+implement paired `session()` / `ensureSession()` methods; Repo mutations use the
+latter to join or own a transaction. See [§18.5](#185-mutation-transaction-boundary).
+The adapter still owns transaction propagation and explicit-session nesting. No
+rollback-only behavior is added.
 
 ### 8.1 Session contract
 
@@ -1624,7 +1647,10 @@ The source variable is a const in the outer lexical scope, so FK refs that
 point at the source (`belongsTo`'s FK) reference it directly:
 
 ```ts
-const UserSchema = Schema.from('users').pk('id', v.string()).field('orgId', v.string()).build()
+const UserSchema = Schema.from('users')
+	.pk('id', { input: v.string(), generate: () => crypto.randomUUID() })
+	.field('orgId', { input: v.string() })
+	.build()
 
 const UserRels = Relations.from(UserSchema)
 	.hasMany('posts', PostSchema.fields.userId)
@@ -1692,9 +1718,9 @@ declarations would force in JS without macros.
 
 ```ts
 const PostTagSchema = Schema.from('post_tags')
-	.pk('id', v.string(), () => 'pt-id')
-	.field('postId', v.string())
-	.field('tagId', v.string())
+	.pk('id', { input: v.string(), generate: () => 'pt-id' })
+	.field('postId', { input: v.string() })
+	.field('tagId', { input: v.string() })
 	.build()
 
 const PostRels = Relations.from(PostSchema).hasMany('postTags', PostTagSchema.fields.postId).build()
@@ -2168,11 +2194,11 @@ The library owns a fixed `EventLogSchema` exported from
 
 ```ts
 const EventLogSchema = Schema.from('event_log')
-	.pk('key', v.string()) // time-sortable id
-	.field('name', v.string()) // handler name
-	.field('ts', v.number()) // ms timestamp
-	.field('body', v.object({}).passthrough()) // validated payload
-	.field('by', v.optional(v.string())) // who fired (nullable)
+	.pk('key', { input: v.string(), generate: () => crypto.randomUUID() }) // time-sortable id
+	.field('name', { input: v.string() }) // handler name
+	.field('ts', { input: v.number() }) // ms timestamp
+	.field('body', { input: v.object({}).passthrough() }) // validated payload
+	.field('by', { input: v.optional(v.string()) }) // who fired (nullable)
 	.build()
 ```
 

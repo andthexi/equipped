@@ -189,8 +189,8 @@ if (import.meta.vitest) {
 	const { OrmAdapter } = await import('../orm-adapter.js')
 
 	const UserSchema = Schema.from('users')
-		.pk('id', v.string(), () => `u-${Math.random().toString(36).slice(2)}`)
-		.field('email', v.string())
+		.pk('id', { input: v.string(), generate: () => `u-${Math.random().toString(36).slice(2)}` })
+		.field('email', { input: v.string() })
 		.build()
 
 	function makeEnv() {

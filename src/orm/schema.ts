@@ -1,11 +1,22 @@
-import { v, type Pipe, type PipeOutput } from 'valleyed'
+import { v, type Pipe, type PipeInput, type PipeOutput } from 'valleyed'
 
 import { ComputedField, SchemaField, type AnyComputedField, type AnySchemaField } from './fields.js'
 import type { Prettify } from './utils.js'
 
 const RESERVED_SCHEMA_NAMES = new Set(['_equipped_migrations', '_equipped_migration_locks'])
 
-type AnyPrimaryKeyField = SchemaField<string, Pipe<any, any>, true>
+type AnyPrimaryKeyField = SchemaField<string, Pipe<any, any>, Pipe<any, any>, true>
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
+type FieldOutputOption<P extends Pipe<any, any>> =
+	Equal<PipeInput<P>, PipeOutput<P>> extends true
+		? { output?: Pipe<PipeOutput<P>, PipeOutput<P>> }
+		: { output: Pipe<PipeOutput<P>, PipeOutput<P>> }
+type FieldLifecycleOptions<P extends Pipe<any, any>> = {
+	onCreate?: () => PipeOutput<P>
+	onUpdate?: () => PipeOutput<P>
+}
+type FieldOutput<P extends Pipe<any, any>, O> = O extends { output: infer Output extends Pipe<any, any> } ? Output : P
 
 export type AnySchema = Schema<
 	string,
@@ -18,7 +29,7 @@ export type SchemaComputedDefs<S extends AnySchema> =
 	S extends Schema<any, any, any, infer C> ? C : Record<string, AnyComputedField>
 
 export type SchemaPersistedOutput<S extends AnySchema> = Prettify<{
-	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, infer P, any> ? PipeOutput<P> : never
+	[K in keyof SchemaFields<S>]: SchemaFields<S>[K] extends SchemaField<any, any, infer P, any> ? PipeOutput<P> : never
 }>
 
 export type SchemaComputedOutput<S extends AnySchema> = Prettify<{
@@ -68,39 +79,48 @@ export class SchemaBuilder<
 		return this.#name
 	}
 
-	pk<K extends string, P extends Pipe<any, any>>(
+	pk<K extends string, P extends Pipe<any, any>, O extends FieldOutputOption<P>>(
 		name: [PKField] extends [never] ? K : never,
-		pipe: P,
-		generate: () => PipeOutput<P>,
-	): SchemaBuilder<N, SchemaField<K, P, true>, F> {
-		return new SchemaBuilder<N, SchemaField<K, P, true>, F>(
+		options: { input: P } & O & { generate: () => PipeOutput<P> },
+	): SchemaBuilder<N, SchemaField<K, P, FieldOutput<P, O>, true>, F> {
+		const output = (options.output ?? options.input) as FieldOutput<P, O>
+		const generate = options.generate as () => PipeOutput<FieldOutput<P, O>>
+		return new SchemaBuilder<N, SchemaField<K, P, FieldOutput<P, O>, true>, F>(
 			this.#name,
-			new SchemaField(name, pipe, { onCreate: generate }),
+			new SchemaField<K, P, FieldOutput<P, O>, true>(name as K, options.input, output, { generate }),
 			{ ...this.#fieldDefs } as F,
 			undefined,
 		)
 	}
 
-	field<
-		K extends string,
-		P extends Pipe<any, any>,
-		O extends { onCreate?: () => PipeOutput<P>; onUpdate?: () => PipeOutput<P> } | undefined = undefined,
-	>(
+	field<K extends string, P extends Pipe<any, any>, O extends FieldOutputOption<P> & FieldLifecycleOptions<P>>(
 		name: K extends keyof F ? never : K,
-		pipe: P,
-		opts?: O,
+		options: { input: P } & O,
 	): SchemaBuilder<
 		N,
 		PKField,
 		{
 			[Key in keyof F | K]: Key extends K
-				? SchemaField<K, P, [O] extends [{ onCreate: () => any }] ? true : false>
+				? SchemaField<K, P, FieldOutput<P, O>, [O] extends [{ onCreate: () => any }] ? true : false>
 				: Key extends keyof F
 					? F[Key]
 					: never
 		}
 	> {
-		const nextFields = { ...this.#fieldDefs, [name]: new SchemaField(name, pipe, opts) }
+		const output = (options.output ?? options.input) as FieldOutput<P, O>
+		const hooks = {
+			onCreate: options.onCreate as (() => PipeOutput<FieldOutput<P, O>>) | undefined,
+			onUpdate: options.onUpdate as (() => PipeOutput<FieldOutput<P, O>>) | undefined,
+		}
+		const nextFields = {
+			...this.#fieldDefs,
+			[name]: new SchemaField<K, P, FieldOutput<P, O>, [O] extends [{ onCreate: () => any }] ? true : false>(
+				name as K,
+				options.input,
+				output,
+				hooks,
+			),
+		}
 		return new SchemaBuilder(this.#name, this.#pkField, nextFields, { ...this.#computedDefs }) as any
 	}
 
@@ -110,9 +130,11 @@ export class SchemaBuilder<
 		P extends Pipe<any, any>,
 	>(
 		name: K extends keyof SchemaPersistedOutput<Schema<N, PKField, F, C>> | keyof C ? never : K,
-		deps: Deps,
-		pipe: P,
-		compute: (data: Pick<SchemaPersistedOutput<Schema<N, PKField, F, C>>, Deps[number]>) => PipeOutput<P>,
+		options: {
+			deps: Deps
+			output: P
+			compute: (data: Pick<SchemaPersistedOutput<Schema<N, PKField, F, C>>, Deps[number]>) => PipeOutput<P>
+		},
 	): SchemaBuilder<
 		N,
 		PKField,
@@ -121,7 +143,11 @@ export class SchemaBuilder<
 			[Key in keyof C | K]: Key extends K ? ComputedField<K, P, Deps> : Key extends keyof C ? C[Key] : never
 		}
 	> {
-		const nextComputed = { ...this.#computedDefs, [name]: new ComputedField(name as K, pipe, deps, compute as any) }
+		const { deps, output, compute } = options
+		const nextComputed = {
+			...this.#computedDefs,
+			[name]: new ComputedField(name as K, output, deps, compute as any),
+		}
 		return new SchemaBuilder(this.#name, this.#pkField, { ...this.#fieldDefs }, nextComputed) as any
 	}
 
@@ -190,12 +216,12 @@ if (import.meta.vitest) {
 
 	describe('SchemaBuilder', () => {
 		const UserSchema = Schema.from('users')
-			.pk('id', v.string(), () => 'generated-id')
-			.field('email', v.string())
-			.field('name', v.string())
-			.field('age', v.optional(v.number()))
-			.field('createdAt', v.number(), { onCreate: () => 1000 })
-			.field('updatedAt', v.number(), { onCreate: () => 1000, onUpdate: () => 2000 })
+			.pk('id', { input: v.string(), generate: () => 'generated-id' })
+			.field('email', { input: v.string() })
+			.field('name', { input: v.string() })
+			.field('age', { input: v.optional(v.number()) })
+			.field('createdAt', { input: v.number(), onCreate: () => 1000 })
+			.field('updatedAt', { input: v.number(), onCreate: () => 1000, onUpdate: () => 2000 })
 			.build()
 
 		describe('Schema.from()', () => {
@@ -212,14 +238,14 @@ if (import.meta.vitest) {
 
 			test('returns a Schema instance after build', () => {
 				const s = Schema.from('test')
-					.pk('id', v.string(), () => 'x')
+					.pk('id', { input: v.string(), generate: () => 'x' })
 					.build()
 				expect(s).toBeInstanceOf(Schema)
 			})
 
 			test('Schema has no builder methods', () => {
 				const s = Schema.from('test')
-					.pk('id', v.string(), () => 'x')
+					.pk('id', { input: v.string(), generate: () => 'x' })
 					.build()
 				expect(s).not.toHaveProperty('pk')
 				expect(s).not.toHaveProperty('field')
@@ -234,16 +260,16 @@ if (import.meta.vitest) {
 			test('stores the schema name after build', () => {
 				expect(
 					Schema.from('orders')
-						.pk('id', v.string(), () => 'x')
+						.pk('id', { input: v.string(), generate: () => 'x' })
 						.build().name,
 				).toBe('orders')
 			})
 
 			test('full builder chain works', () => {
 				const s = Schema.from('users')
-					.pk('id', v.string(), () => 'gen')
-					.field('email', v.string())
-					.field('age', v.number())
+					.pk('id', { input: v.string(), generate: () => 'gen' })
+					.field('email', { input: v.string() })
+					.field('age', { input: v.number() })
 					.build()
 				expect(s.name).toBe('users')
 				expect(s.pkField.name).toBe('id')
@@ -252,7 +278,7 @@ if (import.meta.vitest) {
 
 			test('.build() is unavailable without .pk() at the type level', () => {
 				// @ts-expect-error — .build() requires .pk() to have been called
-				Schema.from('test').field('name', v.string()).build()
+				Schema.from('test').field('name', { input: v.string() }).build()
 			})
 		})
 
@@ -272,7 +298,8 @@ if (import.meta.vitest) {
 			})
 
 			test('pk entry has correct pipe', () => {
-				expect(UserSchema.fields.id.pipe).toBeDefined()
+				expect(UserSchema.fields.id.input).toBeDefined()
+				expect(UserSchema.fields.id.output).toBeDefined()
 			})
 
 			test('pk entry has correct name and path', () => {
@@ -280,12 +307,12 @@ if (import.meta.vitest) {
 				expect(UserSchema.fields.id.path).toEqual(['id'])
 			})
 
-			test('pk onCreate generates the value', () => {
-				expect(UserSchema.fields.id.onCreate?.()).toBe('generated-id')
+			test('pk generate stores the value factory', () => {
+				expect(UserSchema.fields.id.generate?.()).toBe('generated-id')
 			})
 
 			test('pkField throws when no pk defined', () => {
-				const schema = new Schema('nopk', null, { name: new SchemaField('name', v.string()) }, {})
+				const schema = new Schema('nopk', null, { name: new SchemaField('name', v.string(), v.string()) }, {})
 				expect(() => schema.pkField).toThrow()
 			})
 		})
@@ -303,8 +330,9 @@ if (import.meta.vitest) {
 			})
 
 			test('field has correct pipe', () => {
-				expect(UserSchema.fields.email.pipe).toBeDefined()
-				expect(UserSchema.fieldDefs.email.pipe).toBe(UserSchema.fields.email.pipe)
+				expect(UserSchema.fields.email.input).toBeDefined()
+				expect(UserSchema.fields.email.output).toBe(UserSchema.fields.email.input)
+				expect(UserSchema.fieldDefs.email.output).toBe(UserSchema.fields.email.output)
 			})
 
 			test('field with onCreate stores the function', () => {
@@ -329,10 +357,14 @@ if (import.meta.vitest) {
 		describe('.computed()', () => {
 			test('registers computed fields and dependencies', () => {
 				const WithComputed = Schema.from('users')
-					.pk('id', v.string(), () => 'u1')
-					.field('name', v.string())
-					.field('email', v.string())
-					.computed('display', ['name', 'email'], v.string(), ({ name, email }) => `${name} <${email}>`)
+					.pk('id', { input: v.string(), generate: () => 'u1' })
+					.field('name', { input: v.string() })
+					.field('email', { input: v.string() })
+					.computed('display', {
+						deps: ['name', 'email'],
+						output: v.string(),
+						compute: ({ name, email }) => `${name} <${email}>`,
+					})
 					.build()
 
 				expect(Object.keys(WithComputed.computedDefs)).toEqual(['display'])
@@ -344,9 +376,13 @@ if (import.meta.vitest) {
 
 			test('computed field names are included in schema output type', () => {
 				const WithComputed = Schema.from('users')
-					.pk('id', v.string(), () => 'u1')
-					.field('name', v.string())
-					.computed('nameUpper', ['name'], v.string(), ({ name }) => name.toUpperCase())
+					.pk('id', { input: v.string(), generate: () => 'u1' })
+					.field('name', { input: v.string() })
+					.computed('nameUpper', {
+						deps: ['name'],
+						output: v.string(),
+						compute: ({ name }) => name.toUpperCase(),
+					})
 					.build()
 
 				type Out = SchemaOutput<typeof WithComputed>
@@ -367,7 +403,7 @@ if (import.meta.vitest) {
 
 			test('schema with no fields has only pk in fields', () => {
 				const PkOnly = Schema.from('minimal')
-					.pk('id', v.string(), () => 'x')
+					.pk('id', { input: v.string(), generate: () => 'x' })
 					.build()
 				expect(Object.keys(PkOnly.fields)).toEqual(['id'])
 			})
@@ -384,7 +420,7 @@ if (import.meta.vitest) {
 
 			test('schema with no fields has empty fieldDefs', () => {
 				const PkOnly = Schema.from('minimal')
-					.pk('id', v.string(), () => 'x')
+					.pk('id', { input: v.string(), generate: () => 'x' })
 					.build()
 				expect(Object.keys(PkOnly.fieldDefs)).toHaveLength(0)
 			})
@@ -394,39 +430,43 @@ if (import.meta.vitest) {
 	describe('type-level: Schema.from uniqueness guard', () => {
 		test('duplicate .field() name is a TS error', () => {
 			Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
 				// @ts-expect-error — duplicate field name 'email' should fail
-				.field('email', v.string())
+				.field('email', { input: v.string() })
 				.build()
 		})
 	})
 
 	describe('clone-on-step: fan-out independence', () => {
 		test('.field() returns a new builder, not the same instance', () => {
-			const base = Schema.from('test').pk('id', v.string(), () => 'x')
-			const a = base.field('email', v.string())
+			const base = Schema.from('test').pk('id', { input: v.string(), generate: () => 'x' })
+			const a = base.field('email', { input: v.string() })
 			expect(a).not.toBe(base)
 		})
 
 		test('.pk() returns a new builder, not the same instance', () => {
 			const base = Schema.from('test')
-			const a = base.pk('id', v.string(), () => 'x')
+			const a = base.pk('id', { input: v.string(), generate: () => 'x' })
 			expect(a).not.toBe(base)
 		})
 
 		test('.computed() returns a new builder, not the same instance', () => {
 			const base = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
-			const a = base.computed('upper', ['name'], v.string(), ({ name }) => name.toUpperCase())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
+			const a = base.computed('upper', {
+				deps: ['name'],
+				output: v.string(),
+				compute: ({ name }) => name.toUpperCase(),
+			})
 			expect(a).not.toBe(base)
 		})
 
 		test('fan-out from shared base does not pollute either branch', () => {
-			const base = Schema.from('test').pk('id', v.string(), () => 'x')
-			const branchA = base.field('email', v.string()).build()
-			const branchB = base.field('age', v.number()).build()
+			const base = Schema.from('test').pk('id', { input: v.string(), generate: () => 'x' })
+			const branchA = base.field('email', { input: v.string() }).build()
+			const branchB = base.field('age', { input: v.number() }).build()
 
 			expect(Object.keys(branchA.fieldDefs)).toEqual(['email'])
 			expect(Object.keys(branchB.fieldDefs)).toEqual(['age'])
@@ -434,9 +474,15 @@ if (import.meta.vitest) {
 
 		test('fan-out with computed does not pollute base', () => {
 			const base = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('name', v.string())
-			const withComputed = base.computed('upper', ['name'], v.string(), ({ name }) => name.toUpperCase()).build()
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
+			const withComputed = base
+				.computed('upper', {
+					deps: ['name'],
+					output: v.string(),
+					compute: ({ name }) => name.toUpperCase(),
+				})
+				.build()
 			const withoutComputed = base.build()
 
 			expect(Object.keys(withComputed.computedDefs)).toEqual(['upper'])
@@ -447,8 +493,8 @@ if (import.meta.vitest) {
 	describe('type-level: schema-tagged Fields', () => {
 		test('fields accessor returns schema-tagged Field instances', () => {
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
 				.build()
 			type FieldS = NonNullable<(typeof _TestSchema.fields.id)['__schema']>
 			expectTypeOf<FieldS>().toEqualTypeOf<typeof _TestSchema>()
@@ -459,8 +505,8 @@ if (import.meta.vitest) {
 
 		test('fields carry runtime __schema reference to parent schema', () => {
 			const TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
-				.field('email', v.string())
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('email', { input: v.string() })
 				.build()
 			expect((TestSchema.fields.id as any).__schema).toBe(TestSchema)
 			expect((TestSchema.fields.email as any).__schema).toBe(TestSchema)

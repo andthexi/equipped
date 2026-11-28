@@ -87,15 +87,15 @@ if (import.meta.vitest) {
 	const { OrmIntrospectionError } = await import('../errors/introspection.js')
 
 	const UserSchema = Schema.from('users')
-		.pk('id', v.string(), () => `u-${Math.random().toString(36).slice(2)}`)
-		.field('email', v.string())
-		.field('age', v.number())
+		.pk('id', { input: v.string(), generate: () => `u-${Math.random().toString(36).slice(2)}` })
+		.field('email', { input: v.string() })
+		.field('age', { input: v.number() })
 		.build()
 
 	const PostSchema = Schema.from('posts')
-		.pk('id', v.string(), () => `p-${Math.random().toString(36).slice(2)}`)
-		.field('title', v.string())
-		.field('authorId', v.string())
+		.pk('id', { input: v.string(), generate: () => `p-${Math.random().toString(36).slice(2)}` })
+		.field('title', { input: v.string() })
+		.field('authorId', { input: v.string() })
 		.build()
 
 	function makeEnv() {

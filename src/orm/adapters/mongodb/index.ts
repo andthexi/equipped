@@ -357,17 +357,48 @@ export class MongoDbAdapter extends configurable(mongoConnectionPipe, OrmAdapter
 
 	async session<T>(fn: () => Promise<T>): Promise<T> {
 		if (this.#sessionStore.getStore()) return fn()
+		const session = await this.client.startSession()
 		try {
-			const session = await this.client.startSession()
+			session.startTransaction()
+			let result: T
 			try {
-				return await session.withTransaction(async () => this.#sessionStore.run(session, fn))
-			} finally {
-				await session.endSession()
+				result = await this.#sessionStore.run(session, fn)
+			} catch (error) {
+				try {
+					await session.abortTransaction()
+				} catch (rollbackError) {
+					throw new EquippedError(
+						'MongoDB rollback outcome is uncertain',
+						{
+							adapter: 'mongodb',
+							operation: 'session',
+							phase: 'rollback',
+							outcome: 'uncertain',
+							originalError: error,
+						},
+						rollbackError,
+					)
+				}
+				throw error
 			}
-		} catch (error) {
-			if (error instanceof EquippedError) throw error
-			throw new EquippedError('MongoDB session failed', { adapter: 'mongodb', operation: 'session' }, error)
+			try {
+				await session.commitTransaction()
+			} catch (cause) {
+				throw new EquippedError(
+					'MongoDB commit outcome is uncertain',
+					{ adapter: 'mongodb', operation: 'session', phase: 'commit', outcome: 'uncertain' },
+					cause,
+				)
+			}
+			return result
+		} finally {
+			await session.endSession()
 		}
+	}
+
+	async ensureSession<T>(fn: () => Promise<T>): Promise<T> {
+		if (this.#sessionStore.getStore()) return fn()
+		return this.session(fn)
 	}
 
 	async loadMigrations(config: MongoDbRepoConfig): Promise<{ id: string; appliedAt: number }[]> {
@@ -544,7 +575,7 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
 			const schema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			const use = adapter.use(schema, { db: 'testdb', col: 'testcol' })
@@ -610,7 +641,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ db: 'test', col: 'test' }))
 				.build()
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 
 			const _one = repo.on(_TestSchema).one()
@@ -639,7 +670,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ db: 'test', col: 'test' }))
 				.build()
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const _ref = repo.on(_TestSchema)
 
@@ -655,7 +686,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ db: 'test', col: 'test' }))
 				.build()
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const _ref = repo.on(_TestSchema)
 
@@ -667,8 +698,8 @@ if (import.meta.vitest) {
 			const { v } = await import('valleyed')
 			const { FilterGroup } = await import('../../filter.js')
 			const schema = Schema.from('mongo_count')
-				.pk('_id', v.string(), () => 'x')
-				.field('name', v.string())
+				.pk('_id', { input: v.string(), generate: () => 'x' })
+				.field('name', { input: v.string() })
 				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			let capturedFilter: unknown
@@ -694,7 +725,7 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
 			const schema = Schema.from('mongo_raw')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			let capturedPipeline: unknown
@@ -718,8 +749,8 @@ if (import.meta.vitest) {
 			const { FilterGroup } = await import('../../filter.js')
 			const { OrderBy } = await import('../../query-options.js')
 			const schema = Schema.from('mongo_iter')
-				.pk('_id', v.string(), () => 'x')
-				.field('age', v.number())
+				.pk('_id', { input: v.string(), generate: () => 'x' })
+				.field('age', { input: v.number() })
 				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			let capturedFindFilter: unknown
@@ -792,8 +823,8 @@ if (import.meta.vitest) {
 			const { v } = await import('valleyed')
 			const { FilterGroup } = await import('../../filter.js')
 			const schema = Schema.from('mongo_iter_complete')
-				.pk('_id', v.string(), () => 'x')
-				.field('age', v.number())
+				.pk('_id', { input: v.string(), generate: () => 'x' })
+				.field('age', { input: v.number() })
 				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			let closeCalls = 0
@@ -846,7 +877,7 @@ if (import.meta.vitest) {
 				.resolve(() => ({ db: 'test', col: 'test' }))
 				.build()
 			const _TestSchema = Schema.from('test')
-				.pk('id', v.string(), () => 'x')
+				.pk('id', { input: v.string(), generate: () => 'x' })
 				.build()
 			const _ref = repo.on(_TestSchema)
 			expectTypeOf(_ref.aggregate).toBeFunction()
@@ -856,8 +887,8 @@ if (import.meta.vitest) {
 			const { Schema } = await import('../../schema.js')
 			const { v } = await import('valleyed')
 			const schema = Schema.from('mongo_agg')
-				.pk('_id', v.string(), () => 'x')
-				.field('amount', v.number())
+				.pk('_id', { input: v.string(), generate: () => 'x' })
+				.field('amount', { input: v.number() })
 				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			let capturedPipeline: unknown
@@ -881,11 +912,64 @@ if (import.meta.vitest) {
 					groupBy: [],
 				},
 			)
-			expect(capturedPipeline).toEqual([
-				{ $group: { _id: null, total: { $sum: 1 }, revenue: { $sum: '$amount' } } },
-				{ $project: { _id: 0, total: 1, revenue: 1 } },
-			])
+			const pipeline = capturedPipeline as any[]
+			const branch = pipeline[0].$facet.__equipped_aggregate_rows
+			expect(branch[0].$group).toMatchObject({
+				_id: null,
+				total: { $sum: 1 },
+				revenue: { $sum: '$amount' },
+			})
+			expect(pipeline[1].$project.__equipped_aggregate_rows.$cond[2]).toEqual([{ total: 0, revenue: null }])
 			expect(result).toEqual(mockResults)
+		})
+
+		test('Repo validates controlled Mongo aggregate results and empty having output', async () => {
+			const { Schema } = await import('../../schema.js')
+			const { Repo } = await import('../../repo/repo.js')
+			const { v } = await import('valleyed')
+			let resultRows: Array<Record<string, unknown>> = [{ total: null, average: null, unique: 0 }]
+			let capturedPipeline: unknown
+			const schema = Schema.from('mongo_aggregate_repo')
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('amount', { input: v.optional(v.nullable(v.number())) })
+				.field('label', { input: v.optional(v.nullable(v.string())) })
+				.build()
+			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
+			;(adapter.client as any).db = () => ({
+				collection: () => ({
+					aggregate: (pipeline: unknown) => {
+						capturedPipeline = pipeline
+						return { toArray: async () => resultRows }
+					},
+				}),
+			})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ db: 'testdb', col: name }))
+				.build()
+			const query = () =>
+				repo
+					.on(schema)
+					.aggregate()
+					.sum(schema.fields.amount, 'total')
+					.avg(schema.fields.amount, 'average')
+					.countDistinct(schema.fields.label, 'unique')
+
+			expect(await query().run()).toEqual({ total: null, average: null, unique: 0 })
+			expect((capturedPipeline as any)[0].$facet).toBeDefined()
+
+			resultRows = [{ total: 0, average: 0, unique: 2 }]
+			expect(await query().run()).toEqual({ total: 0, average: 0, unique: 2 })
+
+			resultRows = []
+			expect(
+				await query()
+					.having((q) => q.gt('unique', 0))
+					.run(),
+			).toBeNull()
+			await expect(query().run()).rejects.toMatchObject({ kind: 'output' })
+
+			resultRows = [{ total: Number.POSITIVE_INFINITY, average: 0, unique: 1 }]
+			await expect(query().run()).rejects.toMatchObject({ kind: 'output' })
 		})
 
 		test('aggregate with where and groupBy produces correct pipeline', async () => {
@@ -893,9 +977,9 @@ if (import.meta.vitest) {
 			const { v } = await import('valleyed')
 			const { FilterGroup } = await import('../../filter.js')
 			const schema = Schema.from('mongo_agg2')
-				.pk('_id', v.string(), () => 'x')
-				.field('region', v.string())
-				.field('amount', v.number())
+				.pk('_id', { input: v.string(), generate: () => 'x' })
+				.field('region', { input: v.string() })
+				.field('amount', { input: v.number() })
 				.build()
 			const adapter = MongoDbAdapter.create({ uri: 'mongodb://localhost:27017' })
 			let capturedPipeline: unknown
@@ -965,7 +1049,9 @@ if (import.meta.vitest) {
 			})
 			;(adapter.client as any).startSession = () =>
 				Object.assign(session, {
-					withTransaction: (fn: () => Promise<unknown>) => fn(),
+					startTransaction: () => {},
+					commitTransaction: async () => {},
+					abortTransaction: async () => {},
 					endSession: async () => {},
 				})
 
