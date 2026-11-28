@@ -147,6 +147,8 @@ export function assertNormalisedAggregate(
 		failures.push({ cause: 'At least one aggregator step is required' })
 	}
 
+	const allFields = schema.fields as Record<string, unknown>
+	const fieldNames = new Set(Object.keys(allFields))
 	const seenAliases = new Set<string>()
 	for (const agg of spec.aggregates) {
 		if (seenAliases.has(agg.alias)) {
@@ -157,10 +159,17 @@ export function assertNormalisedAggregate(
 		if (!adapter.aggregateOps.includes(agg.fn)) {
 			failures.push({ alias: agg.alias, cause: `Undeclared aggregate op "${agg.fn}"` })
 		}
+		if (agg.fn !== 'count') {
+			if (!agg.field || !fieldNames.has(agg.field)) {
+				failures.push({
+					alias: agg.alias,
+					...(agg.field === undefined ? {} : { field: agg.field }),
+					cause: `Unknown source field "${agg.field}"`,
+				})
+			}
+		}
 	}
 
-	const allFields = schema.fields as Record<string, unknown>
-	const fieldNames = new Set(Object.keys(allFields))
 	for (const field of spec.groupBy) {
 		if (!fieldNames.has(field)) {
 			failures.push({ field, cause: `Unknown groupBy field "${field}" on schema "${schema.name}"` })

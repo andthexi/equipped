@@ -329,6 +329,29 @@ if (import.meta.vitest) {
 			expect(count).toBe(2)
 		})
 
+		test('count and pagination reject invalid driver totals before arithmetic', async () => {
+			for (const invalid of [
+				-1,
+				1.5,
+				Number.NaN,
+				Number.POSITIVE_INFINITY,
+				Number.MAX_SAFE_INTEGER + 1,
+				'2',
+				null,
+			]) {
+				for (const terminal of ['count', 'paginate'] as const) {
+					const adapter = InMemoryAdapter.create({})
+					;(adapter as any).count = async () => invalid
+					const repo = Repo.from(adapter)
+						.resolve((name) => ({ table: name }))
+						.build()
+					const query = repo.on(UserSchema).all()
+					const result = terminal === 'count' ? query.count() : query.limit(1).paginate()
+					await expect(result).rejects.toMatchObject({ kind: 'output' })
+				}
+			}
+		})
+
 		test('all().count() validates only the filter', async () => {
 			const repo = makeRepo()
 			await repo.on(UserSchema).one().create({ email: 'bad-filter-count@test.com', name: 'Alice' })
@@ -1766,8 +1789,9 @@ if (import.meta.vitest) {
 
 		test('.count(alias) adds alias to result type as number', () => {
 			type AfterCount = ReturnType<Builder['count']>
-			type Result = Awaited<ReturnType<AfterCount['run']>>
+			type Result = NonNullable<Awaited<ReturnType<AfterCount['run']>>>
 			expectTypeOf<Result>().toHaveProperty('total')
+			expectTypeOf<Result['total']>().toEqualTypeOf<number>()
 		})
 
 		test('duplicate alias: "a" extends keyof Aggs triggers never guard', () => {
@@ -1787,10 +1811,16 @@ if (import.meta.vitest) {
 			expectTypeOf<RunParams>().toEqualTypeOf<[]>()
 		})
 
-		test('.run() returns single object when HasGroupBy = false', () => {
+		test('.run() returns a nullable object when HasGroupBy = false', () => {
 			type WithCount = import('./builders.js').AggregateBuilder<S, A, { total: number }, {}, false>
 			type Result = Awaited<ReturnType<WithCount['run']>>
-			expectTypeOf<Result>().toEqualTypeOf<{ total: number }>()
+			expectTypeOf<Result>().toEqualTypeOf<{ total: number } | null>()
+		})
+
+		test('sum, avg, min, and max aliases include null in their public types', () => {
+			type WithSum = import('./builders.js').AggregateBuilder<S, A, { total: number | null }, {}, false>
+			type SumResult = Awaited<ReturnType<WithSum['run']>>
+			expectTypeOf<SumResult>().toEqualTypeOf<{ total: number | null } | null>()
 		})
 
 		test('.run() returns array when HasGroupBy = true', () => {
@@ -3032,6 +3062,17 @@ if (import.meta.vitest) {
 			expect(result).toEqual({ total: 5 })
 		})
 
+		test('ungrouped having rejection returns null instead of inventing a summary row', async () => {
+			const { repo } = makeAggRepo()
+			const result = await repo
+				.on(OrderSchema)
+				.aggregate()
+				.count('total')
+				.having((q) => q.gt('total', 0))
+				.run()
+			expect(result).toBeNull()
+		})
+
 		test('count with where filter returns filtered count', async () => {
 			const { repo } = makeAggRepo()
 			await seedOrders(repo)
@@ -3057,8 +3098,8 @@ if (import.meta.vitest) {
 			const withFilter = base.where((q) => q.eq('region', 'US'))
 			const resultAll = await base.count('b').run()
 			const resultFiltered = await withFilter.count('c').run()
-			expect(resultAll.a).toBe(5)
-			expect(resultFiltered.a).toBe(3)
+			expect(resultAll?.a).toBe(5)
+			expect(resultFiltered?.a).toBe(3)
 		})
 
 		test('where before count produces correct result', async () => {
@@ -3083,6 +3124,93 @@ if (import.meta.vitest) {
 					.where((q) => q.eq('nonexistent', 'x'))
 					.run(),
 			).rejects.toThrow(OrmValidationError)
+		})
+
+		test('sparse numeric inputs ignore null and missing values while preserving zero', async () => {
+			let id = 0
+			const SparseSchema = Schema.from('sparse_aggregate_values')
+				.pk('id', { input: v.string(), generate: () => `s-${++id}` })
+				.field('value', { input: v.optional(v.nullable(v.number())) })
+				.field('label', { input: v.optional(v.nullable(v.string())) })
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
+			await repo
+				.on(SparseSchema)
+				.all()
+				.create([
+					{ value: null, label: null },
+					{ value: undefined, label: undefined },
+					{ value: 0, label: 'a' },
+					{ value: 4, label: 'a' },
+					{ value: undefined, label: 'b' },
+				])
+
+			const result = await repo
+				.on(SparseSchema)
+				.aggregate()
+				.sum(SparseSchema.fields.value, 'total')
+				.avg(SparseSchema.fields.value, 'average')
+				.countDistinct(SparseSchema.fields.label, 'uniqueLabels')
+				.run()
+			expect(result).toEqual({ total: 4, average: 2, uniqueLabels: 2 })
+		})
+
+		test('sum is not constrained by source-field output bounds', async () => {
+			let id = 0
+			const BoundedSchema = Schema.from('bounded_aggregate_values')
+				.pk('id', { input: v.string(), generate: () => `b-${++id}` })
+				.field('value', { input: v.number(), output: v.number().pipe(v.lt(10)) })
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
+			await repo
+				.on(BoundedSchema)
+				.all()
+				.create([{ value: 8 }, { value: 8 }])
+
+			const result = await repo
+				.on(BoundedSchema)
+				.aggregate()
+				.sum(BoundedSchema.fields.value, 'total')
+				.min(BoundedSchema.fields.value, 'minimum')
+				.run()
+			expect(result).toEqual({ total: 16, minimum: 8 })
+		})
+
+		test('all-null contributing values produce null aggregates and zero distinct count', async () => {
+			let id = 0
+			const SparseSchema = Schema.from('all_null_aggregate_values')
+				.pk('id', { input: v.string(), generate: () => `s-${++id}` })
+				.field('value', { input: v.optional(v.nullable(v.number())) })
+				.field('label', { input: v.optional(v.nullable(v.string())) })
+				.build()
+			const adapter = InMemoryAdapter.create({})
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ table: name }))
+				.build()
+			await repo
+				.on(SparseSchema)
+				.all()
+				.create([
+					{ value: null, label: null },
+					{ value: undefined, label: undefined },
+				])
+
+			const result = await repo
+				.on(SparseSchema)
+				.aggregate()
+				.sum(SparseSchema.fields.value, 'total')
+				.avg(SparseSchema.fields.value, 'average')
+				.min(SparseSchema.fields.value, 'minimum')
+				.max(SparseSchema.fields.value, 'maximum')
+				.countDistinct(SparseSchema.fields.label, 'uniqueLabels')
+				.run()
+			expect(result).toEqual({ total: null, average: null, minimum: null, maximum: null, uniqueLabels: 0 })
 		})
 
 		test('sum returns total of numeric field', async () => {
@@ -3202,6 +3330,32 @@ if (import.meta.vitest) {
 			expect(eu?.cnt).toBe(2)
 		})
 
+		test('malformed ungrouped cardinality and missing aliases fail output validation', async () => {
+			for (const rows of [[], [{ total: 1 }, { total: 2 }], [{}]]) {
+				const { repo, adapter } = makeAggRepo()
+				;(adapter as any).aggregate = async () => rows
+				await expect(repo.on(OrderSchema).aggregate().count('total').run()).rejects.toMatchObject({
+					kind: 'output',
+				})
+			}
+		})
+
+		test('invalid aggregate values and grouped keys fail output validation', async () => {
+			for (const rows of [[{ total: -1 }], [{ total: 1.5 }], [{ total: Number.MAX_SAFE_INTEGER + 1 }]]) {
+				const { repo, adapter } = makeAggRepo()
+				;(adapter as any).aggregate = async () => rows
+				await expect(repo.on(OrderSchema).aggregate().count('total').run()).rejects.toMatchObject({
+					kind: 'output',
+				})
+			}
+
+			const { repo, adapter } = makeAggRepo()
+			;(adapter as any).aggregate = async () => [{ region: 42, cnt: 1 }]
+			await expect(
+				repo.on(OrderSchema).aggregate().groupBy(OrderSchema.fields.region).count('cnt').run(),
+			).rejects.toMatchObject({ kind: 'output' })
+		})
+
 		test('having filters after aggregation', async () => {
 			const { repo } = makeAggRepo()
 			await seedOrders(repo)
@@ -3291,10 +3445,12 @@ if (import.meta.vitest) {
 			expect(result).toEqual({ lowest: null, highest: null })
 		})
 
-		test('avg on empty store returns zero', async () => {
+		test('sum and avg on empty store return null', async () => {
 			const { repo } = makeAggRepo()
-			const result = await repo.on(OrderSchema).aggregate().avg(OrderSchema.fields.amount, 'avgAmount').run()
-			expect(result).toEqual({ avgAmount: 0 })
+			const sum = await repo.on(OrderSchema).aggregate().sum(OrderSchema.fields.amount, 'total').run()
+			const avg = await repo.on(OrderSchema).aggregate().avg(OrderSchema.fields.amount, 'avgAmount').run()
+			expect(sum).toEqual({ total: null })
+			expect(avg).toEqual({ avgAmount: null })
 		})
 	})
 }

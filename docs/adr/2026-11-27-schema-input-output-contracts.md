@@ -1,6 +1,6 @@
 # Separate schema input and output contracts
 
-**Status:** Accepted design; partially implemented in Equipped Slices #198 and #199.
+**Status:** Accepted design; implemented in Equipped Slices #198–#200, with atomic-mutation behavior assigned to a later slice.
 
 Schema field pipes can transform write input into a different persisted representation. Replaying that pipe on a database result can reject a valid stored value, transform it again, or hide missing data through defaults. Schema-aware Repo operations will instead validate results using schema-owned output pipes before using or exposing them. The complete accepted behavior is recorded in [ORM context §18](../orm/CONTEXT.md#18-output-validation-and-atomic-mutations--accepted-design).
 
@@ -24,6 +24,6 @@ Schema field pipes can transform write input into a different persisted represen
 
 ## Consequences
 
-This extends the input-only validate-once rule in ORM context §7 and principle §13.5. Input validation remains at Repo entry; output validation belongs at schema-aware return boundaries, before internal consumption or public exposure. There is no compatibility overload or legacy `.pipe` alias. Slices #198 and #199 implement the field and computed declaration APIs and the corresponding validation boundaries; aggregate and atomic-mutation contracts remain assigned to later slices.
+This extends the input-only validate-once rule in ORM context §7 and principle §13.5. Input validation remains at Repo entry; output validation belongs at schema-aware return boundaries, before internal consumption or public exposure. There is no compatibility overload or legacy `.pipe` alias. Slices #198 and #199 implement the field and computed declaration APIs and the corresponding validation boundaries. Slice #200 implements scalar and aggregate output validation; atomic-mutation contracts remain assigned to a later slice.
 
 Top-level selection is unchanged. Selected JSON fields validate their complete returned nested value. Computed dependencies, relation keys, related documents, result containers and cardinality must also be covered; a final response-only validator is insufficient. Schema validity does not establish ownership, authorization, domain relationships or transaction settlement.

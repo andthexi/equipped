@@ -867,7 +867,7 @@ const totals = await repo
 	.sum(OrderSchema.fields.total, 'revenue')
 	.where((q) => q.eq(OrderSchema.fields.year, 2026))
 	.run()
-// totals: { orders: number, revenue: number }
+// totals: { orders: number, revenue: number | null }
 
 // Grouped aggregation (groupBy → returns an array of group rows).
 const byRegion = await repo
@@ -879,7 +879,7 @@ const byRegion = await repo
 	.where((q) => q.gte(OrderSchema.fields.year, 2024))
 	.having((q) => q.gt('revenue', 1000))
 	.run()
-// byRegion: Array<{ orders: number, revenue: number, region: string, year: number }>
+// byRegion: Array<{ orders: number, revenue: number | null, region: string, year: number }>
 ```
 
 Vocabulary:
@@ -907,23 +907,25 @@ Five rules govern the surface:
 - **Aggregation cardinality rule.** The result cardinality is determined by
   whether `.groupBy(...)` was called. The `AggregateBuilder` carries a
   `HasGroupBy extends boolean` typestate parameter; `.run()` narrows the
-  return type to `R` when `HasGroupBy = false`, `R[]` when `HasGroupBy = true`.
-  No-`groupBy` aggregations return a single object directly, never a
-  one-element array.
+  return type to `R | null` when `HasGroupBy = false`, `R[]` when
+  `HasGroupBy = true`. Ungrouped aggregations return a single object directly,
+  never a one-element array; an ungrouped `having()` may reject its summary and
+  return `null`.
 - **Field-type-per-aggregator rule.** Each aggregator step's field-arg
-  generic is constrained at the type level: `sum` and `avg` accept
-  `Field<'number', ...>` only; `min` and `max` accept
-  `Field<'number' | 'string' | 'date', ...>`; `countDistinct` accepts any
-  `Field`; `count(alias)` takes no field arg. `groupBy` keys must be
-  `Field<'string' | 'number' | 'boolean' | 'date', ...>` — `'object'`,
-  `'array'`, `'null'` are rejected at the type level. Direct parallel to
+  generic is constrained at the type level: `sum` and `avg` accept numeric
+  fields, including nullable/optional numeric values; `min` and `max` accept
+  number/string/date fields, including nullable/optional values;
+  `countDistinct` accepts any `Field`; `count(alias)` takes no field arg.
+  `groupBy` keys must be scalar fields, including nullable/optional values;
+  object and array fields are rejected at the type level. Direct parallel to
   §10.3's update-op field-category constraints.
 - **Pre/post-filter split rule.** `.where(q)` filters schema rows pre-
   aggregation and is typed over `SchemaFields<S>` — the standard
   `FilterFactory`. `.having(q)` filters aggregated rows post-aggregation
   and is typed over the alias-and-group-key map; aggregator aliases are
-  typed by the aggregator's return type (count/countDistinct/sum/avg
-  always `number`; min/max keep the source field's type), group-key
+  typed by the aggregator's return type (count/countDistinct are `number`;
+  sum/avg are `number | null`; min/max are the source field's non-null type
+  or `null`), group-key
   aliases keep the schema-declared type. Both are once-per-step.
 - **Terminal-aggregator-required rule.** `.run()` is gated on at least one
   aggregator step having been called — `.aggregate().run()` with zero
@@ -932,8 +934,9 @@ Five rules govern the surface:
 - **Always-array adapter rule.** The adapter's `aggregate(schema, schemaCfg, spec)`
   method always returns `Array<Record<string, unknown>>` — even for
   no-groupBy single-bucket aggregations (length-1 array). The cardinality
-  narrowing to `R | R[]` happens **post-adapter**, in the `AggregateBuilder.run()`
-  method, by reading the `HasGroupBy` typestate. Same architectural shape
+  narrowing to `R | null | R[]` happens **post-adapter**, in the
+  `AggregateBuilder.run()` method, by reading the `HasGroupBy` typestate and
+  mapping an ungrouped `having()` rejection to `null`. Same architectural shape
   as the post-adapter throw under the required-row contract (§5.7) — the
   builder layer does the user-facing return-type adjustment, not the
   adapter.
@@ -3199,8 +3202,9 @@ falling back to polling markers or expiry-based takeover.
 **Status:** Partially implemented. Slice #198 delivers schema input/output
 contracts and ordinary Repo record validation. Slice #199 delivers computed
 output validation, recursive preload assembly, hidden dependency/key retention,
-and validate-before-yield iteration. Aggregate and atomic-mutation contracts
-remain assigned to later slices. These
+and validate-before-yield iteration. Slice #200 delivers scalar and aggregate
+output validation and aligned in-tree adapter semantics. Atomic-mutation
+contracts remain assigned to a later slice. These
 contracts were settled during the design follow-up to
 [issue #196](https://github.com/andthexi/equipped/issues/196). Delivery
 boundaries are explicitly listed in §18.7; design acceptance is not release
@@ -3412,6 +3416,11 @@ test-registration framework is required.
 
 ### 18.7 Delivery boundaries
 
+- Slice #200 implements scalar count and pagination-total validation plus
+  aggregate result cardinality, alias, group-key, and operation-specific output
+  validation from §18.4. InMemory and JSON behavior is exercised directly;
+  PostgreSQL and MongoDB behavior is tested through controlled driver
+  interactions only, with no live-backend qualification.
 - Slice #199 implements computed, preload, and iteration output behavior from
   §18.3, including validation of hidden dependencies and relation keys before
   computation/grouping, recursive target assembly, and iterator cleanup after an

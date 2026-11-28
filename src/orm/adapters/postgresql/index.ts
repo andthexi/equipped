@@ -66,6 +66,11 @@ const postgresqlConnectionPipe = () =>
 
 const TRACKER_TABLE = '_equipped_migrations'
 const DEFAULT_CURSOR_BATCH_SIZE = 1000
+const POSTGRES_NUMERIC_TEXT = /^[+-]?(?:Infinity|NaN|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)$/i
+
+function decodePostgresNumeric(value: unknown): unknown {
+	return typeof value === 'string' && POSTGRES_NUMERIC_TEXT.test(value) ? Number(value) : value
+}
 
 type PostgresCursor<T extends Record<string, unknown>> = {
 	read: (rowCount: number) => Promise<T[]>
@@ -324,7 +329,7 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			const tableName = this.#resolveTableName(c)
 			const { sql, params } = buildCountQuery(filter, tableName, schema.pkField.name)
 			const result = await this.#getClient().query(sql, params)
-			return Number(result.rows[0]?.count ?? 0)
+			return decodePostgresNumeric(result.rows[0]?.count) as number
 		} catch (error) {
 			throw new EquippedError(
 				'PostgreSQL count failed',
@@ -442,15 +447,12 @@ export class PostgresAdapter extends configurable(postgresqlConnectionPipe, OrmA
 			return result.rows.map((row: Record<string, unknown>) => {
 				const mapped: Record<string, unknown> = {}
 				for (const agg of spec.aggregates) {
-					const val = row[agg.alias]
-					if (agg.fn === 'min' || agg.fn === 'max') {
-						mapped[agg.alias] = val
-					} else {
-						mapped[agg.alias] = typeof val === 'string' ? Number(val) : Number(val ?? 0)
-					}
+					if (!Object.prototype.hasOwnProperty.call(row, agg.alias)) continue
+					const value = row[agg.alias]
+					mapped[agg.alias] = agg.fn === 'min' || agg.fn === 'max' ? value : decodePostgresNumeric(value)
 				}
 				for (const field of spec.groupBy) {
-					mapped[field] = row[field]
+					if (Object.prototype.hasOwnProperty.call(row, field)) mapped[field] = row[field]
 				}
 				return mapped
 			})
@@ -1402,6 +1404,40 @@ if (import.meta.vitest) {
 			expect(result).toEqual([{ total: 5 }])
 		})
 
+		test('Repo validates controlled PostgreSQL aggregate rows and having cardinality', async () => {
+			const { Schema } = await import('../../schema.js')
+			const { Repo } = await import('../../repo/repo.js')
+			const schema = Schema.from('pg_agg_repo')
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('amount', { input: v.number() })
+				.build()
+			const adapter = PostgresAdapter.create(testConnectionConfig)
+			let rows: Array<Record<string, unknown>> = [{ total: '3' }]
+			;(adapter.pool as any).query = async () => ({ rows })
+			const repo = Repo.from(adapter)
+				.resolve((name) => ({ schema: undefined, table: name }))
+				.build()
+
+			expect(await repo.on(schema).aggregate().count('total').run()).toEqual({ total: 3 })
+
+			rows = []
+			expect(
+				await repo
+					.on(schema)
+					.aggregate()
+					.count('total')
+					.having((q) => q.gt('total', 0))
+					.run(),
+			).toBeNull()
+
+			rows = [{}]
+			await expect(repo.on(schema).aggregate().count('total').run()).rejects.toMatchObject({ kind: 'output' })
+			rows = [{ total: '-1' }]
+			await expect(repo.on(schema).aggregate().count('total').run()).rejects.toMatchObject({ kind: 'output' })
+			rows = [{ total: '1' }, { total: '2' }]
+			await expect(repo.on(schema).aggregate().count('total').run()).rejects.toMatchObject({ kind: 'output' })
+		})
+
 		test('aggregate converts PG bigint/numeric strings to numbers for count/sum/avg', async () => {
 			const { Schema } = await import('../../schema.js')
 
@@ -1428,6 +1464,31 @@ if (import.meta.vitest) {
 			expect(result[0].cnt).toBe(10)
 			expect(result[0].revenue).toBe(250.5)
 			expect(result[0].avgAmt).toBe(25.05)
+		})
+
+		test('aggregate preserves SQL nulls and absent aliases for output validation', async () => {
+			const { Schema } = await import('../../schema.js')
+			const schema = Schema.from('pg_agg_nulls')
+				.pk('id', { input: v.string(), generate: () => 'x' })
+				.field('amount', { input: v.number() })
+				.build()
+			const adapter = PostgresAdapter.create(testConnectionConfig)
+			;(adapter.pool as any).query = async () => ({ rows: [{ cnt: '0', total: null, average: null, low: null }] })
+			const result = await adapter.aggregate(
+				schema,
+				{ table: 'orders' },
+				{
+					aggregates: [
+						{ fn: 'count', alias: 'cnt' },
+						{ fn: 'sum', field: 'amount', alias: 'total' },
+						{ fn: 'avg', field: 'amount', alias: 'average' },
+						{ fn: 'min', field: 'amount', alias: 'low' },
+						{ fn: 'max', field: 'amount', alias: 'high' },
+					],
+					groupBy: [],
+				},
+			)
+			expect(result).toEqual([{ cnt: 0, total: null, average: null, low: null }])
 		})
 
 		test('aggregate preserves original type for min/max', async () => {
